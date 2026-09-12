@@ -1,0 +1,40 @@
+{
+  "name": "archboard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=22.12.0 <23",
+    "pnpm": ">=11.24.0 <12"
+  },
+  "scripts": {
+    "auth:schema:check": "node scripts/phase-placeholder.mjs auth:schema:check C08",
+    "build": "pnpm -r --if-present run build",
+    "db:migration:generate": "node scripts/phase-placeholder.mjs db:migration:generate C08",
+    "db:migration:run": "node scripts/phase-placeholder.mjs db:migration:run C08",
+    "db:migration:show": "node scripts/phase-placeholder.mjs db:migration:show C08",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "phase1:verify": "node scripts/phase-placeholder.mjs phase1:verify C15",
+    "test": "pnpm -r --if-present run test",
+    "test:browser": "pnpm --filter @archboard/web run test:browser",
+    "test:integration": "pnpm --filter @archboard/api run test:integration",
+    "typecheck": "pnpm -r --if-present run typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/jest": "30.0.0",
+    "@types/node": "22.20.2",
+    "eslint": "10.10.0",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.12.0",
+    "jest": "30.5.1",
+    "prettier": "3.9.6",
+    "ts-jest": "29.4.12",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "5.0.0"
+  }
+}
