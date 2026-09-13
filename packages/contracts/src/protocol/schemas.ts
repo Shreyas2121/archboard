@@ -52,7 +52,6 @@ export const INVALIDATION_RESOURCES = {
 } as const;
 
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
-const CANONICAL_BASE64_PATTERN = /^(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{2}==|[A-Za-z\d+/]{3}=)?$/;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const BASE64_BLOCK_CHARACTERS = 4;
 const BYTES_PER_BASE64_BLOCK = 3;
@@ -108,15 +107,59 @@ function hasCanonicalBase64Padding(value: string): boolean {
   return true;
 }
 
+function hasCanonicalBase64Shape(value: string): boolean {
+  if (value.length % BASE64_BLOCK_CHARACTERS !== 0) {
+    return false;
+  }
+
+  const paddingCharacters = value.endsWith('==')
+    ? DOUBLE_PADDING_CHARACTERS
+    : value.endsWith('=')
+      ? SINGLE_PADDING_CHARACTER
+      : 0;
+  const dataCharacterCount = value.length - paddingCharacters;
+
+  for (let index = 0; index < dataCharacterCount; index += 1) {
+    if (!BASE64_ALPHABET.includes(value[index]!)) {
+      return false;
+    }
+  }
+
+  for (let index = dataCharacterCount; index < value.length; index += 1) {
+    if (value[index] !== '=') {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function canonicalBase64Schema(maxDecodedBytes: number) {
-  return z
-    .string()
-    .regex(CANONICAL_BASE64_PATTERN, 'Yjs bytes must use canonical padded base64.')
-    .refine(hasCanonicalBase64Padding, 'Yjs bytes must use canonical base64 padding bits.')
-    .refine(
-      (value) => decodedBase64ByteLength(value) <= maxDecodedBytes,
-      `Decoded Yjs bytes must not exceed ${maxDecodedBytes} bytes.`,
-    );
+  const maxEncodedCharacters =
+    Math.ceil(maxDecodedBytes / BYTES_PER_BASE64_BLOCK) * BASE64_BLOCK_CHARACTERS;
+
+  return z.string().superRefine((value, context) => {
+    if (value.length > maxEncodedCharacters || decodedBase64ByteLength(value) > maxDecodedBytes) {
+      context.addIssue({
+        code: 'custom',
+        message: `Decoded Yjs bytes must not exceed ${maxDecodedBytes} bytes.`,
+      });
+      return;
+    }
+
+    if (!hasCanonicalBase64Shape(value)) {
+      context.addIssue({ code: 'custom', message: 'Yjs bytes must use canonical padded base64.' });
+      return;
+    }
+
+    if (!hasCanonicalBase64Padding(value)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Yjs bytes must use canonical base64 padding bits.',
+      });
+      return;
+    }
+  });
 }
 
 export const clientUpdateBase64Schema = canonicalBase64Schema(MAX_CLIENT_UPDATE_BYTES);

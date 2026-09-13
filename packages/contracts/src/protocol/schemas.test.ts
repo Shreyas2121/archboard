@@ -21,6 +21,7 @@ import {
   clientUpdateBase64Schema,
   serverMessageSchema,
   serverSequenceSchema,
+  snapshotBase64Schema,
 } from './schemas.js';
 
 const UUID_SUFFIX_LENGTH = 12;
@@ -166,6 +167,12 @@ describe('WebSocket protocol contracts', () => {
     const oversizedUpdate = Buffer.alloc(MAX_CLIENT_UPDATE_BYTES + 1).toString('base64');
 
     expect(clientUpdateBase64Schema.safeParse(oversizedUpdate).success).toBe(false);
+  });
+
+  it('rejects an oversized snapshot without running unbounded lexical validation', () => {
+    const oversizedSnapshot = Buffer.alloc(MAX_ENCODED_YJS_STATE_BYTES + 1).toString('base64');
+
+    expect(snapshotBase64Schema.safeParse(oversizedSnapshot).success).toBe(false);
   });
 
   it.each(['-1', '+1', '01', '1.0', POSTGRES_BIGINT_OVERFLOW_STRING])(
