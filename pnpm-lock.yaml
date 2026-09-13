@@ -103,7 +103,11 @@ importers:
 
   packages/document-model: {}
 
-  packages/fixtures: {}
+  packages/fixtures:
+    dependencies:
+      '@archboard/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/sync-client: {}
 

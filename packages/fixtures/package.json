@@ -11,7 +11,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "pretest": "pnpm --filter @archboard/contracts build",
     "test": "vitest run --passWithNoTests",
+    "pretypecheck": "pnpm --filter @archboard/contracts build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@archboard/contracts": "workspace:*"
   }
 }
