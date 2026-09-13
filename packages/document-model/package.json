@@ -11,7 +11,16 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "pretest": "pnpm --filter @archboard/contracts build && pnpm --filter @archboard/fixtures build",
     "test": "vitest run --passWithNoTests",
+    "pretypecheck": "pnpm --filter @archboard/contracts build && pnpm --filter @archboard/fixtures build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@archboard/contracts": "workspace:*",
+    "yjs": "13.6.32"
+  },
+  "devDependencies": {
+    "@archboard/fixtures": "workspace:*"
   }
 }
