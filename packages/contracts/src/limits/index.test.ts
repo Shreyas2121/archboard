@@ -1,0 +1,40 @@
+import { describe, expect, it } from 'vitest';
+
+import * as limits from './index.js';
+
+describe('central product limits', () => {
+  it('matches the Phase 1 graph, content, byte, and presence budgets', () => {
+    expect(limits).toMatchObject({
+      KIBIBYTE: 1_024,
+      MEBIBYTE: 1_048_576,
+      MAX_NODE_TITLE_CHARACTERS: 120,
+      MAX_COMPONENT_DESCRIPTION_CHARACTERS: 2_000,
+      MAX_TECHNOLOGY_CHARACTERS: 80,
+      MAX_CONTENT_BODY_CHARACTERS: 20_000,
+      MAX_EXTERNAL_URL_CHARACTERS: 2_048,
+      MAX_EDGE_LABEL_CHARACTERS: 160,
+      MAX_EDGE_PROTOCOL_CHARACTERS: 40,
+      MAX_BOUNDARY_TITLE_CHARACTERS: 120,
+      MAX_STEP_TITLE_CHARACTERS: 120,
+      MAX_STEP_NOTES_CHARACTERS: 4_000,
+      MIN_STEP_ORDER: -1_000_000,
+      MAX_STEP_ORDER: 1_000_000,
+      MAX_STEP_REFERENCES: 500,
+      MAX_GRAPH_COORDINATE: 100_000,
+      MIN_NODE_WIDTH: 160,
+      MAX_NODE_WIDTH: 1_600,
+      MIN_NODE_HEIGHT: 100,
+      MAX_NODE_HEIGHT: 1_200,
+      MAX_RECT_DIMENSION: 20_000,
+      MAX_LIVE_NODES: 500,
+      MAX_LIVE_EDGES: 1_000,
+      MAX_LIVE_BOUNDARIES: 50,
+      MAX_LIVE_PRESENTATION_STEPS: 50,
+      MAX_ENCODED_YJS_STATE_BYTES: 10_485_760,
+      MAX_CLIENT_UPDATE_BYTES: 1_048_576,
+      MAX_WS_FRAME_BYTES: 16_777_216,
+      MAX_PRESENCE_SELECTED_IDS: 100,
+      MAX_DRAG_PREVIEW_POSITIONS: 100,
+    });
+  });
+});
