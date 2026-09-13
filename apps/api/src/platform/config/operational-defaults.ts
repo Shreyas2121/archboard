@@ -1,8 +1,8 @@
 export const PUBLIC_BIND_HOST = '0.0.0.0';
 
-export const WS_HANDSHAKE_TIMEOUT_MS = 10_000;
-export const WS_PING_INTERVAL_MS = 30_000;
-export const WS_PONG_TIMEOUT_MS = 10_000;
+export const WS_HANDSHAKE_TIMEOUT_MS = 5_000;
+export const WS_PING_INTERVAL_MS = 15_000;
+export const WS_PONG_TIMEOUT_MS = 45_000;
 
 export const VALIDATION_TIMEOUT_MS = 2_000;
 export const MAX_VALIDATION_WORKERS = 2;

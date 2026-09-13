@@ -6,6 +6,9 @@ import {
   MAX_VALIDATION_QUEUE_DEPTH,
   MAX_VALIDATION_WORKERS,
   VALIDATION_TIMEOUT_MS,
+  WS_HANDSHAKE_TIMEOUT_MS,
+  WS_PING_INTERVAL_MS,
+  WS_PONG_TIMEOUT_MS,
 } from './index.js';
 
 const VALID_ENVIRONMENT: NodeJS.ProcessEnv = {
@@ -22,6 +25,9 @@ const EXPECTED_MAX_VALIDATION_WORKERS = 2;
 const EXPECTED_MAX_VALIDATION_QUEUE_DEPTH = 32;
 const EXPECTED_MAX_CONNECTIONS_PER_ROOM = 10;
 const EXPECTED_MAX_ACTIVE_ROOMS_PER_PROCESS = 20;
+const EXPECTED_WS_HANDSHAKE_TIMEOUT_MS = 5_000;
+const EXPECTED_WS_PING_INTERVAL_MS = 15_000;
+const EXPECTED_WS_PONG_TIMEOUT_MS = 45_000;
 
 describe('API runtime configuration', () => {
   it('parses and normalizes the complete environment', () => {
@@ -112,5 +118,11 @@ describe('API runtime configuration', () => {
     expect(MAX_VALIDATION_QUEUE_DEPTH).toBe(EXPECTED_MAX_VALIDATION_QUEUE_DEPTH);
     expect(MAX_CONNECTIONS_PER_ROOM).toBe(EXPECTED_MAX_CONNECTIONS_PER_ROOM);
     expect(MAX_ACTIVE_ROOMS_PER_PROCESS).toBe(EXPECTED_MAX_ACTIVE_ROOMS_PER_PROCESS);
+  });
+
+  it('publishes the specified WebSocket handshake and heartbeat timings', () => {
+    expect(WS_HANDSHAKE_TIMEOUT_MS).toBe(EXPECTED_WS_HANDSHAKE_TIMEOUT_MS);
+    expect(WS_PING_INTERVAL_MS).toBe(EXPECTED_WS_PING_INTERVAL_MS);
+    expect(WS_PONG_TIMEOUT_MS).toBe(EXPECTED_WS_PONG_TIMEOUT_MS);
   });
 });
