@@ -8,4 +8,7 @@ allowBuilds:
 
 catalogMode: strict
 
+minimumReleaseAgeExclude:
+  - zod@4.6.4
+
 strictPeerDependencies: true

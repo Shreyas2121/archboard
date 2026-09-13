@@ -1,0 +1,16 @@
+export const PUBLIC_BIND_HOST = '0.0.0.0';
+
+export const WS_HANDSHAKE_TIMEOUT_MS = 10_000;
+export const WS_PING_INTERVAL_MS = 30_000;
+export const WS_PONG_TIMEOUT_MS = 10_000;
+
+export const VALIDATION_TIMEOUT_MS = 2_000;
+export const MAX_VALIDATION_WORKERS = 2;
+export const MAX_VALIDATION_QUEUE_DEPTH = 32;
+
+export const MAX_CONNECTIONS_PER_ROOM = 10;
+export const MAX_ACTIVE_ROOMS_PER_PROCESS = 20;
+
+export const CONTENT_UPDATE_RATE_PER_SECOND = 20;
+export const CONTENT_UPDATE_BURST = 40;
+export const PRESENCE_UPDATE_RATE_PER_SECOND = 15;
