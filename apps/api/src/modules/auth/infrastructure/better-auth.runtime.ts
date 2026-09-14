@@ -11,11 +11,12 @@ function createAuth(config: ApiConfig, pool: Pool) {
     trustedOrigins: [...config.allowedWebOrigins],
     secret: config.betterAuthSecret,
     database: pool,
+    emailAndPassword: { enabled: config.mode === 'test' },
     advanced: { database: { joins: true } },
   });
 }
 
-type ArchboardAuth = ReturnType<typeof createAuth>;
+export type ArchboardAuth = ReturnType<typeof createAuth>;
 
 export class BetterAuthRuntime implements OnApplicationShutdown {
   public readonly pool: Pool;

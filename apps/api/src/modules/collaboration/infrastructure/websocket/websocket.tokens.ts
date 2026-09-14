@@ -1,0 +1,1 @@
+export const WEBSOCKET_API_CONFIG = Symbol('WEBSOCKET_API_CONFIG');
