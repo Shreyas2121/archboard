@@ -11,7 +11,20 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "test": "vitest run --passWithNoTests",
+    "pretest": "pnpm --filter @archboard/contracts build && pnpm --filter @archboard/document-model build",
+    "test": "vitest run --config vitest.browser.config.ts --passWithNoTests",
+    "pretypecheck": "pnpm --filter @archboard/contracts build && pnpm --filter @archboard/document-model build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@archboard/contracts": "workspace:*",
+    "@archboard/document-model": "workspace:*",
+    "idb": "8.0.3",
+    "yjs": "13.6.32"
+  },
+  "devDependencies": {
+    "@vitest/browser-playwright": "5.0.0",
+    "playwright": "1.63.0",
+    "vitest": "5.0.0"
   }
 }

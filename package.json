@@ -19,7 +19,7 @@
     "lint": "eslint .",
     "phase1:verify": "node scripts/phase-placeholder.mjs phase1:verify C15",
     "test": "node scripts/run-workspace-tests.mjs",
-    "test:browser": "pnpm --filter @archboard/web run test:browser",
+    "test:browser": "pnpm --filter @archboard/sync-client run test",
     "test:integration": "pnpm --filter @archboard/api run test:integration",
     "typecheck": "pnpm -r --if-present run typecheck"
   },

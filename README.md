@@ -30,21 +30,24 @@ Render for `apps/api`, and Neon PostgreSQL for backend persistence.
 
 ## Commands
 
-| Command                          | Purpose                                  |
-| -------------------------------- | ---------------------------------------- |
-| `pnpm install --frozen-lockfile` | Reproduce the dependency graph           |
-| `pnpm format:check`              | Check formatting                         |
-| `pnpm lint`                      | Run lint and package-boundary rules      |
-| `pnpm typecheck`                 | Run strict TypeScript checks             |
-| `pnpm test`                      | Run workspace unit tests                 |
-| `pnpm test:integration`          | Run API integration tests                |
-| `pnpm test:browser`              | Run browser tests                        |
-| `pnpm build`                     | Build applications and packages          |
-| `pnpm db:migration:generate`     | Generate a TypeORM migration after C08   |
-| `pnpm db:migration:run`          | Apply TypeORM migrations after C08       |
-| `pnpm db:migration:show`         | Show TypeORM migration state after C08   |
-| `pnpm auth:schema:check`         | Check Better Auth schema drift after C08 |
-| `pnpm phase1:verify`             | Run the complete Phase 1 gate after C15  |
+| Command                          | Purpose                                   |
+| -------------------------------- | ----------------------------------------- |
+| `pnpm install --frozen-lockfile` | Reproduce the dependency graph            |
+| `pnpm format:check`              | Check formatting                          |
+| `pnpm lint`                      | Run lint and package-boundary rules       |
+| `pnpm typecheck`                 | Run strict TypeScript checks              |
+| `pnpm test`                      | Run workspace unit tests                  |
+| `pnpm test:integration`          | Run API integration tests                 |
+| `pnpm test:browser`              | Run browser-backed sync-client unit tests |
+| `pnpm build`                     | Build applications and packages           |
+| `pnpm db:migration:generate`     | Generate a TypeORM migration after C08    |
+| `pnpm db:migration:run`          | Apply TypeORM migrations after C08        |
+| `pnpm db:migration:show`         | Show TypeORM migration state after C08    |
+| `pnpm auth:schema:check`         | Check Better Auth schema drift after C08  |
+| `pnpm phase1:verify`             | Run the complete Phase 1 gate after C15   |
+
+The browser-backed sync-client units use Playwright with an installed stable Google Chrome. Package
+installation does not download a second browser binary.
 
 Commands belonging to later commits currently print an explicit availability message. Their names
 are stable so later commits can implement them without changing the developer interface.
