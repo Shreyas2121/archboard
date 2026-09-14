@@ -9,11 +9,11 @@
     "pnpm": ">=11.24.0 <12"
   },
   "scripts": {
-    "auth:schema:check": "node scripts/phase-placeholder.mjs auth:schema:check C08",
+    "auth:schema:check": "pnpm --filter @archboard/api run auth:schema:check",
     "build": "pnpm -r --if-present run build",
-    "db:migration:generate": "node scripts/phase-placeholder.mjs db:migration:generate C08",
-    "db:migration:run": "node scripts/phase-placeholder.mjs db:migration:run C08",
-    "db:migration:show": "node scripts/phase-placeholder.mjs db:migration:show C08",
+    "db:migration:generate": "pnpm --filter @archboard/api run db:migration:generate",
+    "db:migration:run": "pnpm --filter @archboard/api run db:migration:run",
+    "db:migration:show": "pnpm --filter @archboard/api run db:migration:show",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",

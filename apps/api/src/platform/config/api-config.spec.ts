@@ -18,6 +18,7 @@ const VALID_ENVIRONMENT: NodeJS.ProcessEnv = {
   PORT: '10000',
   DATABASE_URL: 'postgresql://user:secret@pooled.example.com/archboard',
   DATABASE_DIRECT_URL: 'postgresql://user:other-secret@direct.example.com/archboard',
+  BETTER_AUTH_SECRET: 'test-secret-that-is-at-least-32-characters',
 };
 
 const EXPECTED_VALIDATION_TIMEOUT_MS = 2_000;
@@ -40,6 +41,11 @@ describe('API runtime configuration', () => {
       port: 10_000,
       databaseUrl: VALID_ENVIRONMENT.DATABASE_URL,
       databaseDirectUrl: VALID_ENVIRONMENT.DATABASE_DIRECT_URL,
+      typeormPoolMax: 10,
+      betterAuthPoolMax: 5,
+      databaseConnectionTimeoutMs: 10_000,
+      betterAuthIdleTimeoutMs: 30_000,
+      betterAuthSecret: VALID_ENVIRONMENT.BETTER_AUTH_SECRET,
     });
     expect(Object.isFrozen(config)).toBe(true);
     expect(Object.isFrozen(config.allowedWebOrigins)).toBe(true);

@@ -1,9 +1,21 @@
 import { z } from 'zod';
 
+import {
+  BETTER_AUTH_IDLE_TIMEOUT_MS_DEFAULT,
+  BETTER_AUTH_POOL_MAX_DEFAULT,
+  DATABASE_CONNECTION_TIMEOUT_MS_DEFAULT,
+  TYPEORM_POOL_MAX_DEFAULT,
+} from './operational-defaults.js';
+
 const MIN_PORT = 1;
 const MAX_PORT = 65_535;
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 const HTTP_PROTOCOLS = new Set(['http:', 'https:']);
+const MIN_POOL_SIZE = 1;
+const MAX_POOL_SIZE = 50;
+const MIN_DATABASE_TIMEOUT_MS = 1;
+const MAX_DATABASE_TIMEOUT_MS = 120_000;
+const MIN_BETTER_AUTH_SECRET_CHARACTERS = 32;
 
 const deploymentModeSchema = z.enum(['development', 'test', 'production']);
 
@@ -12,6 +24,14 @@ const requiredValue = (name: string) =>
     .string({ error: `${name} is required.` })
     .trim()
     .min(1, `${name} is required.`);
+
+const boundedInteger = (name: string, minimum: number, maximum: number, defaultValue: number) =>
+  z
+    .string()
+    .regex(/^\d+$/, `${name} must be a base-10 integer.`)
+    .default(String(defaultValue))
+    .transform(Number)
+    .pipe(z.number().int().min(minimum).max(maximum));
 
 function isExactOrigin(value: string, protocols: ReadonlySet<string>): boolean {
   try {
@@ -54,6 +74,34 @@ const rawApiConfigSchema = z
       ),
     DATABASE_URL: requiredValue('DATABASE_URL'),
     DATABASE_DIRECT_URL: requiredValue('DATABASE_DIRECT_URL'),
+    TYPEORM_POOL_MAX: boundedInteger(
+      'TYPEORM_POOL_MAX',
+      MIN_POOL_SIZE,
+      MAX_POOL_SIZE,
+      TYPEORM_POOL_MAX_DEFAULT,
+    ),
+    BETTER_AUTH_POOL_MAX: boundedInteger(
+      'BETTER_AUTH_POOL_MAX',
+      MIN_POOL_SIZE,
+      MAX_POOL_SIZE,
+      BETTER_AUTH_POOL_MAX_DEFAULT,
+    ),
+    DATABASE_CONNECTION_TIMEOUT_MS: boundedInteger(
+      'DATABASE_CONNECTION_TIMEOUT_MS',
+      MIN_DATABASE_TIMEOUT_MS,
+      MAX_DATABASE_TIMEOUT_MS,
+      DATABASE_CONNECTION_TIMEOUT_MS_DEFAULT,
+    ),
+    BETTER_AUTH_IDLE_TIMEOUT_MS: boundedInteger(
+      'BETTER_AUTH_IDLE_TIMEOUT_MS',
+      MIN_DATABASE_TIMEOUT_MS,
+      MAX_DATABASE_TIMEOUT_MS,
+      BETTER_AUTH_IDLE_TIMEOUT_MS_DEFAULT,
+    ),
+    BETTER_AUTH_SECRET: requiredValue('BETTER_AUTH_SECRET').min(
+      MIN_BETTER_AUTH_SECRET_CHARACTERS,
+      `BETTER_AUTH_SECRET must contain at least ${MIN_BETTER_AUTH_SECRET_CHARACTERS} characters.`,
+    ),
   })
   .strict();
 
@@ -64,6 +112,11 @@ export interface ApiConfig {
   readonly port: number;
   readonly databaseUrl: string;
   readonly databaseDirectUrl: string;
+  readonly typeormPoolMax: number;
+  readonly betterAuthPoolMax: number;
+  readonly databaseConnectionTimeoutMs: number;
+  readonly betterAuthIdleTimeoutMs: number;
+  readonly betterAuthSecret: string;
 }
 
 interface ConfigIssue {
@@ -104,6 +157,11 @@ export function loadApiConfig(environment: NodeJS.ProcessEnv): ApiConfig {
     PORT: environment.PORT,
     DATABASE_URL: environment.DATABASE_URL,
     DATABASE_DIRECT_URL: environment.DATABASE_DIRECT_URL,
+    TYPEORM_POOL_MAX: environment.TYPEORM_POOL_MAX,
+    BETTER_AUTH_POOL_MAX: environment.BETTER_AUTH_POOL_MAX,
+    DATABASE_CONNECTION_TIMEOUT_MS: environment.DATABASE_CONNECTION_TIMEOUT_MS,
+    BETTER_AUTH_IDLE_TIMEOUT_MS: environment.BETTER_AUTH_IDLE_TIMEOUT_MS,
+    BETTER_AUTH_SECRET: environment.BETTER_AUTH_SECRET,
   });
   if (!parsed.success) {
     throw new ConfigurationError(
@@ -169,5 +227,10 @@ export function loadApiConfig(environment: NodeJS.ProcessEnv): ApiConfig {
     port: parsed.data.PORT,
     databaseUrl: parsed.data.DATABASE_URL,
     databaseDirectUrl: parsed.data.DATABASE_DIRECT_URL,
+    typeormPoolMax: parsed.data.TYPEORM_POOL_MAX,
+    betterAuthPoolMax: parsed.data.BETTER_AUTH_POOL_MAX,
+    databaseConnectionTimeoutMs: parsed.data.DATABASE_CONNECTION_TIMEOUT_MS,
+    betterAuthIdleTimeoutMs: parsed.data.BETTER_AUTH_IDLE_TIMEOUT_MS,
+    betterAuthSecret: parsed.data.BETTER_AUTH_SECRET,
   });
 }

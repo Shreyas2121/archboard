@@ -5,6 +5,7 @@ module.exports = {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   rootDir: '.',
+  testPathIgnorePatterns: ['\\.integration-spec\\.ts$'],
   testEnvironment: 'node',
   transform: {
     '^.+\\.ts$': [

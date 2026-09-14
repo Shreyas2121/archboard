@@ -7,7 +7,7 @@ import { loadApiConfig, PUBLIC_BIND_HOST } from './platform/config/index.js';
 
 async function bootstrap(): Promise<void> {
   const config = loadApiConfig(process.env);
-  const application = await NestFactory.create(AppModule);
+  const application = await NestFactory.create(AppModule.register(config));
 
   await application.listen(config.port, PUBLIC_BIND_HOST);
 }
