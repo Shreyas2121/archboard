@@ -14,6 +14,7 @@ import {
 import { jest } from '@jest/globals';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import { Pool } from 'pg';
 import WebSocket from 'ws';
 import type { ClientOptions, RawData } from 'ws';
 
@@ -130,6 +131,7 @@ describe('Better Auth native WebSocket upgrade', () => {
   let websocketUrl: string;
   let authUrl: string;
   let sessionCookie: string;
+  let testEmail: string;
 
   beforeAll(async () => {
     const config = integrationConfig();
@@ -144,7 +146,7 @@ describe('Better Auth native WebSocket upgrade', () => {
     authUrl = `http://127.0.0.1:${address.port}`;
     websocketUrl = `ws://127.0.0.1:${address.port}/ws/boards/${randomUUID()}`;
 
-    const email = `auth-websocket-${randomUUID()}@example.com`;
+    testEmail = `auth-websocket-${randomUUID()}@example.com`;
     const response = await fetch(`${authUrl}/api/auth/sign-up/email`, {
       method: 'POST',
       headers: {
@@ -153,7 +155,7 @@ describe('Better Auth native WebSocket upgrade', () => {
       },
       body: JSON.stringify({
         name: 'WebSocket Integration',
-        email,
+        email: testEmail,
         password: 'correct-horse-battery-staple',
       }),
     });
@@ -170,7 +172,18 @@ describe('Better Auth native WebSocket upgrade', () => {
   });
 
   afterAll(async () => {
-    await application?.close();
+    try {
+      await application?.close();
+    } finally {
+      if (testEmail !== undefined && process.env.DATABASE_DIRECT_URL !== undefined) {
+        const cleanupPool = new Pool({ connectionString: process.env.DATABASE_DIRECT_URL, max: 1 });
+        try {
+          await cleanupPool.query('DELETE FROM "user" WHERE "email" = $1', [testEmail]);
+        } finally {
+          await cleanupPool.end();
+        }
+      }
+    }
   });
 
   it('preserves the session cookie and opens from the exact credentialed frontend origin', async () => {

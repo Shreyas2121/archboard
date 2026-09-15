@@ -22,6 +22,8 @@ const SNAPSHOT_BYTES = Buffer.from('000102ff', 'hex');
 const EXPECTED_APPLICATION_TABLE_COUNT = 10;
 const EXPECTED_AUTH_TABLE_COUNT = 4;
 const DATABASE_INTEGRATION_TIMEOUT_MS = 30_000;
+const TEST_SCHEMA_PREFIX = 'archboard_c08_';
+const TEST_BETTER_AUTH_SECRET = 'database-integration-secret-32chars';
 
 jest.setTimeout(DATABASE_INTEGRATION_TIMEOUT_MS);
 
@@ -33,43 +35,68 @@ function integrationConfig() {
     PORT: '3000',
     DATABASE_URL: process.env.DATABASE_URL,
     DATABASE_DIRECT_URL: process.env.DATABASE_DIRECT_URL,
-    BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
+    BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? TEST_BETTER_AUTH_SECRET,
   });
 }
 
-function integrationDataSource(): DataSource {
+function integrationDataSource(schemaName: string): DataSource {
   const config = integrationConfig();
   return new DataSource({
     type: 'postgres',
     url: config.databaseDirectUrl,
+    schema: schemaName,
     entities: [...DATABASE_ENTITIES],
     migrations: [InitialDatabaseFoundation1789300000000],
     synchronize: false,
     migrationsRun: false,
-    extra: { max: config.typeormPoolMax },
+    extra: { max: config.typeormPoolMax, options: `-c search_path=${schemaName}` },
   });
 }
 
 describe('real PostgreSQL database foundation', () => {
+  const schemaName = `${TEST_SCHEMA_PREFIX}${process.pid}`;
+  let administrativeDataSource: DataSource;
   let dataSource: DataSource;
 
   beforeAll(async () => {
-    dataSource = integrationDataSource();
+    const config = integrationConfig();
+    administrativeDataSource = new DataSource({
+      type: 'postgres',
+      url: config.databaseDirectUrl,
+      entities: [],
+      synchronize: false,
+      migrationsRun: false,
+    });
+    await administrativeDataSource.initialize();
+    await administrativeDataSource.query(`CREATE SCHEMA "${schemaName}"`);
+    dataSource = integrationDataSource(schemaName);
     await dataSource.initialize();
-    await dataSource.dropDatabase();
     await dataSource.runMigrations({ transaction: 'all' });
   });
 
   afterAll(async () => {
-    if (dataSource?.isInitialized) await dataSource.destroy();
+    try {
+      if (dataSource?.isInitialized) await dataSource.destroy();
+    } finally {
+      if (administrativeDataSource?.isInitialized) {
+        try {
+          await administrativeDataSource.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+        } finally {
+          await administrativeDataSource.destroy();
+        }
+      }
+    }
   });
 
   it('applies the complete auth-first migration to an empty database', async () => {
-    const tables = (await dataSource.query(`
+    const tables = (await dataSource.query(
+      `
       SELECT table_name
       FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-    `)) as { table_name: string }[];
+      WHERE table_schema = $1 AND table_type = 'BASE TABLE'
+    `,
+      [schemaName],
+    )) as { table_name: string }[];
     const names = new Set(tables.map(({ table_name: name }) => name));
     for (const authTable of ['user', 'session', 'account', 'verification']) {
       expect(names).toContain(authTable);
