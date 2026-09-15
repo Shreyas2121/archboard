@@ -17,7 +17,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 import { WebSocketServer } from 'ws';
 import type { RawData, WebSocket } from 'ws';
 
-import { BetterAuthRuntime } from '../../../auth/index.js';
+import { AUTH_SESSION_LOOKUP, type AuthSessionLookup } from '../../../auth/application/index.js';
 import type { ApiConfig } from '../../../../platform/config/index.js';
 import { WS_HANDSHAKE_TIMEOUT_MS } from '../../../../platform/config/index.js';
 import { WEBSOCKET_API_CONFIG } from './websocket.tokens.js';
@@ -51,7 +51,7 @@ export class WebSocketUpgradeService implements OnApplicationBootstrap, OnApplic
 
   public constructor(
     @Inject(HttpAdapterHost) private readonly httpAdapterHost: HttpAdapterHost,
-    @Inject(BetterAuthRuntime) private readonly authRuntime: BetterAuthRuntime,
+    @Inject(AUTH_SESSION_LOOKUP) private readonly sessionLookup: AuthSessionLookup,
     @Inject(WEBSOCKET_API_CONFIG) private readonly config: ApiConfig,
   ) {}
 
@@ -104,7 +104,7 @@ export class WebSocketUpgradeService implements OnApplicationBootstrap, OnApplic
       return;
     }
 
-    let session: Awaited<ReturnType<typeof this.authRuntime.auth.api.getSession>>;
+    let session: Awaited<ReturnType<AuthSessionLookup['lookup']>>;
     try {
       session = await this.getSessionWithinHandshakeLimit(request);
     } catch (error) {
@@ -129,7 +129,7 @@ export class WebSocketUpgradeService implements OnApplicationBootstrap, OnApplic
     let timeout: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
-        this.authRuntime.auth.api.getSession({ headers: fromNodeHeaders(request.headers) }),
+        this.sessionLookup.lookup(fromNodeHeaders(request.headers)),
         new Promise<never>((_resolve, reject) => {
           timeout = setTimeout(() => reject(new HandshakeTimeoutError()), WS_HANDSHAKE_TIMEOUT_MS);
           timeout.unref();
