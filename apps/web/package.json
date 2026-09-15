@@ -7,19 +7,22 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "dev": "vite",
     "preview": "vite preview",
-    "test": "vitest run --passWithNoTests",
-    "test:browser": "vitest run --passWithNoTests",
+    "test": "vitest run --exclude '**/*.browser.test.ts' --passWithNoTests",
+    "test:browser": "vitest run --config vitest.browser.config.ts --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "yjs": "13.6.32",
     "zod": "4.6.4"
   },
   "devDependencies": {
+    "@vitest/browser-playwright": "5.0.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
+    "playwright": "1.63.0",
     "vite": "8.3.0"
   }
 }
