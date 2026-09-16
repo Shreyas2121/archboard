@@ -1,9 +1,9 @@
 # Archboard — Phase 1: Foundation and Risk Validation
 
-Version: 1.0<br>
-Date: 12 September 2026<br>
-Status: Ready for implementation planning<br>
-Source of truth: `plan.md` version 1.0
+Version: 1.1<br>
+Date: 16 September 2026<br>
+Status: Passed by the C15 foundation audit; product milestones remain open<br>
+Source of truth: `plan.md` version 1.1
 
 ## 1. Purpose
 
@@ -72,8 +72,8 @@ The following rules are fixed for Phase 1 unless executable evidence proves that
 - Use a pnpm workspace with TypeScript strict mode.
 - Use React with Vite for the web application and NestJS with the Express adapter and an ESM build for the API.
 - Mount Better Auth using its Express integration before Express JSON body parsing. Preserve its response headers and cookies.
-- Use PostgreSQL with Drizzle ORM and committed SQL migrations.
-- Use `@nestjs/platform-ws` and `ws` with the application JSON envelope `{ event, data }`; do not adopt `y-websocket` as the product protocol.
+- Use PostgreSQL with TypeORM, explicit committed migrations, and `synchronize: false` in every environment. Better Auth retains its official PostgreSQL adapter and its own bounded `pg.Pool`.
+- Use a native `ws` HTTP upgrade listener for the Phase 1 cookie/Origin spike with the application JSON envelope `{ event, data }`; do not adopt `y-websocket` as the product protocol. The final production room adapter remains later work.
 - Use Yjs stable version 1 update APIs for shared graph data.
 - Use Zod for strict runtime validation of shared contracts.
 - Use `idb` for the custom IndexedDB persistence prototype.
@@ -121,7 +121,7 @@ The compatibility report must record:
 | Backend | NestJS Express ESM build starts and shuts down cleanly |
 | Authentication | Better Auth handler works through Express and preserves a secure session cookie |
 | WebSocket | The authenticated cookie is available during same-origin upgrade and Origin is checked |
-| Database | Drizzle connects to PostgreSQL and applies committed migrations |
+| Database | TypeORM connects to PostgreSQL through `pg` and applies committed migrations over the direct connection |
 | Yjs | Exact version, stable V1 update behavior, convergence results, and compatibility-wrapper assumptions |
 | IndexedDB | Exact `idb` version and atomic update/outbox transaction evidence in a real browser |
 | Test tools | Unit, API integration, browser, and real PostgreSQL tests run in the selected module system |
@@ -467,7 +467,7 @@ Tasks must be completed in dependency order. A task is finished only when its ou
 | P1-06 | Convergence and tombstone proofs | P1-05 | Deterministic and randomized replica tests | A02–A05 semantics and delete-wins invariants pass |
 | P1-07 | Causal-completeness wrapper | P1-04 | Isolated Yjs compatibility boundary | Structure/delete-set gap fixtures fail closed |
 | P1-08 | Auth and WebSocket spike | P1-02, P1-03 | Same-origin authenticated upgrade harness | Cookie succeeds; anonymous and invalid-origin access fail before graph data |
-| P1-09 | Relational migrations | P1-01, P1-03 | Drizzle definitions and committed SQL migrations | Clean migration against real PostgreSQL passes |
+| P1-09 | Relational migrations | P1-01, P1-03 | TypeORM entities and committed migration | Clean migration against real PostgreSQL passes |
 | P1-10 | Durable ACK spike | P1-04, P1-07, P1-09 | Candidate-validation and receipt harness | Commit-before-ACK, retry, and commit-failure tests pass |
 | P1-11 | Atomic IndexedDB/outbox spike | P1-03, P1-04 | Browser persistence adapter prototype | Atomic success and injected-failure tests pass |
 | P1-12 | Validator worker spike | P1-04, P1-07 | Bounded worker pool prototype and measurement | Timeout/overload/malformed cases leave accepted state unchanged |

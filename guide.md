@@ -39,7 +39,10 @@ No database credential may be committed. Commit `.env.example` with names and de
 
 Use TypeORM with `@nestjs/typeorm` and the PostgreSQL `pg` driver.
 
-This is an intentional amendment to the Drizzle choice inherited by `plan.md` and `phase1.md`. It follows the user's latest direction. Agents implementing this guide must use TypeORM for application-owned data unless the user approves another documented amendment.
+This intentionally amended the original Drizzle choice and follows the user's latest direction.
+The decision is now recorded in `plan.md` and `phase1.md` version 1.1. Agents implementing this
+guide must use TypeORM for application-owned data unless the user approves another documented
+amendment.
 
 Reasons for this choice:
 

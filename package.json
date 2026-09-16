@@ -17,7 +17,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "phase1:verify": "node scripts/phase-placeholder.mjs phase1:verify C15",
+    "phase1:verify": "node scripts/phase1-verify.mjs",
     "test": "node scripts/run-workspace-tests.mjs",
     "test:browser": "node scripts/run-browser-unit-tests.mjs",
     "test:integration": "pnpm --filter @archboard/api run test:integration",

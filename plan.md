@@ -1,9 +1,14 @@
 # Archboard — Product and Implementation Specification
 
-Version: 1.0<br>
-Date: 12 September 2026<br>
+Version: 1.1<br>
+Date: 16 September 2026<br>
 Status: Implementation baseline; architecture choices require the verification spikes defined below.<br>
 Working name: Archboard. Naming and domain availability have not been checked.
+
+Version 1.1 records the already-approved TypeORM implementation decision and distinguishes the
+native `ws` Phase 1 compatibility spike from the later production room adapter. Product behavior
+and data contracts are unchanged; the [Phase 1 audit](./docs/phase-1-compatibility.md) records the
+evidence and remaining limitations.
 
 ## 1. Purpose and authority
 
@@ -220,7 +225,7 @@ Provide light/dark/system themes, loading skeletons, inline field errors, access
 | Backend | NestJS with Express adapter, ESM build | User-requested framework; modular REST, auth, persistence, collaboration services |
 | Transport | Nest `WsAdapter` / `@nestjs/platform-ws`, `ws` | Explicit JSON-envelope protocol with base64 Yjs updates; durable acknowledgments |
 | Identity | Better Auth mounted through Express integration; GitHub OAuth | Library-managed sessions; avoid custom password and OAuth protocols |
-| Database | PostgreSQL + Drizzle ORM and committed SQL migrations | Board access, metadata, comments, binary CRDT snapshots/updates, receipts |
+| Database | PostgreSQL + TypeORM and committed migrations | Board access, metadata, comments, binary CRDT snapshots/updates, receipts |
 | Validation | Zod shared schemas | Wire messages, REST DTOs, import data, and graph projection checks |
 | Testing | Vitest for shared/frontend; Jest + Supertest for Nest; Playwright end-to-end | Domain semantics, real DB boundaries, independent browser contexts |
 | Deployment | Docker Compose, Caddy reverse proxy, one Nest process, PostgreSQL | Same-origin frontend/API/WS and an understandable initial operating model |
@@ -230,6 +235,10 @@ Resolve current mutually compatible stable versions during M00, pin direct versi
 React Flow is the rendering adapter, not the persisted document schema. Its official multiplayer guide distinguishes durable and ephemeral data. Yjs supplies synchronization primitives; it does not supply the app's authorization, database acknowledgments, or graph integrity rules. [React Flow multiplayer guide](https://reactflow.dev/learn/advanced-use/multiplayer)
 
 Nest supports `ws` through an adapter. Use its `{ event, data }` message envelope; this is a custom app protocol, not a drop-in `y-websocket` endpoint. [Nest WebSocket adapter source](https://github.com/nestjs/nest/blob/master/packages/platform-ws/adapters/ws-adapter.ts)
+
+The Phase 1 authentication compatibility spike uses a native `ws` HTTP upgrade listener to prove
+cookie and Origin checks before graph disclosure. This does not select the final production room
+adapter or change the version 1 application envelope.
 
 Mount Better Auth before Express JSON body parsing, preserve its response headers/cookies, and integrate its session lookup behind a Nest service. Configure ESM deliberately. This uses Better Auth's Express integration rather than making the project depend on an unverified community Nest wrapper. [Better Auth Express integration](https://better-auth.com/docs/integrations/express)
 

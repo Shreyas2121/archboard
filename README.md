@@ -50,5 +50,6 @@ The browser-backed sync-client and Y.Text units use Playwright with an installed
 Chrome. Package installation does not download a second browser binary. Use
 `pnpm test:browser -- indexeddb outbox` or `pnpm test:browser -- ytext` to run one spike's units.
 
-Commands belonging to later commits currently print an explicit availability message. Their names
-are stable so later commits can implement them without changing the developer interface.
+`pnpm phase1:verify` runs the full Phase 1 command gate. It requires an ignored root `.env` with
+paired Neon pooled and direct URLs; it does not print credentials. The database integration test now
+uses a temporary process-scoped schema rather than resetting `public`.
