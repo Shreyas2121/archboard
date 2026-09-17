@@ -59,16 +59,16 @@ server acknowledgements, reconnect synchronization, and multi-user editing remai
 
 Phase 2 consumes the following completed Phase 1 outputs rather than reimplementing them:
 
-| Foundation                                    | Phase 2 use                                                                          |
-| --------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Strict graph contracts and centralized limits | Validate every UI-created entity, clipboard payload, fixture, and projected view     |
-| Fixed Yjs schema and deterministic projection | Sole durable graph state and React rendering input                                   |
-| Domain commands and command origins           | Sole mutation path for card, edge, boundary, and text edits                          |
-| Local Y.UndoManager policy                    | Session-local undo/redo for eligible `LOCAL_EDIT` transactions                       |
-| Atomic IndexedDB update/outbox prototype      | Productized local hydration, persistence status, and recovery behavior               |
-| Incremental Y.Text textarea proof             | Basis for product text controls; no whole-string replacement per keystroke           |
-| Deterministic fixtures                        | Seed data and test inputs, extended only where Phase 2 needs product fixtures        |
-| Browser test harness                          | Real Chrome verification of IndexedDB, Web Locks, text editing, and editor workflows |
+| Foundation                                    | Phase 2 use                                                                                    |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Strict graph contracts and centralized limits | Validate every UI-created entity, clipboard payload, fixture, and projected view               |
+| Fixed Yjs schema and deterministic projection | Sole durable graph state and React rendering input                                             |
+| Domain commands and command origins           | Sole mutation path for card, edge, boundary, and text edits                                    |
+| Local Y.UndoManager policy                    | Session-local undo/redo for eligible `LOCAL_EDIT` transactions                                 |
+| Atomic IndexedDB update/outbox prototype      | Productized local hydration, persistence status, and recovery behavior                         |
+| Incremental Y.Text textarea proof             | Basis for product text controls; no whole-string replacement per keystroke                     |
+| Deterministic fixtures                        | Seed data and test inputs, extended only where Phase 2 needs product fixtures                  |
+| Browser package harness                       | Automated real-Chrome verification of IndexedDB; frontend workflows use manual Chrome evidence |
 
 The Phase 1 audit records these known boundaries that remain relevant:
 
@@ -78,7 +78,7 @@ The Phase 1 audit records these known boundaries that remain relevant:
   lifecycle. Phase 2 must add deterministic hydration, observable status changes, cleanup, and
   namespace reset behavior.
 - The Phase 1 Y.Text harness is not the product editor. Phase 2 must integrate the same incremental
-  strategy into accessible controls and rerun browser-backed selection/caret tests.
+  strategy into accessible controls and manually record supported-browser selection/caret evidence.
 - Server authentication, membership, rooms, transport, ACKs, and compaction are not implied by the
   Phase 1 spikes and remain outside this phase.
 
@@ -106,7 +106,8 @@ The Phase 1 audit records these known boundaries that remain relevant:
   entity IDs on first use or confirmed reset.
 - Light, dark, and system themes; visible focus; named controls; dialogs; inline validation; a
   shortcuts reference; and narrow-screen read-only behavior.
-- Automated unit, component, browser, and production-build checks required by the Phase 2 gate.
+- Automated shared-package/unit and production-build checks plus manual supported-browser frontend
+  acceptance required by the Phase 2 gate.
 
 ### 4.2 Excluded
 
@@ -551,7 +552,7 @@ documented optimization or explicit proposed budget amendment; it must not be si
 a pass.
 
 Clipboard, recovery JSON, external URLs, code highlighting, and rendered text require negative
-tests proving that script/HTML payloads remain inert and that opening an external URL never gives
+checks proving that script/HTML payloads remain inert and that opening an external URL never gives
 the destination access to the editor window.
 
 ## 14. Work breakdown
@@ -559,21 +560,21 @@ the destination access to the editor window.
 Tasks are completed in dependency order. Each task owns a bounded module set and an evidence file.
 Exact internal filenames may evolve, but responsibility and contracts must remain clear.
 
-| ID    | Task                                              | Depends on          | Primary output                                                                                                                    | Completion evidence                                                                                         |
-| ----- | ------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| P2-01 | Editor toolchain and package boundaries           | Phase 1             | Pinned React Flow, router, Zustand, styling/UI, component-test, and local syntax-highlighting dependencies; web feature structure | Frozen install, strict typecheck, boundary checks, and independent web build pass                           |
-| P2-02 | UI-facing document commands                       | P2-01               | Atomic batch move, mixed geometry, batch create/delete, and any selector/access APIs needed by the UI                             | Command tests prove one transaction, validation-before-mutation, immutable fields, and unchanged tombstones |
-| P2-03 | Productize local persistence                      | P2-02               | Deterministic hydration, snapshot/log replay, safe local compaction, observable status, exact-namespace reset, cleanup            | Real-browser reload and injected-failure tests pass; hydration emits no outbox duplicates                   |
-| P2-04 | Single-writer editor session                      | P2-03               | Web Lock lifecycle, BroadcastChannel hints, writable/read-only session state, unsupported-browser behavior                        | A12 passes in two independent tabs/pages with lock transfer and rehydration                                 |
-| P2-05 | Routes, shell, theme, and ephemeral store         | P2-01               | `/`, `/demo`, route errors, editor layout, theme tokens, Zustand UI slices                                                        | Component tests prove state separation and required route/layout states                                     |
-| P2-06 | Projection and canvas adapter                     | P2-02, P2-04, P2-05 | External-store projection hook, React Flow adapters, viewport controls, stable boundary layer                                     | Fixture renders with correct IDs/geometry/handles; no React Flow state enters Y.Doc                         |
-| P2-07 | Cards, palette, inspector, and Y.Text controls    | P2-06               | All card renderers, create controls, validated inspector, incremental text binding, safe code highlighting                        | All kinds create/edit; browser tests prove incremental text/caret behavior and inert payload rendering      |
-| P2-08 | Edge creation and editing                         | P2-06, P2-07        | Fixed handles, edge renderer, reconnect, inspector, keyboard alternative                                                          | Valid create/edit/reconnect passes; self-loop, immutable endpoint, and malformed-handle cases fail safely   |
-| P2-09 | Selection, geometry, alignment, and boundaries    | P2-06               | Multi-selection, preview/commit movement, resize, snap/Alt bypass, six alignments, boundary layer/editing                         | One durable transaction per completed gesture; limits and absolute boundary semantics pass                  |
-| P2-10 | Clipboard, delete/restore, history, and shortcuts | P2-07, P2-08, P2-09 | Validated copy/paste/duplicate, deletion confirmation/capture, restore action, undo/redo, command routing                         | A13/A14 and clipboard fresh-ID/internal-edge assertions pass in browser tests                               |
-| P2-11 | Demo seed, reset, save/recovery UX                | P2-03, P2-05, P2-10 | Fresh-ID web-application fixture flow, truthful status UI, recovery download, scoped reset                                        | A01 local assertion passes; reload/reset/failure states preserve or remove exactly the intended data        |
-| P2-12 | Accessibility and performance verification        | P2-11               | Keyboard workflow, screen-reader notes, narrow-screen mode, deterministic measurements                                            | Local A28 subset passes; 200/400 fixture results are recorded against named targets                         |
-| P2-13 | Phase audit and handoff                           | All prior tasks     | Final evidence matrix, exact commands/results, documented risks and later-work boundary                                           | Every Phase 2 exit criterion links to passing evidence or an explicit blocker                               |
+| ID    | Task                                              | Depends on          | Primary output                                                                                                         | Completion evidence                                                                                         |
+| ----- | ------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| P2-01 | Editor toolchain and package boundaries           | Phase 1             | Pinned React Flow, router, Zustand, styling/UI, and local syntax-highlighting dependencies; web feature structure      | Frozen install, strict typecheck, boundary checks, and independent web build pass                           |
+| P2-02 | UI-facing document commands                       | P2-01               | Atomic batch move, mixed geometry, batch create/delete, and any selector/access APIs needed by the UI                  | Command tests prove one transaction, validation-before-mutation, immutable fields, and unchanged tombstones |
+| P2-03 | Productize local persistence                      | P2-02               | Deterministic hydration, snapshot/log replay, safe local compaction, observable status, exact-namespace reset, cleanup | Real-browser reload and injected-failure tests pass; hydration emits no outbox duplicates                   |
+| P2-04 | Single-writer editor session                      | P2-03               | Web Lock lifecycle, BroadcastChannel hints, writable/read-only session state, unsupported-browser behavior             | A12 passes in two independent tabs/pages with lock transfer and rehydration                                 |
+| P2-05 | Routes, shell, theme, and ephemeral store         | P2-01               | `/`, `/demo`, route errors, editor layout, theme tokens, Zustand UI slices                                             | Package checks plus manual Chrome evidence prove state separation and route/layout states                   |
+| P2-06 | Projection and canvas adapter                     | P2-02, P2-04, P2-05 | External-store projection hook, React Flow adapters, viewport controls, stable boundary layer                          | Fixture renders with correct IDs/geometry/handles; no React Flow state enters Y.Doc                         |
+| P2-07 | Cards, palette, inspector, and Y.Text controls    | P2-06               | All card renderers, create controls, validated inspector, incremental text binding, safe code highlighting             | All kinds create/edit; manual Chrome evidence proves text/caret behavior and inert payload rendering        |
+| P2-08 | Edge creation and editing                         | P2-06, P2-07        | Fixed handles, edge renderer, reconnect, inspector, keyboard alternative                                               | Valid create/edit/reconnect passes; self-loop, immutable endpoint, and malformed-handle cases fail safely   |
+| P2-09 | Selection, geometry, alignment, and boundaries    | P2-06               | Multi-selection, preview/commit movement, resize, snap/Alt bypass, six alignments, boundary layer/editing              | One durable transaction per completed gesture; limits and absolute boundary semantics pass                  |
+| P2-10 | Clipboard, delete/restore, history, and shortcuts | P2-07, P2-08, P2-09 | Validated copy/paste/duplicate, deletion confirmation/capture, restore action, undo/redo, command routing              | Package assertions and manual Chrome evidence cover A13/A14 and clipboard behavior                          |
+| P2-11 | Demo seed, reset, save/recovery UX                | P2-03, P2-05, P2-10 | Fresh-ID web-application fixture flow, truthful status UI, recovery download, scoped reset                             | A01 local assertion passes; reload/reset/failure states preserve or remove exactly the intended data        |
+| P2-12 | Accessibility and performance verification        | P2-11               | Keyboard workflow, screen-reader notes, narrow-screen mode, deterministic measurements                                 | Local A28 subset passes; 200/400 fixture results are recorded against named targets                         |
+| P2-13 | Phase audit and handoff                           | All prior tasks     | Final evidence matrix, exact commands/results, documented risks and later-work boundary                                | Every Phase 2 exit criterion links to passing evidence or an explicit blocker                               |
 
 Tasks with satisfied dependencies may be implemented in parallel only when they do not share
 manifests, root configuration, or feature modules. The integrating agent owns dependency conflicts
@@ -620,7 +621,7 @@ A01 in this phase proves the local editor/reload portion, not authenticated serv
 A28 remains partially open until presentation is implemented. A06 and A25 remain open because
 Phase 2 does not install or test the production service worker/offline shell.
 
-Additional browser tests must cover:
+Manual supported-browser acceptance must cover:
 
 - First-use demo seeding versus existing-state hydration.
 - Direct `/demo` refresh in a served production build while online.
@@ -634,14 +635,16 @@ Additional browser tests must cover:
 - Unsafe HTML/script-like text, code, clipboard, and external-URL inputs remaining inert.
 - Narrow-screen editing disabled while viewing/recovery actions remain coherent.
 
-### 15.4 Test realism
+### 15.4 Evidence realism
 
-- IndexedDB checks run in a real supported browser, not a memory-only substitute.
+- Automated sync-client IndexedDB checks run in a real supported browser, not a memory-only
+  substitute.
 - A12 uses two independent browser pages/contexts sharing the intended storage namespace; two React
   components in one tree do not prove locking.
-- Reload tests close and rebuild the editor session from IndexedDB bytes. Reusing the existing
+- Reload evidence closes and rebuilds the editor session from IndexedDB bytes. Reusing the existing
   in-memory Y.Doc does not prove persistence.
-- Text merge/undo tests use independent Y.Docs and origin labels where remote behavior is asserted.
+- Text merge/undo package checks use independent Y.Docs and origin labels where remote behavior is
+  asserted.
 - Pointer/keyboard workflows exercise the rendered editor, not only document-model functions.
 - Performance measurements use a production build and deterministic fixtures.
 - Failure injection is deterministic and verifies unchanged durable state, not only an error toast.
@@ -661,8 +664,6 @@ pnpm test
 pnpm test:browser
 pnpm --filter @archboard/document-model test
 pnpm --filter @archboard/sync-client test
-pnpm --filter @archboard/web test
-pnpm --filter @archboard/web test:browser
 pnpm --filter @archboard/web build
 pnpm build
 pnpm phase2:verify
@@ -695,7 +696,8 @@ Phase 2 is complete only when these deliverables exist and agree:
 10. Truthful local-only save/error UI and recovery projection download.
 11. Light/dark/system themes, shortcuts dialog, visible focus, narrow-screen behavior, and recorded
     accessibility spot checks.
-12. Browser-backed A01/A12/A13/A14 evidence plus A22 regression and local A28 subset.
+12. Manual supported-browser A01/A12/A13/A14 evidence plus the automated A22 package regression and
+    manual local A28 subset.
 13. Recorded local interaction/opening performance measurements using the named fixture.
 14. A root Phase 2 verification command and updated README instructions.
 15. `docs/phase-2-editor.md` containing the final task/evidence matrix, measurements, limitations,
@@ -707,8 +709,8 @@ Phase 2 is complete only when these deliverables exist and agree:
 Phase 2 passes when:
 
 - Every P2 task is complete or explicitly marked blocked with reproducible evidence.
-- The lockfile reproduces a clean install and all Phase 2 static, unit, browser, and build checks
-  pass.
+- The lockfile reproduces a clean install; all Phase 2 static, shared-package unit, sync-client
+  browser, and build checks pass; and manual frontend evidence is recorded.
 - The Phase 1 regression gate still passes or any environment-dependent unrun portion is documented
   without weakening Phase 1 implementation guarantees.
 - `/demo` opens a validated, fresh-ID local sample and never contacts a collaboration room.
@@ -722,11 +724,11 @@ Phase 2 passes when:
 - A14 proves fresh-ID restore, internal-edge remapping, and unchanged tombstones.
 - The A22 regression proves that a persistence failure never reports saved state, pauses editing,
   and leaves an in-memory recovery download available.
-- Text controls use incremental Y.Text operations and pass the supported-browser caret/selection
-  cases.
+- Text controls use incremental Y.Text operations and have recorded supported-browser
+  caret/selection evidence.
 - Drag and resize preview locally and commit once per completed gesture; alignment is one
   transaction.
-- Clipboard and code/text rendering negative tests show that untrusted content remains inert.
+- Clipboard and code/text rendering negative checks show that untrusted content remains inert.
 - The local A28 keyboard workflow is usable with named controls and visible focus, and remaining
   presentation coverage is explicitly deferred.
 - Performance results are recorded honestly against the 200-node/400-edge targets.

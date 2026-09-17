@@ -227,7 +227,7 @@ Provide light/dark/system themes, loading skeletons, inline field errors, access
 | Identity | Better Auth mounted through Express integration; GitHub OAuth | Library-managed sessions; avoid custom password and OAuth protocols |
 | Database | PostgreSQL + TypeORM and committed migrations | Board access, metadata, comments, binary CRDT snapshots/updates, receipts |
 | Validation | Zod shared schemas | Wire messages, REST DTOs, import data, and graph projection checks |
-| Testing | Vitest for shared/frontend; Jest + Supertest for Nest; Playwright end-to-end | Domain semantics, real DB boundaries, independent browser contexts |
+| Testing | Vitest for shared packages; Jest + Supertest for Nest; manual supported-browser frontend acceptance | Domain semantics and real DB boundaries remain automated; frontend behavior is recorded manually in real browser contexts |
 | Deployment | Docker Compose, Caddy reverse proxy, one Nest process, PostgreSQL | Same-origin frontend/API/WS and an understandable initial operating model |
 
 Resolve current mutually compatible stable versions during M00, pin direct versions and the lockfile, and record the matrix. Do not copy versions from this document's date or use floating `latest` ranges. Use a supported Node LTS satisfying all selected engines.

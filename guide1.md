@@ -192,7 +192,8 @@ Use the technologies selected by `plan.md` and `phase2.md`:
 - Lucide for icons.
 - `@xyflow/react` for canvas interaction and rendering.
 - A pinned, locally bundled, non-executing syntax tokenizer for code-card read views.
-- Vitest for unit/component/browser tests and Playwright for independent-page workflows.
+- Vitest for shared-package units and browser adapters. Frontend behavior uses manual supported-
+  browser acceptance evidence; `apps/web` does not retain an automated test suite.
 
 P2-01 chooses mutually compatible exact versions, initializes shadcn/ui, updates the lockfile, and
 records them. Do not use floating `latest` ranges. Run the shadcn CLI at an exact recorded version;
@@ -345,22 +346,21 @@ current ones.
 | `pnpm lint`                          | Run lint and package-boundary rules                                         |
 | `pnpm typecheck`                     | Run strict TypeScript checks across the workspace                           |
 | `pnpm test`                          | Run workspace unit tests, including Phase 1 regressions                     |
-| `pnpm test:browser`                  | Run browser-backed package and web tests                                    |
-| `pnpm test:e2e`                      | Run rendered editor workflows in independent Playwright pages/contexts      |
+| `pnpm test:browser`                  | Run browser-backed non-frontend package tests                               |
 | `pnpm test:integration`              | Preserve the existing API/PostgreSQL regression command                     |
 | `pnpm build`                         | Build every application and publishable package                             |
 | `pnpm --filter @archboard/web build` | Build the web application independently                                     |
 | `pnpm phase2:measure`                | Measure named local editor fixtures in a production build                   |
 | `pnpm phase1:verify`                 | Re-run the complete Phase 1 gate when its required environment is available |
-| `pnpm phase2:verify`                 | Run the complete Phase 2 static, unit, browser, end-to-end, and build gate  |
+| `pnpm phase2:verify`                 | Run static, package-unit, sync-browser, boundary, and build checks          |
 
-P2-01 establishes the runner/configuration needed by later work and documents any scripts that are
-not meaningful until their features exist. It must not add a placeholder `phase2:verify` that exits
-successfully without running the gate. P2-12 adds the complete aggregate script no later than its
-own commit.
+P2-01 establishes the toolchain needed by later work. It must not add a placeholder
+`phase2:verify` that exits successfully without running the gate. P2-12 adds the complete aggregate
+script no later than its own commit.
 
-Commands requiring a production-build preview must start and stop it deterministically. Test
-scripts must not leave Vite servers, Playwright browsers, locks, or temporary profiles running.
+Manual frontend evidence requiring a production-build preview must start and stop it
+deterministically. Package test scripts must not leave browsers, locks, or temporary profiles
+running.
 Database-dependent Phase 1 regressions fail clearly or are explicitly reported unrun when their
 existing environment is unavailable; Phase 2 must not silently replace them with mocks.
 
@@ -385,7 +385,7 @@ Read first:
 Owned paths:
 
 - Root `package.json`, `pnpm-lock.yaml`, and test/verification runner configuration.
-- `apps/web/package.json`, TypeScript/Vite/Vitest/Playwright/Tailwind configuration.
+- `apps/web/package.json`, TypeScript/Vite/Tailwind configuration.
 - shadcn/ui `components.json`, import aliases, shared `cn` utility, theme variables, and the minimal
   checked-in primitive source required by Phase 2.
 - ESLint/package-boundary checks and root README Phase 2 entry points.
@@ -394,8 +394,7 @@ Owned paths:
 Required work:
 
 - Add exact compatible versions for React Flow, TanStack Router, Zustand, Tailwind, Lucide,
-  shadcn/ui's required underlying primitive/helper packages, component-testing helpers, and a local
-  syntax tokenizer.
+  shadcn/ui's required underlying primitive/helper packages and a local syntax tokenizer.
 - Initialize shadcn/ui in `apps/web` with an exact recorded CLI version. Commit `components.json`,
   the `@/` alias mapping, the shared `cn` utility, theme variables, and only the foundational
   primitives required by the named P2-05 through P2-10 interactions (for example buttons, labels,
@@ -407,8 +406,8 @@ Required work:
   contribution.
 - Configure Tailwind/content scanning and design-token entry points without implementing the final
   editor appearance.
-- Configure browser component tests and Playwright end-to-end tests with deterministic local web
-  server lifecycle.
+- Remove automated `apps/web` test scripts and dependencies. Frontend behavior is verified through
+  manual supported-browser evidence in the later feature commit that owns each interaction.
 - Extend boundary checks so shared packages cannot import React/React Flow/Zustand and sync-client
   cannot import React.
 - Add named Phase 2 UI/test constants in focused modules where configuration already needs them.
@@ -418,8 +417,8 @@ Required work:
 
 Non-goals:
 
-- No routes, editor shell, graph rendering, persistence changes, or composed product UI beyond a
-  minimal primitive smoke harness.
+- No routes, editor shell, graph rendering, persistence changes, composed product UI, or frontend
+  behavior tests.
 - No API dependencies, database changes, PWA plugin, service worker, or collaboration transport.
 - No large library added merely for a future milestone.
 
@@ -431,7 +430,6 @@ pnpm install --frozen-lockfile
 pnpm format:check
 pnpm lint
 pnpm typecheck
-pnpm --filter @archboard/web test
 pnpm --filter @archboard/web build
 pnpm build
 ```
@@ -439,9 +437,7 @@ pnpm build
 Completion evidence:
 
 - Clean frozen install and independent web build.
-- A minimal browser/component test proves the configured runner executes.
-- A primitive smoke test renders the checked-in shadcn/ui button, dialog, tooltip, form control, and
-  collapsible/panel foundations with accessible names and keyboard operation.
+- No automated frontend test dependency, script, configuration, or test file remains.
 - Boundary-negative fixtures fail when forbidden imports are introduced.
 - Production build uses the checked-in shadcn/ui source and locally bundled assets, with no runtime
   registry, hosted stylesheet, or syntax-highlighting CDN reference.
@@ -602,7 +598,7 @@ Owned paths:
 - `packages/sync-client/src/locking/**` or an equivalently focused browser-session module.
 - Browser lock/BroadcastChannel config and exports.
 - Real-browser multi-page tests and fixtures.
-- Root/browser test runner changes strictly required for independent pages.
+- Non-frontend browser-package runner changes strictly required for independent pages.
 - `docs/evidence/phase2/P2-04.md`.
 
 Required work:
@@ -629,7 +625,6 @@ Required checks:
 ```text
 pnpm --filter @archboard/sync-client test
 pnpm test:browser -- web-lock broadcast-channel
-pnpm test:e2e -- single-writer
 pnpm lint
 pnpm typecheck
 pnpm build
@@ -663,7 +658,7 @@ Owned paths:
 - `apps/web/src/app/**`.
 - `apps/web/src/features/editor/state/**`.
 - Shared web-only UI primitives and `apps/web/src/styles/**`.
-- Web entry/bootstrap and route/component tests.
+- Web entry/bootstrap and manual supported-browser route evidence.
 - `docs/evidence/phase2/P2-05.md`.
 
 Required work:
@@ -689,8 +684,6 @@ Non-goals:
 Required checks:
 
 ```text
-pnpm --filter @archboard/web test -- router shell state theme
-pnpm --filter @archboard/web test:browser -- shell focus theme
 pnpm --filter @archboard/web typecheck
 pnpm --filter @archboard/web build
 pnpm lint
@@ -754,8 +747,6 @@ Non-goals:
 Required checks:
 
 ```text
-pnpm --filter @archboard/web test -- editor-session projection canvas viewport
-pnpm --filter @archboard/web test:browser -- canvas viewport
 pnpm --filter @archboard/web typecheck
 pnpm --filter @archboard/web build
 pnpm lint
@@ -791,7 +782,7 @@ Owned paths:
 - `apps/web/src/features/editor/cards/**`.
 - `apps/web/src/features/editor/inspector/**`.
 - Palette integration and reusable product text binding.
-- Safe syntax highlighting adapter and tests.
+- Safe syntax highlighting adapter and manual inert-rendering checks.
 - `docs/evidence/phase2/P2-07.md`.
 
 Required work:
@@ -819,8 +810,6 @@ Non-goals:
 Required checks:
 
 ```text
-pnpm --filter @archboard/web test -- cards palette inspector highlighting
-pnpm --filter @archboard/web test:browser -- ytext inspector composition caret
 pnpm --filter @archboard/document-model test -- text undo
 pnpm --filter @archboard/web build
 pnpm lint
@@ -830,10 +819,11 @@ pnpm typecheck
 Completion evidence:
 
 - Each card kind creates, renders, edits, persists, and hydrates with its exact allowed fields.
-- Browser tests show incremental insert/delete deltas and supported caret/selection preservation.
+- Manual Chrome evidence shows incremental insert/delete behavior and supported caret/selection
+  preservation.
 - Invalid/oversized values never mutate the document.
 - Script-like code/text is displayed inertly, and highlighting loads no remote asset.
-- External-link tests prove protocol restriction and opener isolation.
+- Manual negative checks prove external-link protocol restriction and opener isolation.
 
 ### P2-08 — Add editable graph connections
 
@@ -854,7 +844,7 @@ Owned paths:
 
 - `apps/web/src/features/editor/connections/**`.
 - Edge portions of inspector/canvas integration.
-- Connection browser/component tests.
+- Manual supported-browser connection evidence.
 - `docs/evidence/phase2/P2-08.md`.
 
 Required work:
@@ -879,8 +869,6 @@ Non-goals:
 Required checks:
 
 ```text
-pnpm --filter @archboard/web test -- connections edge-inspector
-pnpm --filter @archboard/web test:browser -- connect reconnect keyboard-connection
 pnpm --filter @archboard/document-model test -- edges projection
 pnpm --filter @archboard/web build
 pnpm lint
@@ -943,8 +931,6 @@ Non-goals:
 Required checks:
 
 ```text
-pnpm --filter @archboard/web test -- selection geometry alignment boundaries
-pnpm --filter @archboard/web test:browser -- drag resize snap alignment boundaries
 pnpm --filter @archboard/document-model test -- geometry boundaries
 pnpm --filter @archboard/web build
 pnpm lint
@@ -1008,10 +994,7 @@ Non-goals:
 Required checks:
 
 ```text
-pnpm --filter @archboard/web test -- clipboard deletion restore history shortcuts
-pnpm --filter @archboard/web test:browser -- clipboard undo restore shortcuts
 pnpm --filter @archboard/document-model test -- commands undo restore
-pnpm test:e2e -- undo-remote restore-deleted
 pnpm lint
 pnpm typecheck
 pnpm build
@@ -1046,7 +1029,7 @@ Owned paths:
 - `packages/fixtures/src/templates/**` or equivalent product-fixture location.
 - `apps/web/src/features/editor/demo/**`.
 - Editor-session integration required for seeding/reset/status/recovery.
-- Demo lifecycle browser/end-to-end tests.
+- Manual supported-browser demo lifecycle evidence.
 - `docs/evidence/phase2/P2-11.md`.
 
 Required work:
@@ -1079,9 +1062,6 @@ Required checks:
 
 ```text
 pnpm --filter @archboard/fixtures test -- web-application template
-pnpm --filter @archboard/web test -- demo reset recovery status
-pnpm --filter @archboard/web test:browser -- demo persistence failure
-pnpm test:e2e -- demo-reload demo-reset storage-failure
 pnpm --filter @archboard/web build
 pnpm lint
 pnpm typecheck
@@ -1114,11 +1094,11 @@ Read first:
 
 Owned paths:
 
-- Phase 2 browser/end-to-end accessibility, security-negative, and performance tests.
+- Phase 2 manual browser accessibility, security-negative, and performance evidence.
 - Deterministic typical/limit frontend fixtures under `packages/fixtures`.
 - Measurement scripts and root `phase2:measure`/`phase2:verify` orchestration.
-- Small accessibility/testability corrections in Phase 2 web features when directly exposed by
-  these checks; substantial behavioral fixes require focused fix commits.
+- Small accessibility corrections in Phase 2 web features when directly exposed by these checks;
+  substantial behavioral fixes require focused fix commits.
 - `docs/evidence/phase2/P2-12.md`.
 
 Required work:
@@ -1130,14 +1110,15 @@ Required work:
 - Verify visible focus, dialog focus trap/return, live-region save/error/restore announcements,
   accessible names, and non-color-only states.
 - Verify narrow screens are coherently read-only and do not expose broken editing controls.
-- Add negative tests for HTML/script-like graph text, clipboard payloads, syntax highlighting,
+- Perform negative checks for HTML/script-like graph text, clipboard payloads, syntax highlighting,
   recovery JSON, and external URL protocols/opener isolation.
 - Measure production-build open-to-interactive time for a cached 200-node/400-edge fixture.
 - Measure pan/drag p95 frame time on the same fixture without generating per-move durable updates.
 - Record hardware, OS, browser, build mode, sample count, fixture counts, method, raw summary, and
   comparison with the 2-second and 32-ms targets.
-- Assemble `pnpm phase2:verify` so it runs formatting, lint, strict typecheck, unit, browser,
-  end-to-end, independent web build, workspace build, boundary, and bundle-secret/CDN checks.
+- Assemble `pnpm phase2:verify` so it runs formatting, lint, strict typecheck, shared-package units,
+  sync-client browser checks, independent web build, workspace build, boundary, and
+  bundle-secret/CDN checks.
 - Re-run Phase 1 shared-package regressions and `phase1:verify` when its required database
   environment is available.
 
@@ -1346,8 +1327,8 @@ The `phase-2-local-editor` branch is ready to close only when:
 
 - P2-01 through P2-13 are present in order, with focused fixes explicitly recorded where needed.
 - The lockfile reproduces a clean install.
-- Formatting, lint, strict typecheck, unit, browser, end-to-end, boundary, independent web build,
-  and workspace build checks pass.
+- Formatting, lint, strict typecheck, shared-package unit, sync-client browser, boundary,
+  independent web build, and workspace build checks pass; manual frontend evidence is recorded.
 - Phase 1 shared contracts, convergence, persistence, auth/WS spike, durable receipt, and worker
   behavior have not been weakened; the full old gate is passed when its database environment is
   available or precisely reported unrun.
@@ -1366,7 +1347,8 @@ The `phase-2-local-editor` branch is ready to close only when:
 - Device-save labels correspond to committed IndexedDB state; storage failure pauses mutation and
   offers the current in-memory recovery projection.
 - Reset holds the writer lock and deletes only the exact demo namespace.
-- Clipboard, rendered text/code, recovery JSON, and external-link security-negative tests pass.
+- Clipboard, rendered text/code, recovery JSON, and external-link manual security-negative checks
+  pass.
 - Opening/interaction measurements are recorded honestly against the 2-second and 32-ms targets.
 - The final audit distinguishes local reload safety from service-worker offline navigation and
   contains no authentication, server durability, collaboration, deployment, or version 1 release
