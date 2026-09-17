@@ -188,15 +188,18 @@ Use the technologies selected by `plan.md` and `phase2.md`:
 - React and Vite for the web application.
 - TanStack Router for routes.
 - Zustand for ephemeral interface state only.
-- Tailwind CSS and checked-in shadcn/ui-style primitives for visual composition.
+- Tailwind CSS and checked-in shadcn/ui primitives for visual composition.
 - Lucide for icons.
 - `@xyflow/react` for canvas interaction and rendering.
 - A pinned, locally bundled, non-executing syntax tokenizer for code-card read views.
 - Vitest for unit/component/browser tests and Playwright for independent-page workflows.
 
-P2-01 chooses mutually compatible exact versions, updates the lockfile, and records them. Do not
-use floating `latest` ranges. shadcn/ui primitives are source owned by the repository after they
-are added; do not add a runtime dependency on a hosted registry or stylesheet.
+P2-01 chooses mutually compatible exact versions, initializes shadcn/ui, updates the lockfile, and
+records them. Do not use floating `latest` ranges. Run the shadcn CLI at an exact recorded version;
+commit `components.json`, the alias and Tailwind/CSS-variable setup, the shared `cn` utility, and the
+small primitive set required by named Phase 2 interactions. Generated shadcn/ui component source is
+owned by the repository after it is added. The application must not depend on the CLI, registry, or
+a hosted stylesheet at runtime.
 
 Add only dependencies required by a named Phase 2 behavior. Do not add a second graph store,
 another CRDT, a full rich-text editor, a state persistence framework, a second icon set, or a
@@ -383,14 +386,23 @@ Owned paths:
 
 - Root `package.json`, `pnpm-lock.yaml`, and test/verification runner configuration.
 - `apps/web/package.json`, TypeScript/Vite/Vitest/Playwright/Tailwind configuration.
-- Minimal checked-in UI primitive/config files required to prove the toolchain.
+- shadcn/ui `components.json`, import aliases, shared `cn` utility, theme variables, and the minimal
+  checked-in primitive source required by Phase 2.
 - ESLint/package-boundary checks and root README Phase 2 entry points.
 - `docs/evidence/phase2/P2-01.md`.
 
 Required work:
 
-- Add exact compatible versions for React Flow, TanStack Router, Zustand, Tailwind, Lucide, the
-  minimum accessible UI primitives, component-testing helpers, and a local syntax tokenizer.
+- Add exact compatible versions for React Flow, TanStack Router, Zustand, Tailwind, Lucide,
+  shadcn/ui's required underlying primitive/helper packages, component-testing helpers, and a local
+  syntax tokenizer.
+- Initialize shadcn/ui in `apps/web` with an exact recorded CLI version. Commit `components.json`,
+  the `@/` alias mapping, the shared `cn` utility, theme variables, and only the foundational
+  primitives required by the named P2-05 through P2-10 interactions (for example buttons, labels,
+  inputs, textareas, dialogs, tooltips, selects, and collapsible/panel controls). List the actual
+  selected primitives and their consumers in P2-01 evidence.
+- Review generated primitive source before committing it. Remove unused variants, confirm it uses
+  local imports and design tokens, and keep later product composition inside its owning feature.
 - Record why the chosen tokenizer is safe for inert local highlighting and its production bundle
   contribution.
 - Configure Tailwind/content scanning and design-token entry points without implementing the final
@@ -406,7 +418,8 @@ Required work:
 
 Non-goals:
 
-- No routes, editor shell, graph rendering, persistence changes, or product UI.
+- No routes, editor shell, graph rendering, persistence changes, or composed product UI beyond a
+  minimal primitive smoke harness.
 - No API dependencies, database changes, PWA plugin, service worker, or collaboration transport.
 - No large library added merely for a future milestone.
 
@@ -427,8 +440,11 @@ Completion evidence:
 
 - Clean frozen install and independent web build.
 - A minimal browser/component test proves the configured runner executes.
+- A primitive smoke test renders the checked-in shadcn/ui button, dialog, tooltip, form control, and
+  collapsible/panel foundations with accessible names and keyboard operation.
 - Boundary-negative fixtures fail when forbidden imports are introduced.
-- Production build uses locally bundled assets and does not reference a syntax-highlighting CDN.
+- Production build uses the checked-in shadcn/ui source and locally bundled assets, with no runtime
+  registry, hosted stylesheet, or syntax-highlighting CDN reference.
 
 ### P2-02 — Add atomic UI-facing document commands
 
