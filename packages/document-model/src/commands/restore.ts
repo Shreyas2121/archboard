@@ -9,6 +9,7 @@ import {
 import type * as Y from 'yjs';
 
 import { getGraphDocumentRoots } from '../schema/document.js';
+import { readPhysicalGraph } from '../validation/read.js';
 import { GraphCommandError } from './error.js';
 import {
   LOCAL_STRUCTURAL_ORIGIN,
@@ -34,6 +35,10 @@ export function restoreDeletedObjects(
   createId: FreshIdFactory,
 ): RestoreResult {
   const source = graphProjectionSchema.parse(captured);
+  const sourceEntities = [...source.nodes, ...source.edges, ...source.boundaries, ...source.steps];
+  if (new Set(sourceEntities.map(({ id }) => id)).size !== sourceEntities.length) {
+    throw new GraphCommandError('Restore capture contains a duplicate entity ID.');
+  }
   assertLiveCapacity(document, {
     nodes: source.nodes.length,
     edges: source.edges.length,
@@ -72,6 +77,34 @@ export function restoreDeletedObjects(
     edgeIds: step.edgeIds.map((id) => idMap.get(id) ?? id),
   }));
   const graph = graphProjectionSchema.parse({ ...source, nodes, edges, boundaries, steps });
+  const physical = readPhysicalGraph(document);
+  const availableNodeIds = new Set(
+    [...physical.nodes.keys()].filter((id) => !physical.deletedNodes.has(id)),
+  );
+  for (const { id } of nodes) availableNodeIds.add(id);
+  for (const edge of edges) {
+    if (!availableNodeIds.has(edge.sourceId) || !availableNodeIds.has(edge.targetId)) {
+      throw new GraphCommandError(
+        `Restored edge ${edge.id} refers to a node outside the live batch.`,
+      );
+    }
+  }
+  const availableEdgeIds = new Set(
+    [...physical.edges.keys()].filter((id) => !physical.deletedEdges.has(id)),
+  );
+  for (const { id } of edges) availableEdgeIds.add(id);
+  for (const step of steps) {
+    if (step.nodeIds.some((id) => !availableNodeIds.has(id))) {
+      throw new GraphCommandError(
+        `Restored step ${step.id} refers to a node outside the live batch.`,
+      );
+    }
+    if (step.edgeIds.some((id) => !availableEdgeIds.has(id))) {
+      throw new GraphCommandError(
+        `Restored step ${step.id} refers to an edge outside the live batch.`,
+      );
+    }
+  }
   const roots = getGraphDocumentRoots(document);
   document.transact(() => {
     for (const node of graph.nodes) roots.nodes.set(node.id, nodeMap(node));

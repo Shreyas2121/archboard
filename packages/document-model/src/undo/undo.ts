@@ -10,3 +10,7 @@ export function createLocalUndoManager(document: Y.Doc): Y.UndoManager {
     trackedOrigins: new Set([COMMAND_ORIGINS.LOCAL_EDIT]),
   });
 }
+
+export function stopLocalUndoCapture(undoManager: Y.UndoManager): void {
+  undoManager.stopCapturing();
+}

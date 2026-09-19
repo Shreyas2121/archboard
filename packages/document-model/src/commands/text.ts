@@ -66,7 +66,7 @@ function validateNodeText(
   }
 }
 
-function resolveText(document: Y.Doc, target: GraphTextTarget): Y.Text {
+export function resolveGraphText(document: Y.Doc, target: GraphTextTarget): Y.Text {
   const roots = getGraphDocumentRoots(document);
   const root =
     target.entity === 'node'
@@ -88,7 +88,7 @@ function resolveText(document: Y.Doc, target: GraphTextTarget): Y.Text {
 }
 
 export function editGraphText(document: Y.Doc, target: GraphTextTarget, edit: TextEdit): void {
-  const text = resolveText(document, target);
+  const text = resolveGraphText(document, target);
   const value = editedValue(text.toString(), edit);
   if (target.entity === 'node') validateNodeText(document, target, value);
   else if (target.entity === 'edge') {
