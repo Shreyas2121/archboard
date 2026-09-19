@@ -1,5 +1,6 @@
 export const SYNC_DATABASE_NAME = 'archboard-sync-client' as const;
 export const SYNC_DATABASE_VERSION = 1 as const;
+export const LOCAL_DEMO_USER_KEY = 'local-demo' as const;
 
 export const SYNC_STORE_NAMES = {
   LOCAL_SNAPSHOTS: 'localSnapshots',
@@ -23,3 +24,9 @@ export const OUTBOX_STATUSES = {
 } as const;
 
 export const UPDATE_HASH_ALGORITHM = 'SHA-256' as const;
+
+// Named product budgets are intentionally literal and audited at their exact boundaries.
+// eslint-disable-next-line @typescript-eslint/no-magic-numbers
+export const LOCAL_SNAPSHOT_UPDATE_THRESHOLD = 32 as const;
+// eslint-disable-next-line @typescript-eslint/no-magic-numbers
+export const LOCAL_SNAPSHOT_BYTE_THRESHOLD = 512 * 1024;

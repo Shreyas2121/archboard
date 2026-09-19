@@ -118,3 +118,7 @@ export function copyOutboxRecord(record: OutboxRecord): OutboxRecord {
     payloadHash: Uint8Array.from(record.payloadHash),
   };
 }
+
+export function copyLocalSnapshot(record: LocalSnapshotRecord): LocalSnapshotRecord {
+  return { ...record, updateBytes: Uint8Array.from(record.updateBytes) };
+}
