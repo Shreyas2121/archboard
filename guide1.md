@@ -695,7 +695,8 @@ Completion evidence:
 - Direct online refresh of `/demo` renders the route shell in a served production build.
 - Unknown routes show a useful link to `/demo`.
 - Theme/panel/selection preferences remain outside graph projection.
-- A store test demonstrates graph nodes/edges cannot be inserted into the UI state API.
+- A compile-time store contract and manual browser evidence demonstrate that graph nodes/edges
+  cannot be inserted into the UI state API.
 
 ### P2-06 — Connect the editor session and render the canvas
 
@@ -717,7 +718,7 @@ Owned paths:
 - `apps/web/src/features/editor/application/**`.
 - `apps/web/src/features/editor/canvas/**`.
 - Minimal boundary render layer needed to verify z-order; full boundary editing remains P2-09.
-- Editor session/projection adapter tests.
+- Editor session/projection adapter implementation plus manual supported-browser evidence.
 - `docs/evidence/phase2/P2-06.md`.
 
 Required work:
@@ -903,7 +904,7 @@ Owned paths:
 - `apps/web/src/features/editor/selection/**`.
 - `apps/web/src/features/editor/boundaries/**`.
 - Geometry portions of canvas/inspector/state.
-- Pointer and keyboard geometry tests.
+- Pointer and keyboard geometry implementation plus manual supported-browser evidence.
 - `docs/evidence/phase2/P2-09.md`.
 
 Required work:
