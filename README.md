@@ -4,8 +4,10 @@ Archboard is an offline-capable collaborative architecture editor. This reposito
 monorepo containing independently deployable web and API applications plus framework-independent
 shared packages.
 
-The current implementation scope is Phase 1. Read [`plan.md`](./plan.md),
-[`phase1.md`](./phase1.md), and [`guide.md`](./guide.md) before making changes.
+The active implementation scope is Phase 2: the local editor. Read [`plan.md`](./plan.md),
+[`phase2.md`](./phase2.md), and the commit-by-commit [`guide1.md`](./guide1.md) before making
+changes. The completed Phase 1 foundation and compatibility evidence remain authoritative inputs
+to this phase.
 
 ## Requirements
 
@@ -30,25 +32,28 @@ Render for `apps/api`, and Neon PostgreSQL for backend persistence.
 
 ## Commands
 
-| Command                          | Purpose                                         |
-| -------------------------------- | ----------------------------------------------- |
-| `pnpm install --frozen-lockfile` | Reproduce the dependency graph                  |
-| `pnpm format:check`              | Check formatting                                |
-| `pnpm lint`                      | Run lint and package-boundary rules             |
-| `pnpm typecheck`                 | Run strict TypeScript checks                    |
-| `pnpm test`                      | Run workspace unit tests                        |
-| `pnpm test:integration`          | Run API integration tests                       |
-| `pnpm test:browser`              | Run browser-backed sync-client and Y.Text units |
-| `pnpm build`                     | Build applications and packages                 |
-| `pnpm db:migration:generate`     | Generate a TypeORM migration after C08          |
-| `pnpm db:migration:run`          | Apply TypeORM migrations after C08              |
-| `pnpm db:migration:show`         | Show TypeORM migration state after C08          |
-| `pnpm auth:schema:check`         | Check Better Auth schema drift after C08        |
-| `pnpm phase1:verify`             | Run the complete Phase 1 gate after C15         |
+| Command                          | Purpose                                        |
+| -------------------------------- | ---------------------------------------------- |
+| `pnpm install --frozen-lockfile` | Reproduce the dependency graph                 |
+| `pnpm format:check`              | Check formatting                               |
+| `pnpm lint`                      | Run lint and package-boundary rules            |
+| `pnpm typecheck`                 | Run strict TypeScript checks                   |
+| `pnpm test`                      | Run workspace unit tests                       |
+| `pnpm test:integration`          | Run API integration tests                      |
+| `pnpm test:browser`              | Run browser-backed sync-client package units   |
+| `pnpm boundary:check`            | Check package boundaries and negative fixtures |
+| `pnpm build`                     | Build applications and packages                |
+| `pnpm db:migration:generate`     | Generate a TypeORM migration after C08         |
+| `pnpm db:migration:run`          | Apply TypeORM migrations after C08             |
+| `pnpm db:migration:show`         | Show TypeORM migration state after C08         |
+| `pnpm auth:schema:check`         | Check Better Auth schema drift after C08       |
+| `pnpm phase1:verify`             | Run the complete Phase 1 gate after C15        |
 
-The browser-backed sync-client and Y.Text units use Playwright with an installed stable Google
-Chrome. Package installation does not download a second browser binary. Use
-`pnpm test:browser -- indexeddb outbox` or `pnpm test:browser -- ytext` to run one spike's units.
+The browser-backed sync-client units use Playwright with an installed stable Google Chrome. Package
+installation does not download a second browser binary. The web application does not retain an
+automated frontend test suite; its feature evidence is recorded through manual supported-browser
+acceptance and production builds. Use `pnpm test:browser -- indexeddb outbox` to filter the
+sync-client units.
 
 `pnpm phase1:verify` runs the full Phase 1 command gate. It requires an ignored root `.env` with
 paired Neon pooled and direct URLs; it does not print credentials. The database integration test now

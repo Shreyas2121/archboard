@@ -9,6 +9,7 @@ const frameworkIndependentFiles = [
   'packages/contracts/src/**/*.ts',
   'packages/document-model/src/**/*.ts',
 ];
+const reactIndependentFiles = ['packages/sync-client/src/**/*.ts'];
 
 export default tseslint.config(
   {
@@ -63,8 +64,25 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ['react', 'react/*', '@nestjs/*'],
-              message: 'Shared domain packages must remain independent of React and NestJS.',
+              group: ['react', 'react/*', '@xyflow/react', 'zustand', 'zustand/*', '@nestjs/*'],
+              message:
+                'Shared domain packages must remain independent of React, React Flow, Zustand, and NestJS.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: reactIndependentFiles,
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['react', 'react/*'],
+              message: 'The sync client must remain independent of React.',
             },
           ],
         },

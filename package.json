@@ -10,6 +10,7 @@
   },
   "scripts": {
     "auth:schema:check": "pnpm --filter @archboard/api run auth:schema:check",
+    "boundary:check": "node scripts/check-phase1-boundaries.mjs --negative-fixtures",
     "build": "pnpm -r --if-present run build",
     "db:migration:generate": "pnpm --filter @archboard/api run db:migration:generate",
     "db:migration:run": "pnpm --filter @archboard/api run db:migration:run",

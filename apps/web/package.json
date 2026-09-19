@@ -7,22 +7,30 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "dev": "vite",
     "preview": "vite preview",
-    "test": "vitest run --exclude '**/*.browser.test.ts' --passWithNoTests",
-    "test:browser": "vitest run --config vitest.browser.config.ts --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "catalog:",
+    "@tanstack/react-router": "catalog:",
+    "@xyflow/react": "catalog:",
+    "class-variance-authority": "catalog:",
+    "cn": "catalog:",
+    "lucide-react": "catalog:",
+    "radix-ui": "catalog:",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "shiki": "catalog:",
+    "tw-animate-css": "catalog:",
     "yjs": "13.6.32",
-    "zod": "4.6.4"
+    "zod": "4.6.4",
+    "zustand": "catalog:"
   },
   "devDependencies": {
-    "@vitest/browser-playwright": "5.0.0",
+    "@tailwindcss/vite": "catalog:",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
-    "playwright": "1.63.0",
+    "tailwindcss": "catalog:",
     "vite": "8.3.0"
   }
 }
