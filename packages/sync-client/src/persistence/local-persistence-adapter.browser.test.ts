@@ -298,6 +298,34 @@ describe('IndexedDB persistence and outbox units in a real browser', () => {
 });
 
 describe('productized IndexedDB hydration, snapshot, outbox, and failure lifecycle', () => {
+  it('hydrates read-only mode without attaching a persistence writer', async () => {
+    const storageNamespace = namespace();
+    const writerDocument = createGraphDocument();
+    const writer = await openAdapter(writerDocument, storageNamespace);
+    createNode(writerDocument, node('Durable writer node'));
+    await writer.whenIdle();
+    await writer.close();
+
+    const readOnlyDocument = createGraphDocument();
+    const readOnly = await LocalPersistenceAdapter.open({
+      namespace: storageNamespace,
+      document: readOnlyDocument,
+      mode: 'read-only',
+    });
+    openAdapters.push(readOnly);
+    const before = await listBoardStorageNamespaceRecords(storageNamespace);
+    expect(readOnly.getSnapshot()).toMatchObject({
+      phase: LOCAL_PERSISTENCE_PHASES.READY,
+      editingPaused: true,
+    });
+    expect(() => readOnly.assertEditingAllowed()).toThrow(EditingPausedForStorageError);
+    createNode(readOnlyDocument, node('Must remain memory-only'));
+    await readOnly.whenIdle();
+    const after = await listBoardStorageNamespaceRecords(storageNamespace);
+    expect(after.localUpdates).toEqual(before.localUpdates);
+    expect(after.outbox).toEqual(before.outbox);
+  });
+
   it('uses both named snapshot thresholds at their exact boundaries', () => {
     expect(shouldCreateLocalSnapshot(ONE_BELOW_SNAPSHOT_THRESHOLD, 0)).toBe(false);
     expect(shouldCreateLocalSnapshot(LOCAL_SNAPSHOT_UPDATE_THRESHOLD, 0)).toBe(true);

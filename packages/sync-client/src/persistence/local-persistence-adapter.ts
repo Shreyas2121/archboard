@@ -65,6 +65,7 @@ export interface LocalPersistenceStatus {
 export interface LocalPersistenceAdapterOptions {
   readonly namespace: BoardStorageNamespace;
   readonly document: Y.Doc;
+  readonly mode?: 'read-write' | 'read-only';
   readonly failpoints?: IndexedDbFailpointController;
   readonly createUpdateId?: () => string;
   readonly now?: () => Date;
@@ -129,6 +130,7 @@ export class LocalPersistenceAdapter {
   private readonly createUpdateId: () => string;
   private readonly now: () => Date;
   private readonly graphSchemaVersion: number;
+  private readonly readOnly: boolean;
   private readonly listeners = new Set<StatusListener>();
   private database: SyncClientDatabaseConnection | undefined;
   private initialization: Promise<void> | undefined;
@@ -143,6 +145,7 @@ export class LocalPersistenceAdapter {
   private constructor(options: LocalPersistenceAdapterOptions) {
     this.namespace = boardStorageNamespaceKey(options.namespace);
     this.graphSchemaVersion = options.namespace.graphSchemaVersion;
+    this.readOnly = options.mode === 'read-only';
     this.document = options.document;
     this.failpoints = options.failpoints ?? new IndexedDbFailpointController();
     this.createUpdateId = options.createUpdateId ?? (() => crypto.randomUUID());
@@ -397,21 +400,25 @@ export class LocalPersistenceAdapter {
     }
 
     this.nextLocalSequence = Math.max(throughSequence, records.at(-1)?.localSequence ?? 0);
-    try {
-      await this.requireDatabase().put(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS, {
-        namespace: this.namespace,
-        throughLocalSequence: this.nextLocalSequence,
-        updateBytes: Y.encodeStateAsUpdate(this.document),
-        updatedAt: this.now().toISOString(),
-      });
-      await this.deleteCoveredLocalUpdates(this.nextLocalSequence, records);
-    } catch {
-      this.recordStorageFailure();
-      return;
+    if (!this.readOnly) {
+      try {
+        await this.requireDatabase().put(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS, {
+          namespace: this.namespace,
+          throughLocalSequence: this.nextLocalSequence,
+          updateBytes: Y.encodeStateAsUpdate(this.document),
+          updatedAt: this.now().toISOString(),
+        });
+        await this.deleteCoveredLocalUpdates(this.nextLocalSequence, records);
+      } catch {
+        this.recordStorageFailure();
+        return;
+      }
     }
     if (this.closed) return;
-    this.document.on('update', this.handleDocumentUpdate);
-    this.observing = true;
+    if (!this.readOnly) {
+      this.document.on('update', this.handleDocumentUpdate);
+      this.observing = true;
+    }
     this.publishReady();
   }
 
@@ -539,7 +546,7 @@ export class LocalPersistenceAdapter {
     this.setStatus({
       phase: LOCAL_PERSISTENCE_PHASES.READY,
       savedOnDevice: true,
-      editingPaused: false,
+      editingPaused: this.readOnly,
       pendingWrites: 0,
       errorCode: null,
       diagnostic: null,
