@@ -10,6 +10,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@archboard/contracts": "0.0.0",
+    "@archboard/document-model": "0.0.0",
+    "@archboard/sync-client": "0.0.0",
     "@fontsource-variable/geist": "catalog:",
     "@tanstack/react-router": "catalog:",
     "@xyflow/react": "catalog:",

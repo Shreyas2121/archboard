@@ -156,6 +156,15 @@ importers:
 
   apps/web:
     dependencies:
+      '@archboard/contracts':
+        specifier: 0.0.0
+        version: link:../../packages/contracts
+      '@archboard/document-model':
+        specifier: 0.0.0
+        version: link:../../packages/document-model
+      '@archboard/sync-client':
+        specifier: 0.0.0
+        version: link:../../packages/sync-client
       '@fontsource-variable/geist':
         specifier: 'catalog:'
         version: 5.3.0
