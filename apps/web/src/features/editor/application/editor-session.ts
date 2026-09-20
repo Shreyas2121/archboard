@@ -2,14 +2,18 @@ import {
   GRAPH_SCHEMA_VERSION,
   type CodeContent,
   type ComponentContent,
+  type GraphEdge,
   type GraphNode,
   type GraphProjection,
 } from '@archboard/contracts';
 import {
   accessGraphText,
   createLocalUndoManager,
+  createEdge,
   createNode,
   editGraphText,
+  editEdge,
+  replaceEdge,
   setCodeLanguage,
   setComponentCategory,
   setComponentExternalUrl,
@@ -96,6 +100,23 @@ export class EditorSession {
 
   public createCard(node: GraphNode): void {
     this.writerSession.executeMutation((document) => createNode(document, node));
+  }
+
+  public createConnection(edge: GraphEdge): void {
+    this.writerSession.executeMutation((document) => createEdge(document, edge));
+  }
+
+  public editConnection(
+    id: string,
+    changes: Partial<Pick<GraphEdge, 'direction' | 'style'>>,
+  ): void {
+    this.writerSession.executeMutation((document) => editEdge(document, id, changes));
+  }
+
+  public replaceConnection(originalId: string, replacement: GraphEdge): void {
+    this.writerSession.executeMutation((document) =>
+      replaceEdge(document, originalId, replacement),
+    );
   }
 
   public accessText(target: GraphTextTarget): GraphTextAccess | null {

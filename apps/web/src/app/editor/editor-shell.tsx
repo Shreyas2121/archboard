@@ -1,5 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
-import { MAX_GRAPH_COORDINATE, NODE_KINDS, type NodeKind } from '@archboard/contracts';
+import {
+  MAX_GRAPH_COORDINATE,
+  NODE_KINDS,
+  handleSchema,
+  type NodeKind,
+} from '@archboard/contracts';
 import { LOCAL_PERSISTENCE_PHASES, WRITER_SESSION_PHASES } from '@archboard/sync-client';
 import {
   Box,
@@ -26,7 +31,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
-import { useReactFlow, type Viewport } from '@xyflow/react';
+import { useReactFlow, type Connection, type Viewport } from '@xyflow/react';
 
 import { BrandMark } from '@/app/components/brand-mark';
 import { IconButton } from '@/app/components/icon-button';
@@ -54,6 +59,13 @@ import {
   GraphCanvas,
 } from '@/features/editor/canvas';
 import { CardInspector } from '@/features/editor/inspector';
+import {
+  createConnectionEdge,
+  createReplacementEdge,
+  EdgeInspector,
+  KeyboardConnectionFlow,
+  type ConnectionEndpoints,
+} from '@/features/editor/connections';
 import {
   SELECTION_KINDS,
   useActiveEditorDialog,
@@ -131,6 +143,18 @@ function phaseForSession(
   return snapshot.writer.writable ? EDITOR_VIEW_PHASES.WRITABLE : EDITOR_VIEW_PHASES.LOADING;
 }
 
+function connectionEndpoints(connection: Connection): ConnectionEndpoints {
+  if (connection.source === null || connection.target === null) {
+    throw new Error('Choose both a source card and a target card.');
+  }
+  return {
+    sourceId: connection.source,
+    sourceHandle: handleSchema.parse(connection.sourceHandle),
+    targetId: connection.target,
+    targetHandle: handleSchema.parse(connection.targetHandle),
+  };
+}
+
 export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorShellProps) {
   const paletteOpen = usePaletteOpen();
   const inspectorOpen = useInspectorOpen();
@@ -144,6 +168,7 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
   const creationSequence = useRef(0);
   const [viewport, setViewport] = useState<Viewport>(DEFAULT_CANVAS_VIEWPORT);
   const [creationError, setCreationError] = useState<string | null>(null);
+  const [connectionNotice, setConnectionNotice] = useState<string | null>(null);
   const { preference, cyclePreference } = useTheme();
   const viewState = editorViewState(phaseForSession(sessionSnapshot, narrowScreen));
   const projection = sessionSnapshot?.projection ?? null;
@@ -152,6 +177,61 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
     selection.length === 1 && selection[0]?.kind === SELECTION_KINDS.NODE
       ? (projection?.nodes.find(({ id }) => id === selection[0]?.id) ?? null)
       : null;
+  const selectedEdge =
+    selection.length === 1 && selection[0]?.kind === SELECTION_KINDS.EDGE
+      ? (projection?.edges.find(({ id }) => id === selection[0]?.id) ?? null)
+      : null;
+
+  const createConnection = useCallback(
+    (endpoints: ConnectionEndpoints): string | null => {
+      if (session === null || !viewState.editable) return 'Editing is not available in this view.';
+      try {
+        const edge = createConnectionEdge(crypto.randomUUID(), endpoints);
+        session.createConnection(edge);
+        actions.setSelection([{ id: edge.id, kind: SELECTION_KINDS.EDGE }]);
+        setConnectionNotice('Connection created.');
+        return null;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'The connection could not be created.';
+        setConnectionNotice(message);
+        return message;
+      }
+    },
+    [actions, session, viewState.editable],
+  );
+  const connectWithPointer = useCallback(
+    (connection: Connection): void => {
+      try {
+        createConnection(connectionEndpoints(connection));
+      } catch {
+        setConnectionNotice('Use one of the four fixed handles to connect two different cards.');
+      }
+    },
+    [createConnection],
+  );
+  const reconnectWithPointer = useCallback(
+    (edgeId: string, connection: Connection): void => {
+      if (session === null || !viewState.editable || projection === null) return;
+      const original = projection.edges.find(({ id }) => id === edgeId);
+      if (original === undefined) return;
+      try {
+        const replacement = createReplacementEdge(
+          crypto.randomUUID(),
+          original,
+          connectionEndpoints(connection),
+        );
+        session.replaceConnection(edgeId, replacement);
+        actions.setSelection([{ id: replacement.id, kind: SELECTION_KINDS.EDGE }]);
+        setConnectionNotice('Connection reconnected with a fresh ID.');
+      } catch (error) {
+        setConnectionNotice(
+          error instanceof Error ? error.message : 'The connection could not be reconnected.',
+        );
+      }
+    },
+    [actions, projection, session, viewState.editable],
+  );
 
   const createCard = useCallback(
     (kind: NodeKind): void => {
@@ -371,8 +451,11 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
           >
             {projection !== null && (
               <GraphCanvas
+                editable={viewState.editable}
                 gridSnapEnabled={gridSnapEnabled}
                 minimapVisible={minimapVisible}
+                onConnect={connectWithPointer}
+                onReconnect={reconnectWithPointer}
                 onViewportChange={setViewport}
                 projection={projection}
               />
@@ -435,6 +518,14 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
                 This view stays read-only on narrow screens. Use a wider window to edit.
               </aside>
             )}
+            {connectionNotice !== null && (
+              <aside
+                className="absolute bottom-3 left-1/2 z-20 max-w-md -translate-x-1/2 rounded-lg border bg-background/95 px-3 py-2 text-center text-xs font-medium shadow-sm"
+                role="status"
+              >
+                {connectionNotice}
+              </aside>
+            )}
           </div>
         </main>
 
@@ -465,8 +556,30 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
             )}
           </div>
           <CollapsibleContent className="h-[calc(100%-3.5rem)] overflow-y-auto">
-            {selectedNode !== null && session !== null ? (
-              <CardInspector node={selectedNode} session={session} disabled={!viewState.editable} />
+            {selectedNode !== null && session !== null && projection !== null ? (
+              <div>
+                <CardInspector
+                  node={selectedNode}
+                  session={session}
+                  disabled={!viewState.editable}
+                />
+                <div className="border-t p-4">
+                  <KeyboardConnectionFlow
+                    nodes={projection.nodes}
+                    initialSourceId={selectedNode.id}
+                    disabled={!viewState.editable}
+                    onCreate={createConnection}
+                  />
+                </div>
+              </div>
+            ) : selectedEdge !== null && session !== null && projection !== null ? (
+              <EdgeInspector
+                edge={selectedEdge}
+                nodes={projection.nodes}
+                session={session}
+                disabled={!viewState.editable}
+                onNotice={setConnectionNotice}
+              />
             ) : (
               <div className="grid h-full place-items-center p-5">
                 <div className="grid max-w-52 justify-items-center text-center">

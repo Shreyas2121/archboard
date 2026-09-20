@@ -24,14 +24,13 @@ const SOURCE_HANDLE_CLASSES: Readonly<Record<GraphHandle, string>> = {
   [HANDLES.LEFT]: '!top-[calc(50%-0.3rem)]',
 };
 
-const HANDLE_CLASS = '!size-2.5 !border-2 !border-background !bg-primary';
+const HANDLE_CLASS = '!z-10 !size-2.5 !border-2 !border-background !bg-primary';
 
 export function CardHandles() {
   return Object.values(HANDLES).flatMap((handle) => [
     <Handle
       className={cn(HANDLE_CLASS, TARGET_HANDLE_CLASSES[handle])}
       id={handle}
-      isConnectable={false}
       key={`target-${handle}`}
       position={HANDLE_POSITIONS[handle]}
       type="target"
@@ -39,7 +38,6 @@ export function CardHandles() {
     <Handle
       className={cn(HANDLE_CLASS, SOURCE_HANDLE_CLASSES[handle])}
       id={handle}
-      isConnectable={false}
       key={`source-${handle}`}
       position={HANDLE_POSITIONS[handle]}
       type="source"

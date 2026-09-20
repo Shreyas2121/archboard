@@ -5,6 +5,7 @@ import {
   BackgroundVariant,
   MiniMap,
   ReactFlow,
+  type Connection,
   type OnSelectionChangeFunc,
   type Viewport,
 } from '@xyflow/react';
@@ -35,6 +36,9 @@ interface GraphCanvasProps {
   readonly minimapVisible: boolean;
   readonly gridSnapEnabled: boolean;
   readonly onViewportChange: (viewport: Viewport) => void;
+  readonly editable: boolean;
+  readonly onConnect: (connection: Connection) => void;
+  readonly onReconnect: (edgeId: string, connection: Connection) => void;
 }
 
 export function GraphCanvas({
@@ -42,6 +46,9 @@ export function GraphCanvas({
   minimapVisible,
   gridSnapEnabled,
   onViewportChange,
+  editable,
+  onConnect,
+  onReconnect,
 }: GraphCanvasProps) {
   const adapter = useRef(new CanvasProjectionAdapter());
   const canvasProjection = useMemo(() => adapter.current.adapt(projection), [projection]);
@@ -120,15 +127,17 @@ export function GraphCanvas({
       className="bg-muted/25"
       defaultViewport={DEFAULT_CANVAS_VIEWPORT}
       edges={edges}
-      edgesReconnectable={false}
+      edgesReconnectable={editable}
+      elevateEdgesOnSelect
       elementsSelectable
       maxZoom={CANVAS_MAX_ZOOM}
       minZoom={CANVAS_MIN_ZOOM}
       multiSelectionKeyCode="Shift"
       nodes={nodes}
-      nodesConnectable={false}
+      nodesConnectable={editable}
       nodesDraggable={false}
       nodeTypes={NODE_TYPES}
+      onConnect={onConnect}
       onPaneClick={actions.clearSelection}
       onNodeClick={(event: ReactMouseEvent, node) =>
         selectObject({ id: node.id, kind: SELECTION_KINDS.NODE }, event.shiftKey)
@@ -136,6 +145,7 @@ export function GraphCanvas({
       onEdgeClick={(event: ReactMouseEvent, edge) =>
         selectObject({ id: edge.id, kind: SELECTION_KINDS.EDGE }, event.shiftKey)
       }
+      onReconnect={(edge, connection) => onReconnect(edge.id, connection)}
       onSelectionChange={handleSelectionChange}
       onViewportChange={onViewportChange}
       panActivationKeyCode="Space"

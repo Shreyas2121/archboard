@@ -13,7 +13,11 @@ export interface CanvasNodeData extends Record<string, unknown> {
 }
 
 export type CanvasNode = Node<CanvasNodeData, 'graph-card'>;
-export type CanvasEdge = Edge<Record<string, never>, 'smoothstep'>;
+export interface CanvasEdgeData extends Record<string, unknown> {
+  readonly edge: GraphEdge;
+}
+
+export type CanvasEdge = Edge<CanvasEdgeData, 'smoothstep'>;
 
 export interface CanvasBoundary {
   readonly id: string;
@@ -99,7 +103,6 @@ export class CanvasProjectionAdapter {
       style: { width: node.size.width, height: node.size.height },
       selected: false,
       draggable: false,
-      connectable: false,
       deletable: false,
       selectable: true,
       ariaLabel: `${node.kind} card: ${node.title}`,
@@ -121,7 +124,8 @@ export class CanvasProjectionAdapter {
       target: edge.targetId,
       sourceHandle: edge.sourceHandle,
       targetHandle: edge.targetHandle,
-      label: labelParts.join(' · '),
+      data: Object.freeze({ edge }),
+      label: labelParts.join(' / '),
       selected: false,
       markerEnd: { type: MarkerType.ArrowClosed },
       ...(edge.direction === EDGE_DIRECTIONS.BIDIRECTIONAL
@@ -130,8 +134,7 @@ export class CanvasProjectionAdapter {
       ...(edge.style === EDGE_STYLES.DASHED ? { style: { strokeDasharray: '6 5' } } : {}),
       selectable: true,
       deletable: false,
-      reconnectable: false,
-      ariaLabel: `Connection: ${labelParts.join(', ') || edge.id}`,
+      ariaLabel: `Connection: ${edge.sourceHandle} on ${edge.sourceId} to ${edge.targetHandle} on ${edge.targetId}; ${edge.direction}, ${edge.style}; ${labelParts.join(', ') || 'unlabeled'}`,
     });
     this.edgeCache.set(edge.id, { key, value });
     return value;

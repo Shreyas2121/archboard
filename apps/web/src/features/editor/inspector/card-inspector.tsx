@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   CODE_LANGUAGES,
   COLOR_TOKENS,
@@ -14,59 +14,14 @@ import {
 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import type { EditorSession } from '@/features/editor/application';
 
+import { AtomicSelectField } from './atomic-select-field';
 import { ProductTextField } from './product-text-field';
 
 const CATEGORY_OPTIONS = Object.values(COMPONENT_CATEGORIES);
 const LANGUAGE_OPTIONS = Object.values(CODE_LANGUAGES);
 const COLOR_OPTIONS = Object.values(COLOR_TOKENS);
-
-interface AtomicSelectProps<Value extends string> {
-  readonly label: string;
-  readonly value: Value;
-  readonly options: readonly Value[];
-  readonly disabled: boolean;
-  readonly onValueChange: (value: Value) => void;
-}
-
-function AtomicSelect<Value extends string>({
-  label,
-  value,
-  options,
-  disabled,
-  onValueChange,
-}: AtomicSelectProps<Value>) {
-  const id = useId();
-  return (
-    <div className="grid gap-1.5" onKeyDown={(event) => event.stopPropagation()}>
-      <Label htmlFor={id}>{label}</Label>
-      <Select
-        value={value}
-        onValueChange={(next) => onValueChange(next as Value)}
-        disabled={disabled}
-      >
-        <SelectTrigger className="w-full" id={id}>
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent position="popper">
-          {options.map((option) => (
-            <SelectItem value={option} key={option}>
-              {option}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
 
 interface ExternalUrlFieldProps {
   readonly node: Extract<GraphNode, { kind: 'component' }>;
@@ -185,7 +140,7 @@ export function CardInspector({ node, session, disabled }: CardInspectorProps) {
         limit={MAX_NODE_TITLE_CHARACTERS}
         disabled={disabled}
       />
-      <AtomicSelect
+      <AtomicSelectField
         label="Color"
         value={node.color}
         options={COLOR_OPTIONS}
@@ -196,7 +151,7 @@ export function CardInspector({ node, session, disabled }: CardInspectorProps) {
       />
       {node.kind === 'component' && (
         <>
-          <AtomicSelect
+          <AtomicSelectField
             label="Category"
             value={node.content.category}
             options={CATEGORY_OPTIONS}
@@ -229,7 +184,7 @@ export function CardInspector({ node, session, disabled }: CardInspectorProps) {
         </>
       )}
       {node.kind === 'code' && (
-        <AtomicSelect
+        <AtomicSelectField
           label="Language"
           value={node.content.language}
           options={LANGUAGE_OPTIONS}

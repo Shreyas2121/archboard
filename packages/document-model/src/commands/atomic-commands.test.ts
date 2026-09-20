@@ -23,7 +23,7 @@ import {
   setGraphGeometry,
   setNodePositions,
 } from './batch.js';
-import { createEdge } from './edges.js';
+import { createEdge, replaceEdge } from './edges.js';
 
 const encodedState = (document: Y.Doc): number[] => [...Y.encodeStateAsUpdate(document)];
 const EXTERNAL_EDGE_ORDINAL = 99;
@@ -179,6 +179,31 @@ describe('atomic editor commands', () => {
       nodes: expect.arrayContaining([expect.objectContaining({ id: nodeA.id })]),
       edges: expect.arrayContaining([expect.objectContaining({ id: edge.id })]),
     });
+  });
+
+  it('rejects self-loops, missing endpoints, and malformed handles before edge mutation', () => {
+    const document = hydrateGraphDocument(minimalGraphFixture);
+    const before = encodedState(document);
+    const edge = {
+      ...minimalGraphFixture.edges[0]!,
+      id: fixtureId(FIXTURE_NAMESPACES.EDGE, FIRST_CREATED_ORDINAL),
+    };
+
+    expect(() => createEdge(document, { ...edge, targetId: edge.sourceId })).toThrow(/itself/);
+    expect(() =>
+      createEdge(document, {
+        ...edge,
+        targetId: fixtureId(FIXTURE_NAMESPACES.NODE, MISSING_NODE_ORDINAL),
+      }),
+    ).toThrow(/does not exist/);
+    expect(() => createEdge(document, { ...edge, sourceHandle: 'diagonal' } as never)).toThrow();
+    expect(() =>
+      replaceEdge(document, minimalGraphFixture.edges[0]!.id, {
+        ...edge,
+        targetId: edge.sourceId,
+      }),
+    ).toThrow(/itself/);
+    expect(encodedState(document)).toEqual(before);
   });
 
   it('tracks geometry but excludes structural batches from local undo', () => {

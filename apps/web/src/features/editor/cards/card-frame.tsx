@@ -26,7 +26,7 @@ export function CardFrame({ node, selected, children, className }: CardFrameProp
   return (
     <article
       className={cn(
-        'relative grid size-full content-start overflow-hidden rounded-xl border-2 bg-card p-4 text-card-foreground shadow-sm',
+        'relative grid size-full content-start rounded-xl border-2 bg-card p-4 text-card-foreground shadow-sm',
         COLOR_CLASSES[node.color],
         selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background',
         className,
