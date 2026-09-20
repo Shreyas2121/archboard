@@ -6,6 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/copy-database-assets.mjs",
     "auth:schema:check": "node scripts/check-auth-schema.mjs",
+    "dev:build": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "dev:serve": "node --env-file-if-exists=../../.env --env-file-if-exists=../../.env.local --watch --watch-preserve-output dist/main.js",
     "db:migration:generate": "pnpm build && typeorm migration:generate src/migrations/Generated -d dist/platform/database/migration-data-source.js",
     "db:migration:run": "pnpm build && typeorm migration:run -d dist/platform/database/migration-data-source.js",
     "db:migration:show": "pnpm build && typeorm migration:show -d dist/platform/database/migration-data-source.js",

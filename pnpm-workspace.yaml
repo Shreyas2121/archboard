@@ -13,6 +13,7 @@ catalog:
   '@xyflow/react': 12.11.6
   class-variance-authority: 0.7.1
   cn: 0.3.0
+  concurrently: 9.2.1
   lucide-react: 1.46.0
   radix-ui: 1.6.7
   shiki: 4.4.3
