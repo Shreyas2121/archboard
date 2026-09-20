@@ -1,5 +1,24 @@
-import { GRAPH_SCHEMA_VERSION, type GraphProjection } from '@archboard/contracts';
-import { createLocalUndoManager } from '@archboard/document-model';
+import {
+  GRAPH_SCHEMA_VERSION,
+  type CodeContent,
+  type ComponentContent,
+  type GraphNode,
+  type GraphProjection,
+} from '@archboard/contracts';
+import {
+  accessGraphText,
+  createLocalUndoManager,
+  createNode,
+  editGraphText,
+  setCodeLanguage,
+  setComponentCategory,
+  setComponentExternalUrl,
+  setNodeColor,
+  stopLocalUndoCapture,
+  type GraphTextAccess,
+  type GraphTextTarget,
+  type TextEdit,
+} from '@archboard/document-model';
 import {
   BrowserWriterSession,
   LOCAL_DEMO_USER_KEY,
@@ -73,6 +92,41 @@ export class EditorSession {
 
   public retry(): Promise<void> {
     return this.writerSession.retry();
+  }
+
+  public createCard(node: GraphNode): void {
+    this.writerSession.executeMutation((document) => createNode(document, node));
+  }
+
+  public accessText(target: GraphTextTarget): GraphTextAccess | null {
+    const binding = this.writerSession.getWritableBinding();
+    return binding === null ? null : accessGraphText(binding.document, target);
+  }
+
+  public editText(target: GraphTextTarget, edit: TextEdit): void {
+    this.writerSession.executeMutation((document) => editGraphText(document, target, edit));
+  }
+
+  public setCardColor(id: string, color: GraphNode['color']): void {
+    this.writerSession.executeMutation((document) => setNodeColor(document, id, color));
+  }
+
+  public setComponentCategory(id: string, category: ComponentContent['category']): void {
+    this.writerSession.executeMutation((document) => setComponentCategory(document, id, category));
+  }
+
+  public setComponentExternalUrl(id: string, externalUrl: string | null): void {
+    this.writerSession.executeMutation((document) =>
+      setComponentExternalUrl(document, id, externalUrl),
+    );
+  }
+
+  public setCodeLanguage(id: string, language: CodeContent['language']): void {
+    this.writerSession.executeMutation((document) => setCodeLanguage(document, id, language));
+  }
+
+  public finishTextHistory(): void {
+    if (this.undoManager !== null) stopLocalUndoCapture(this.undoManager);
   }
 
   public close(): Promise<void> {

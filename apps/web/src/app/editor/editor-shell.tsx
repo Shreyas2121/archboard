@@ -1,4 +1,5 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { MAX_GRAPH_COORDINATE, NODE_KINDS, type NodeKind } from '@archboard/contracts';
 import { LOCAL_PERSISTENCE_PHASES, WRITER_SESSION_PHASES } from '@archboard/sync-client';
 import {
   Box,
@@ -41,8 +42,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { type EditorSession, type EditorSessionSnapshot } from '@/features/editor/application';
+import { CARD_SIZES, createCardNode } from '@/features/editor/cards';
 import {
   CANVAS_FIT_PADDING,
+  CANVAS_GRID_SIZE,
   CANVAS_MAX_ZOOM,
   CANVAS_MIN_ZOOM,
   CANVAS_ZOOM_STEP,
@@ -50,7 +53,9 @@ import {
   getProjectionBounds,
   GraphCanvas,
 } from '@/features/editor/canvas';
+import { CardInspector } from '@/features/editor/inspector';
 import {
+  SELECTION_KINDS,
   useActiveEditorDialog,
   useEditorSelection,
   useEditorUiActions,
@@ -67,16 +72,30 @@ interface PaletteItem {
   readonly label: string;
   readonly description: string;
   readonly icon: LucideIcon;
+  readonly kind: NodeKind | null;
 }
 
 const PALETTE_ITEMS: readonly PaletteItem[] = [
-  { label: 'Component', description: 'Service or application', icon: Box },
-  { label: 'Code', description: 'Module or repository', icon: Code2 },
-  { label: 'Schema', description: 'Data contract or store', icon: Database },
-  { label: 'Note', description: 'Context for the team', icon: StickyNote },
-  { label: 'Boundary', description: 'Group related systems', icon: Braces },
+  {
+    label: 'Component',
+    description: 'Service or application',
+    icon: Box,
+    kind: NODE_KINDS.COMPONENT,
+  },
+  { label: 'Code', description: 'Module or repository', icon: Code2, kind: NODE_KINDS.CODE },
+  {
+    label: 'Schema',
+    description: 'Data contract or store',
+    icon: Database,
+    kind: NODE_KINDS.SCHEMA,
+  },
+  { label: 'Note', description: 'Context for the team', icon: StickyNote, kind: NODE_KINDS.NOTE },
+  { label: 'Boundary', description: 'Available with geometry tools', icon: Braces, kind: null },
 ];
 const PERCENT_SCALE = 100;
+const HALF = 2;
+const CREATION_OFFSET = 32;
+const CREATION_OFFSET_STEPS = 6;
 
 interface EditorShellProps {
   readonly narrowScreen: boolean;
@@ -121,11 +140,49 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
   const activeDialog = useActiveEditorDialog();
   const actions = useEditorUiActions();
   const reactFlow = useReactFlow();
+  const canvasContainer = useRef<HTMLElement>(null);
+  const creationSequence = useRef(0);
   const [viewport, setViewport] = useState<Viewport>(DEFAULT_CANVAS_VIEWPORT);
+  const [creationError, setCreationError] = useState<string | null>(null);
   const { preference, cyclePreference } = useTheme();
   const viewState = editorViewState(phaseForSession(sessionSnapshot, narrowScreen));
   const projection = sessionSnapshot?.projection ?? null;
   const canvasReady = projection !== null;
+  const selectedNode =
+    selection.length === 1 && selection[0]?.kind === SELECTION_KINDS.NODE
+      ? (projection?.nodes.find(({ id }) => id === selection[0]?.id) ?? null)
+      : null;
+
+  const createCard = useCallback(
+    (kind: NodeKind): void => {
+      if (session === null || !viewState.editable) return;
+      const container = canvasContainer.current;
+      if (container === null) return;
+      const rect = container.getBoundingClientRect();
+      const size = CARD_SIZES[kind];
+      const offset = (creationSequence.current % CREATION_OFFSET_STEPS) * CREATION_OFFSET;
+      const rawPosition = {
+        x: (rect.width / HALF - viewport.x) / viewport.zoom - size.width / HALF + offset,
+        y: (rect.height / HALF - viewport.y) / viewport.zoom - size.height / HALF + offset,
+      };
+      const snap = (coordinate: number): number =>
+        gridSnapEnabled ? Math.round(coordinate / CANVAS_GRID_SIZE) * CANVAS_GRID_SIZE : coordinate;
+      const position = {
+        x: Math.max(-MAX_GRAPH_COORDINATE, Math.min(MAX_GRAPH_COORDINATE, snap(rawPosition.x))),
+        y: Math.max(-MAX_GRAPH_COORDINATE, Math.min(MAX_GRAPH_COORDINATE, snap(rawPosition.y))),
+      };
+      try {
+        const card = createCardNode(kind, crypto.randomUUID(), position);
+        session.createCard(card);
+        creationSequence.current += 1;
+        setCreationError(null);
+        actions.setSelection([{ id: card.id, kind: SELECTION_KINDS.NODE }]);
+      } catch {
+        setCreationError('The card could not be created. Check the board limits and try again.');
+      }
+    },
+    [actions, gridSnapEnabled, session, viewState.editable, viewport],
+  );
 
   const zoomTo = useCallback(
     (zoom: number): void => {
@@ -270,7 +327,7 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
           </div>
           <CollapsibleContent className="p-3">
             <p className="mb-3 text-xs leading-5 text-muted-foreground">
-              Drag an element onto the canvas to begin.
+              Choose a card to create it in the visible canvas.
             </p>
             <div className="grid gap-2">
               {PALETTE_ITEMS.map((item) => (
@@ -278,8 +335,9 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
                   type="button"
                   className="h-auto justify-start gap-3 px-3 py-3 text-left"
                   variant="outline"
-                  disabled={!viewState.editable}
+                  disabled={!viewState.editable || item.kind === null}
                   key={item.label}
+                  onClick={() => item.kind !== null && createCard(item.kind)}
                 >
                   <item.icon aria-hidden="true" />
                   <span className="grid gap-0.5">
@@ -291,10 +349,16 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
                 </Button>
               ))}
             </div>
+            {creationError !== null && (
+              <p className="mt-3 text-xs text-destructive" role="alert">
+                {creationError}
+              </p>
+            )}
           </CollapsibleContent>
         </Collapsible>
 
         <main
+          ref={canvasContainer}
           className="relative min-w-0 overflow-hidden bg-muted/25"
           aria-labelledby="canvas-heading"
         >
@@ -400,16 +464,24 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
               </div>
             )}
           </div>
-          <CollapsibleContent className="grid h-[calc(100%-3.5rem)] place-items-center p-5">
-            <div className="grid max-w-52 justify-items-center text-center">
-              <Scan className="mb-4 size-7 text-muted-foreground" aria-hidden="true" />
-              <h3 className="text-sm font-semibold">
-                {selection.length === 0 ? 'Nothing selected' : `${selection.length} selected`}
-              </h3>
-              <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                Select an element on the canvas to inspect its properties.
-              </p>
-            </div>
+          <CollapsibleContent className="h-[calc(100%-3.5rem)] overflow-y-auto">
+            {selectedNode !== null && session !== null ? (
+              <CardInspector node={selectedNode} session={session} disabled={!viewState.editable} />
+            ) : (
+              <div className="grid h-full place-items-center p-5">
+                <div className="grid max-w-52 justify-items-center text-center">
+                  <Scan className="mb-4 size-7 text-muted-foreground" aria-hidden="true" />
+                  <h3 className="text-sm font-semibold">
+                    {selection.length === 0 ? 'Nothing selected' : `${selection.length} selected`}
+                  </h3>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    {selection.length === 1
+                      ? 'Editing for this element arrives with its dedicated tool.'
+                      : 'Select one card on the canvas to inspect its properties.'}
+                  </p>
+                </div>
+              </div>
+            )}
           </CollapsibleContent>
         </Collapsible>
       </div>

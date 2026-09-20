@@ -16,6 +16,7 @@ import {
   useEditorSelection,
   useEditorUiActions,
 } from '@/features/editor/state';
+import { CardNode } from '@/features/editor/cards';
 
 import { BoundaryLayer } from './boundary-layer';
 import {
@@ -25,9 +26,8 @@ import {
   DEFAULT_CANVAS_VIEWPORT,
 } from './canvas-config';
 import { CanvasProjectionAdapter, type CanvasEdge, type CanvasNode } from './projection-adapter';
-import { ProjectionNode } from './projection-node';
 
-const NODE_TYPES = { 'graph-card': ProjectionNode } as const;
+const NODE_TYPES = { 'graph-card': CardNode } as const;
 const SNAP_GRID: [number, number] = [CANVAS_GRID_SIZE, CANVAS_GRID_SIZE];
 
 interface GraphCanvasProps {

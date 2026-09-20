@@ -9,10 +9,7 @@ import {
 import { MarkerType, type Edge, type Node, type Rect } from '@xyflow/react';
 
 export interface CanvasNodeData extends Record<string, unknown> {
-  readonly graphId: string;
-  readonly title: string;
-  readonly kind: GraphNode['kind'];
-  readonly color: GraphNode['color'];
+  readonly node: GraphNode;
 }
 
 export type CanvasNode = Node<CanvasNodeData, 'graph-card'>;
@@ -98,12 +95,7 @@ export class CanvasProjectionAdapter {
       id: node.id,
       type: 'graph-card',
       position: node.position,
-      data: Object.freeze({
-        graphId: node.id,
-        title: node.title,
-        kind: node.kind,
-        color: node.color,
-      }),
+      data: Object.freeze({ node }),
       style: { width: node.size.width, height: node.size.height },
       selected: false,
       draggable: false,
