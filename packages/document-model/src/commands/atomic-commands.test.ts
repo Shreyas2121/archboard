@@ -20,10 +20,12 @@ import { restoreDeletedObjects } from './restore.js';
 import {
   createGraphObjects,
   deleteGraphObjects,
+  rectanglesIntersect,
   setGraphGeometry,
   setNodePositions,
 } from './batch.js';
 import { createEdge, replaceEdge } from './edges.js';
+import { NODE_ALIGNMENTS, alignNodeGeometry, type NodeAlignment } from './nodes.js';
 
 const encodedState = (document: Y.Doc): number[] => [...Y.encodeStateAsUpdate(document)];
 const EXTERNAL_EDGE_ORDINAL = 99;
@@ -33,6 +35,14 @@ const MISSING_NODE_ORDINAL = 999;
 const OVER_LIMIT_NODE_ORDINAL = 10_000;
 
 describe('atomic editor commands', () => {
+  it('uses positive-area intersection for selection rectangles', () => {
+    const selection = { x: 0, y: 0, width: 100, height: 100 };
+    expect(rectanglesIntersect(selection, { x: 20, y: 20, width: 30, height: 30 })).toBe(true);
+    expect(rectanglesIntersect(selection, { x: 90, y: 90, width: 30, height: 30 })).toBe(true);
+    expect(rectanglesIntersect(selection, { x: 120, y: 20, width: 30, height: 30 })).toBe(false);
+    expect(rectanglesIntersect(selection, { x: 100, y: 20, width: 30, height: 30 })).toBe(false);
+  });
+
   it('commits a multi-node drag as one local update', () => {
     const document = hydrateGraphDocument(minimalGraphFixture);
     const transactions = vi.fn();
@@ -204,6 +214,66 @@ describe('atomic editor commands', () => {
       }),
     ).toThrow(/itself/);
     expect(encodedState(document)).toEqual(before);
+  });
+
+  it.each([
+    [
+      NODE_ALIGNMENTS.LEFT,
+      [
+        { x: 10, y: 20 },
+        { x: 10, y: 180 },
+      ],
+    ],
+    [
+      NODE_ALIGNMENTS.HORIZONTAL_CENTER,
+      [
+        { x: 160, y: 20 },
+        { x: 100, y: 180 },
+      ],
+    ],
+    [
+      NODE_ALIGNMENTS.RIGHT,
+      [
+        { x: 310, y: 20 },
+        { x: 190, y: 180 },
+      ],
+    ],
+    [
+      NODE_ALIGNMENTS.TOP,
+      [
+        { x: 10, y: 20 },
+        { x: 190, y: 20 },
+      ],
+    ],
+    [
+      NODE_ALIGNMENTS.VERTICAL_CENTER,
+      [
+        { x: 10, y: 140 },
+        { x: 190, y: 100 },
+      ],
+    ],
+    [
+      NODE_ALIGNMENTS.BOTTOM,
+      [
+        { x: 10, y: 260 },
+        { x: 190, y: 180 },
+      ],
+    ],
+  ] as const)('aligns unequal node sizes with one %s transaction', (alignment, expected) => {
+    const document = hydrateGraphDocument(minimalGraphFixture);
+    setGraphGeometry(document, {
+      nodes: [
+        { id: FIXED_IDS.NODE_A, position: { x: 10, y: 20 }, size: { width: 200, height: 100 } },
+        { id: FIXED_IDS.NODE_B, position: { x: 190, y: 180 }, size: { width: 320, height: 180 } },
+      ],
+    });
+    let transactions = 0;
+    document.on('afterTransaction', () => (transactions += 1));
+
+    alignNodeGeometry(document, [FIXED_IDS.NODE_A, FIXED_IDS.NODE_B], alignment as NodeAlignment);
+
+    expect(projectGraphDocument(document).nodes.map(({ position }) => position)).toEqual(expected);
+    expect(transactions).toBe(1);
   });
 
   it('tracks geometry but excludes structural batches from local undo', () => {

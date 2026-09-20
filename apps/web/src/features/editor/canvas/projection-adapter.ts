@@ -5,11 +5,14 @@ import {
   type GraphEdge,
   type GraphNode,
   type GraphProjection,
+  type Rect as GraphRect,
 } from '@archboard/contracts';
 import { MarkerType, type Edge, type Node, type Rect } from '@xyflow/react';
 
 export interface CanvasNodeData extends Record<string, unknown> {
   readonly node: GraphNode;
+  readonly editable?: boolean;
+  readonly onResizeEnd?: (id: string, rect: GraphRect) => void;
 }
 
 export type CanvasNode = Node<CanvasNodeData, 'graph-card'>;

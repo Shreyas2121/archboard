@@ -3,6 +3,7 @@ import type * as Y from 'yjs';
 
 import { NODE_FIELDS } from '../schema/constants.js';
 import { getGraphDocumentRoots } from '../schema/document.js';
+import { setNodePositions } from './batch.js';
 import { GraphCommandError } from './error.js';
 import {
   LOCAL_EDIT_ORIGIN,
@@ -21,6 +22,8 @@ type ComponentNode = Extract<GraphNode, { kind: 'component' }>;
 type CodeNode = Extract<GraphNode, { kind: 'code' }>;
 type ComponentCategory = ComponentNode['content']['category'];
 type CodeLanguage = CodeNode['content']['language'];
+const MINIMUM_ALIGNMENT_NODES = 2;
+const HALF = 2;
 
 export function createNode(document: Y.Doc, input: GraphNode): void {
   const node = parseNode(input);
@@ -173,4 +176,61 @@ export function alignNodes(
       (roots.nodes.get(id) as Y.Map<unknown>).set(NODE_FIELDS.POSITION, position);
     }
   }, LOCAL_EDIT_ORIGIN);
+}
+
+export const NODE_ALIGNMENTS = {
+  LEFT: 'left',
+  HORIZONTAL_CENTER: 'horizontal-center',
+  RIGHT: 'right',
+  TOP: 'top',
+  VERTICAL_CENTER: 'vertical-center',
+  BOTTOM: 'bottom',
+} as const;
+
+export type NodeAlignment = (typeof NODE_ALIGNMENTS)[keyof typeof NODE_ALIGNMENTS];
+
+export function alignNodeGeometry(
+  document: Y.Doc,
+  nodeIds: readonly string[],
+  alignment: NodeAlignment,
+): void {
+  const nodes = [...new Set(nodeIds)].map((id) => liveNode(document, id));
+  if (nodes.length < MINIMUM_ALIGNMENT_NODES) {
+    throw new GraphCommandError('Select at least two nodes to align.');
+  }
+  const left = Math.min(...nodes.map(({ position }) => position.x));
+  const right = Math.max(...nodes.map(({ position, size }) => position.x + size.width));
+  const top = Math.min(...nodes.map(({ position }) => position.y));
+  const bottom = Math.max(...nodes.map(({ position, size }) => position.y + size.height));
+  const horizontalCenter = (left + right) / HALF;
+  const verticalCenter = (top + bottom) / HALF;
+  const positions = nodes.map((node) => {
+    switch (alignment) {
+      case NODE_ALIGNMENTS.LEFT:
+        return { id: node.id, position: { ...node.position, x: left } };
+      case NODE_ALIGNMENTS.HORIZONTAL_CENTER:
+        return {
+          id: node.id,
+          position: { ...node.position, x: horizontalCenter - node.size.width / HALF },
+        };
+      case NODE_ALIGNMENTS.RIGHT:
+        return {
+          id: node.id,
+          position: { ...node.position, x: right - node.size.width },
+        };
+      case NODE_ALIGNMENTS.TOP:
+        return { id: node.id, position: { ...node.position, y: top } };
+      case NODE_ALIGNMENTS.VERTICAL_CENTER:
+        return {
+          id: node.id,
+          position: { ...node.position, y: verticalCenter - node.size.height / HALF },
+        };
+      case NODE_ALIGNMENTS.BOTTOM:
+        return {
+          id: node.id,
+          position: { ...node.position, y: bottom - node.size.height },
+        };
+    }
+  });
+  setNodePositions(document, positions);
 }

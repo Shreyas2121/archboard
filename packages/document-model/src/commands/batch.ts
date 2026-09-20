@@ -54,6 +54,16 @@ export interface GraphObjectBatch {
   readonly boundaries?: readonly Boundary[];
 }
 
+/** Partial-intersection policy: any positive-area overlap selects the object. */
+export function rectanglesIntersect(selection: Rect, object: Rect): boolean {
+  return (
+    selection.x < object.x + object.width &&
+    selection.x + selection.width > object.x &&
+    selection.y < object.y + object.height &&
+    selection.y + selection.height > object.y
+  );
+}
+
 function assertUniqueIds(entries: readonly { readonly id: string }[], label: string): void {
   if (new Set(entries.map(({ id }) => id)).size !== entries.length) {
     throw new GraphCommandError(`${label} contains a duplicate entity ID.`);

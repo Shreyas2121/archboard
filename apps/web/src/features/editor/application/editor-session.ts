@@ -1,6 +1,8 @@
 import {
   GRAPH_SCHEMA_VERSION,
+  type Boundary,
   type CodeContent,
+  type ColorToken,
   type ComponentContent,
   type GraphEdge,
   type GraphNode,
@@ -8,12 +10,16 @@ import {
 } from '@archboard/contracts';
 import {
   accessGraphText,
+  alignNodeGeometry,
   createLocalUndoManager,
+  createBoundary,
   createEdge,
   createNode,
   editGraphText,
   editEdge,
+  editBoundary,
   replaceEdge,
+  setGraphGeometry,
   setCodeLanguage,
   setComponentCategory,
   setComponentExternalUrl,
@@ -21,6 +27,8 @@ import {
   stopLocalUndoCapture,
   type GraphTextAccess,
   type GraphTextTarget,
+  type GeometryBatch,
+  type NodeAlignment,
   type TextEdit,
 } from '@archboard/document-model';
 import {
@@ -100,6 +108,24 @@ export class EditorSession {
 
   public createCard(node: GraphNode): void {
     this.writerSession.executeMutation((document) => createNode(document, node));
+  }
+
+  public createBoundary(boundary: Boundary): void {
+    this.writerSession.executeMutation((document) => createBoundary(document, boundary));
+  }
+
+  public setBoundaryColor(id: string, color: ColorToken): void {
+    this.writerSession.executeMutation((document) => editBoundary(document, id, { color }));
+  }
+
+  public setGeometry(batch: GeometryBatch): void {
+    this.writerSession.executeMutation((document) => setGraphGeometry(document, batch));
+    this.finishTextHistory();
+  }
+
+  public alignCards(ids: readonly string[], alignment: NodeAlignment): void {
+    this.writerSession.executeMutation((document) => alignNodeGeometry(document, ids, alignment));
+    this.finishTextHistory();
   }
 
   public createConnection(edge: GraphEdge): void {

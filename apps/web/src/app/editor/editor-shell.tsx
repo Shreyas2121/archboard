@@ -47,6 +47,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { type EditorSession, type EditorSessionSnapshot } from '@/features/editor/application';
+import {
+  BoundaryInspector,
+  DEFAULT_BOUNDARY_SIZE,
+  createBoundaryObject,
+} from '@/features/editor/boundaries';
 import { CARD_SIZES, createCardNode } from '@/features/editor/cards';
 import {
   CANVAS_FIT_PADDING,
@@ -59,6 +64,7 @@ import {
   GraphCanvas,
 } from '@/features/editor/canvas';
 import { CardInspector } from '@/features/editor/inspector';
+import { SelectionGeometryPanel } from '@/features/editor/selection';
 import {
   createConnectionEdge,
   createReplacementEdge,
@@ -84,7 +90,7 @@ interface PaletteItem {
   readonly label: string;
   readonly description: string;
   readonly icon: LucideIcon;
-  readonly kind: NodeKind | null;
+  readonly kind: NodeKind | 'boundary';
 }
 
 const PALETTE_ITEMS: readonly PaletteItem[] = [
@@ -102,7 +108,7 @@ const PALETTE_ITEMS: readonly PaletteItem[] = [
     kind: NODE_KINDS.SCHEMA,
   },
   { label: 'Note', description: 'Context for the team', icon: StickyNote, kind: NODE_KINDS.NOTE },
-  { label: 'Boundary', description: 'Available with geometry tools', icon: Braces, kind: null },
+  { label: 'Boundary', description: 'Visual grouping region', icon: Braces, kind: 'boundary' },
 ];
 const PERCENT_SCALE = 100;
 const HALF = 2;
@@ -180,6 +186,10 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
   const selectedEdge =
     selection.length === 1 && selection[0]?.kind === SELECTION_KINDS.EDGE
       ? (projection?.edges.find(({ id }) => id === selection[0]?.id) ?? null)
+      : null;
+  const selectedBoundary =
+    selection.length === 1 && selection[0]?.kind === SELECTION_KINDS.BOUNDARY
+      ? (projection?.boundaries.find(({ id }) => id === selection[0]?.id) ?? null)
       : null;
 
   const createConnection = useCallback(
@@ -262,6 +272,52 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
       }
     },
     [actions, gridSnapEnabled, session, viewState.editable, viewport],
+  );
+
+  const createBoundary = useCallback((): void => {
+    if (session === null || !viewState.editable) return;
+    const container = canvasContainer.current;
+    if (container === null) return;
+    const rect = container.getBoundingClientRect();
+    const offset = (creationSequence.current % CREATION_OFFSET_STEPS) * CREATION_OFFSET;
+    const rawPosition = {
+      x:
+        (rect.width / HALF - viewport.x) / viewport.zoom -
+        DEFAULT_BOUNDARY_SIZE.width / HALF +
+        offset,
+      y:
+        (rect.height / HALF - viewport.y) / viewport.zoom -
+        DEFAULT_BOUNDARY_SIZE.height / HALF +
+        offset,
+    };
+    const snap = (coordinate: number): number =>
+      gridSnapEnabled ? Math.round(coordinate / CANVAS_GRID_SIZE) * CANVAS_GRID_SIZE : coordinate;
+    const position = {
+      x: Math.max(-MAX_GRAPH_COORDINATE, Math.min(MAX_GRAPH_COORDINATE, snap(rawPosition.x))),
+      y: Math.max(-MAX_GRAPH_COORDINATE, Math.min(MAX_GRAPH_COORDINATE, snap(rawPosition.y))),
+    };
+    try {
+      const boundary = createBoundaryObject(crypto.randomUUID(), position);
+      session.createBoundary(boundary);
+      creationSequence.current += 1;
+      setCreationError(null);
+      actions.setSelection([{ id: boundary.id, kind: SELECTION_KINDS.BOUNDARY }]);
+    } catch {
+      setCreationError('The boundary could not be created. Check the board limits and try again.');
+    }
+  }, [actions, gridSnapEnabled, session, viewState.editable, viewport]);
+
+  const commitGeometry = useCallback(
+    (batch: Parameters<EditorSession['setGeometry']>[0]): void => {
+      if (session === null || !viewState.editable) return;
+      try {
+        session.setGeometry(batch);
+        setConnectionNotice('Geometry updated.');
+      } catch {
+        setConnectionNotice('The geometry exceeds the shared coordinate or size limits.');
+      }
+    },
+    [session, viewState.editable],
   );
 
   const zoomTo = useCallback(
@@ -407,7 +463,7 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
           </div>
           <CollapsibleContent className="p-3">
             <p className="mb-3 text-xs leading-5 text-muted-foreground">
-              Choose a card to create it in the visible canvas.
+              Choose a card or boundary to create it in the visible canvas.
             </p>
             <div className="grid gap-2">
               {PALETTE_ITEMS.map((item) => (
@@ -415,9 +471,11 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
                   type="button"
                   className="h-auto justify-start gap-3 px-3 py-3 text-left"
                   variant="outline"
-                  disabled={!viewState.editable || item.kind === null}
+                  disabled={!viewState.editable}
                   key={item.label}
-                  onClick={() => item.kind !== null && createCard(item.kind)}
+                  onClick={() =>
+                    item.kind === 'boundary' ? createBoundary() : createCard(item.kind)
+                  }
                 >
                   <item.icon aria-hidden="true" />
                   <span className="grid gap-0.5">
@@ -455,6 +513,7 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
                 gridSnapEnabled={gridSnapEnabled}
                 minimapVisible={minimapVisible}
                 onConnect={connectWithPointer}
+                onGeometryCommit={commitGeometry}
                 onReconnect={reconnectWithPointer}
                 onViewportChange={setViewport}
                 projection={projection}
@@ -563,6 +622,13 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
                   session={session}
                   disabled={!viewState.editable}
                 />
+                <SelectionGeometryPanel
+                  projection={projection}
+                  selection={selection}
+                  session={session}
+                  disabled={!viewState.editable}
+                  onNotice={setConnectionNotice}
+                />
                 <div className="border-t p-4">
                   <KeyboardConnectionFlow
                     nodes={projection.nodes}
@@ -576,6 +642,34 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
               <EdgeInspector
                 edge={selectedEdge}
                 nodes={projection.nodes}
+                session={session}
+                disabled={!viewState.editable}
+                onNotice={setConnectionNotice}
+              />
+            ) : selectedBoundary !== null && session !== null && projection !== null ? (
+              <div>
+                <BoundaryInspector
+                  boundary={selectedBoundary}
+                  session={session}
+                  disabled={!viewState.editable}
+                  onNotice={setConnectionNotice}
+                />
+                <SelectionGeometryPanel
+                  projection={projection}
+                  selection={selection}
+                  session={session}
+                  disabled={!viewState.editable}
+                  onNotice={setConnectionNotice}
+                />
+              </div>
+            ) : session !== null &&
+              projection !== null &&
+              selection.some(
+                ({ kind }) => kind === SELECTION_KINDS.NODE || kind === SELECTION_KINDS.BOUNDARY,
+              ) ? (
+              <SelectionGeometryPanel
+                projection={projection}
+                selection={selection}
                 session={session}
                 disabled={!viewState.editable}
                 onNotice={setConnectionNotice}
