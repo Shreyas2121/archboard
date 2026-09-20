@@ -100,6 +100,10 @@ const LOCAL_COMMAND_ORIGINS = new Set<unknown>([
   COMMAND_ORIGINS.LOCAL_STRUCTURAL,
 ]);
 
+function isPersistableLocalOrigin(origin: unknown): boolean {
+  return LOCAL_COMMAND_ORIGINS.has(origin) || origin instanceof Y.UndoManager;
+}
+
 function bytesAsArrayBuffer(updateBytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(updateBytes.byteLength);
   copy.set(updateBytes);
@@ -423,7 +427,7 @@ export class LocalPersistenceAdapter {
   }
 
   private readonly handleDocumentUpdate = (updateBytes: Uint8Array, origin: unknown): void => {
-    if (!LOCAL_COMMAND_ORIGINS.has(origin) || this.status.editingPaused || this.closed) return;
+    if (!isPersistableLocalOrigin(origin) || this.status.editingPaused || this.closed) return;
     const exactBytes = Uint8Array.from(updateBytes);
     let updateId: string;
     try {

@@ -106,6 +106,8 @@ Use this decision order:
 
 - Use TypeScript and function components. Follow nearby naming conventions:
   kebab-case filenames, PascalCase component names, and `use` prefixes for hooks.
+- Keep feature constants, schemas, and shared types in dedicated non-component modules. Components
+  should import these definitions instead of declaring reusable contracts alongside JSX.
 - Put application routes, providers, and shell composition in `src/app`; editor
   capabilities in `src/features/editor/<capability>`; browser/config adapters in
   `src/platform`; and shadcn primitives in `src/components/ui`.

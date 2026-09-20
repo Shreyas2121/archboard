@@ -11,6 +11,7 @@ import {
 import {
   accessGraphText,
   alignNodeGeometry,
+  createGraphObjects,
   createLocalUndoManager,
   createBoundary,
   createEdge,
@@ -18,7 +19,9 @@ import {
   editGraphText,
   editEdge,
   editBoundary,
+  deleteGraphObjects,
   replaceEdge,
+  restoreDeletedObjects,
   setGraphGeometry,
   setCodeLanguage,
   setComponentCategory,
@@ -28,6 +31,7 @@ import {
   type GraphTextAccess,
   type GraphTextTarget,
   type GeometryBatch,
+  type GraphObjectBatch,
   type NodeAlignment,
   type TextEdit,
 } from '@archboard/document-model';
@@ -44,7 +48,12 @@ export interface EditorSessionSnapshot {
   readonly writer: WriterSessionSnapshot;
   readonly projection: GraphProjection | null;
   readonly initializationError: boolean;
+  readonly canUndo: boolean;
+  readonly canRedo: boolean;
+  readonly canRestoreDeletion: boolean;
 }
+
+export type HistoryResult = 'applied' | 'empty' | 'skipped-deleted-target';
 
 type SessionListener = () => void;
 type UndoManager = ReturnType<typeof createLocalUndoManager>;
@@ -60,6 +69,7 @@ export class EditorSession {
   private unsubscribeWriter: (() => void) | null = null;
   private undoManager: UndoManager | null = null;
   private undoDocument: object | null = null;
+  private deletionCapture: GraphProjection | null = null;
   private opening: Promise<void> | null = null;
   private closePromise: Promise<void> | null = null;
   private snapshot: EditorSessionSnapshot;
@@ -79,6 +89,9 @@ export class EditorSession {
       writer: this.writerSession.getSnapshot(),
       projection: null,
       initializationError: false,
+      canUndo: false,
+      canRedo: false,
+      canRestoreDeletion: false,
     });
   }
 
@@ -89,6 +102,9 @@ export class EditorSession {
         writer: this.writerSession.getSnapshot(),
         projection: null,
         initializationError: true,
+        canUndo: false,
+        canRedo: false,
+        canRestoreDeletion: false,
       });
       for (const listener of this.listeners) listener();
     });
@@ -112,6 +128,45 @@ export class EditorSession {
 
   public createBoundary(boundary: Boundary): void {
     this.writerSession.executeMutation((document) => createBoundary(document, boundary));
+  }
+
+  public createObjects(batch: GraphObjectBatch): void {
+    this.writerSession.executeMutation((document) => createGraphObjects(document, batch));
+  }
+
+  public deleteObjects(selection: {
+    readonly nodeIds?: readonly string[];
+    readonly edgeIds?: readonly string[];
+    readonly boundaryIds?: readonly string[];
+  }): GraphProjection {
+    let capture: GraphProjection | null = null;
+    this.writerSession.executeMutation((document) => {
+      capture = deleteGraphObjects(document, selection);
+    });
+    if (capture === null) throw new Error('The selected objects could not be captured.');
+    this.deletionCapture = capture;
+    this.refresh();
+    return capture;
+  }
+
+  public restoreDeletion(): GraphProjection | null {
+    const capture = this.deletionCapture;
+    if (capture === null) return null;
+    let restored: GraphProjection | null = null;
+    this.writerSession.executeMutation((document) => {
+      restored = restoreDeletedObjects(document, capture, () => crypto.randomUUID()).graph;
+    });
+    this.deletionCapture = null;
+    this.refresh();
+    return restored;
+  }
+
+  public undo(): HistoryResult {
+    return this.changeHistory('undo');
+  }
+
+  public redo(): HistoryResult {
+    return this.changeHistory('redo');
   }
 
   public setBoundaryColor(id: string, color: ColorToken): void {
@@ -176,6 +231,19 @@ export class EditorSession {
     if (this.undoManager !== null) stopLocalUndoCapture(this.undoManager);
   }
 
+  private changeHistory(direction: 'undo' | 'redo'): HistoryResult {
+    const manager = this.undoManager;
+    if (manager === null || !(direction === 'undo' ? manager.canUndo() : manager.canRedo())) {
+      return 'empty';
+    }
+    const before = JSON.stringify(this.writerSession.getProjection());
+    if (direction === 'undo') manager.undo();
+    else manager.redo();
+    const visibleChange = before !== JSON.stringify(this.writerSession.getProjection());
+    this.refresh();
+    return visibleChange ? 'applied' : 'skipped-deleted-target';
+  }
+
   public close(): Promise<void> {
     this.closePromise ??= this.closeInternal();
     return this.closePromise;
@@ -208,6 +276,9 @@ export class EditorSession {
       writer,
       projection,
       initializationError: false,
+      canUndo: this.undoManager?.canUndo() ?? false,
+      canRedo: this.undoManager?.canRedo() ?? false,
+      canRestoreDeletion: this.deletionCapture !== null,
     });
     for (const listener of this.listeners) listener();
   };
@@ -218,6 +289,7 @@ export class EditorSession {
     this.undoManager?.destroy();
     this.undoManager = null;
     this.undoDocument = null;
+    this.deletionCapture = null;
     await this.writerSession.close();
     this.listeners.clear();
   }

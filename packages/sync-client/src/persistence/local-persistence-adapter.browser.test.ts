@@ -11,6 +11,9 @@ import {
 } from '@archboard/contracts';
 import {
   COMMAND_ORIGINS,
+  createLocalUndoManager,
+  deleteGraphObjects,
+  editGraphText,
   createEdge,
   createGraphDocument,
   createNode,
@@ -358,6 +361,30 @@ describe('productized IndexedDB hydration, snapshot, outbox, and failure lifecyc
     expect((await reopened.localSnapshot())?.throughLocalSequence).toBe(localCount);
     expect(await reopened.listTransportEligibleUpdates()).toHaveLength(outboxCount);
     expect(reopened.persistenceStatus().phase).toBe(LOCAL_PERSISTENCE_PHASES.READY);
+  });
+
+  it('persists undo-manager updates so later local commands reopen without a Yjs clock gap', async () => {
+    const storageNamespace = namespace();
+    const document = createGraphDocument();
+    const adapter = await openAdapter(document, storageNamespace);
+    const graphNode = node('Original');
+    createNode(document, graphNode);
+    const undo = createLocalUndoManager(document);
+    editGraphText(
+      document,
+      { entity: 'node', id: graphNode.id, field: 'title' },
+      { index: 0, deleteCount: graphNode.title.length, insert: 'Edited' },
+    );
+    undo.undo();
+    deleteGraphObjects(document, { nodeIds: [graphNode.id] });
+    await adapter.whenIdle();
+    expect(projectGraphDocument(document).nodes).toHaveLength(0);
+    await adapter.close();
+
+    const reopenedDocument = createGraphDocument();
+    await openAdapter(reopenedDocument, storageNamespace);
+    expect(projectGraphDocument(reopenedDocument).nodes).toHaveLength(0);
+    undo.destroy();
   });
 
   it('publishes immutable loading, saving, and saved snapshots with exact pending counts', async () => {

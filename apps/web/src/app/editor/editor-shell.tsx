@@ -64,6 +64,12 @@ import {
   GraphCanvas,
 } from '@/features/editor/canvas';
 import { CardInspector } from '@/features/editor/inspector';
+import {
+  createClipboardNote,
+  EditorActionsPanel,
+  shortcutModifierLabel,
+  useEditorCommands,
+} from '@/features/editor/history';
 import { SelectionGeometryPanel } from '@/features/editor/selection';
 import {
   createConnectionEdge,
@@ -339,6 +345,52 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
     void reactFlow.setViewport(DEFAULT_CANVAS_VIEWPORT);
   }, [reactFlow]);
 
+  const createNoteFromClipboard = useCallback(
+    (text: string): void => {
+      if (session === null || !viewState.editable) return;
+      const container = canvasContainer.current;
+      if (container === null) return;
+      const rect = container.getBoundingClientRect();
+      const size = CARD_SIZES[NODE_KINDS.NOTE];
+      const position = {
+        x: Math.max(
+          -MAX_GRAPH_COORDINATE,
+          Math.min(
+            MAX_GRAPH_COORDINATE,
+            (rect.width / HALF - viewport.x) / viewport.zoom - size.width / HALF,
+          ),
+        ),
+        y: Math.max(
+          -MAX_GRAPH_COORDINATE,
+          Math.min(
+            MAX_GRAPH_COORDINATE,
+            (rect.height / HALF - viewport.y) / viewport.zoom - size.height / HALF,
+          ),
+        ),
+      };
+      const note = createClipboardNote(crypto.randomUUID(), position, text);
+      session.createCard(note);
+      actions.setSelection([{ id: note.id, kind: SELECTION_KINDS.NODE }]);
+    },
+    [actions, session, viewState.editable, viewport],
+  );
+  const editorCommands = useEditorCommands({
+    editable: viewState.editable,
+    projection,
+    selection,
+    session,
+    sessionSnapshot,
+    onCreateNote: createNoteFromClipboard,
+    onFitContent: fitContent,
+    onNotice: setConnectionNotice,
+    onOpenHelp: () => actions.openDialog('help'),
+    onZoomIn: () => zoomTo(viewport.zoom * CANVAS_ZOOM_STEP),
+    onZoomOut: () => zoomTo(viewport.zoom / CANVAS_ZOOM_STEP),
+    setSelection: actions.setSelection,
+    clearSelection: actions.clearSelection,
+  });
+  const shortcutModifier = shortcutModifierLabel();
+
   const ThemeIcon =
     preference === THEME_PREFERENCES.LIGHT
       ? Sun
@@ -385,17 +437,19 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
         <div className="ml-auto flex items-center gap-0.5" aria-label="Board actions">
           <IconButton
             className="max-sm:hidden"
-            label="Undo — unavailable while loading"
+            label={`Undo (${shortcutModifier}+Z)`}
             variant="ghost"
-            disabled
+            disabled={!viewState.editable || !editorCommands.canUndo}
+            onClick={editorCommands.undo}
           >
             <Undo2 />
           </IconButton>
           <IconButton
             className="max-sm:hidden"
-            label="Redo — unavailable while loading"
+            label={`Redo (${shortcutModifier}+Shift+Z)`}
             variant="ghost"
-            disabled
+            disabled={!viewState.editable || !editorCommands.canRedo}
+            onClick={editorCommands.redo}
           >
             <Redo2 />
           </IconButton>
@@ -615,6 +669,7 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
             )}
           </div>
           <CollapsibleContent className="h-[calc(100%-3.5rem)] overflow-y-auto">
+            <EditorActionsPanel actions={editorCommands} disabled={!viewState.editable} />
             {selectedNode !== null && session !== null && projection !== null ? (
               <div>
                 <CardInspector
@@ -757,6 +812,31 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
       </footer>
 
       <Dialog
+        open={editorCommands.deleteConfirmationOpen}
+        onOpenChange={(open) => {
+          if (!open) editorCommands.cancelDelete();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete selected objects?</DialogTitle>
+            <DialogDescription>
+              This selection contains more than 10 objects. The objects and internal connections
+              will be deleted together. Undo does not apply to deletion.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={editorCommands.cancelDelete}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" onClick={editorCommands.confirmDelete}>
+              Delete objects
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={activeDialog === 'help'}
         onOpenChange={(open) => (open ? actions.openDialog('help') : actions.closeDialog())}
       >
@@ -779,6 +859,36 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
             <div className="flex items-center justify-between gap-8 py-2">
               <dt>Clear selection</dt>
               <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">Escape</dd>
+            </div>
+            <div className="flex items-center justify-between gap-8 border-t py-2">
+              <dt>Delete selection</dt>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">Delete</dd>
+            </div>
+            <div className="flex items-center justify-between gap-8 border-t py-2">
+              <dt>Duplicate</dt>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">
+                {shortcutModifier}+D
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-8 border-t py-2">
+              <dt>Copy / paste selection</dt>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">
+                {shortcutModifier}+C / {shortcutModifier}+V
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-8 border-t py-2">
+              <dt>Undo / redo edits</dt>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">
+                {shortcutModifier}+Z / {shortcutModifier}+Shift+Z
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-8 border-t py-2">
+              <dt>Fit content / zoom</dt>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">F / + / -</dd>
+            </div>
+            <div className="flex items-center justify-between gap-8 border-t py-2">
+              <dt>Open this dialog</dt>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">?</dd>
             </div>
           </dl>
           <DialogFooter showCloseButton />
