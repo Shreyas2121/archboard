@@ -36,23 +36,25 @@ Copy `.env.example` to `.env`, supply the real local database and authentication
 `pnpm dev` from the repository root. It builds the API and its workspace dependencies once, then
 starts the API compiler, API process, and Vite development server together. `Ctrl+C` stops all three.
 
-| Command                          | Purpose                                         |
-| -------------------------------- | ----------------------------------------------- |
-| `pnpm install --frozen-lockfile` | Reproduce the dependency graph                  |
-| `pnpm dev`                       | Run the API and web development servers         |
-| `pnpm format:check`              | Check formatting                                |
-| `pnpm lint`                      | Run lint and package-boundary rules             |
-| `pnpm typecheck`                 | Run strict TypeScript checks                    |
-| `pnpm test`                      | Run workspace unit tests                        |
-| `pnpm test:integration`          | Run API integration tests                       |
-| `pnpm test:browser`              | Run browser-backed sync-client package units    |
-| `pnpm boundary:check`            | Check package boundaries and negative fixtures  |
-| `pnpm build`                     | Build applications and packages                 |
-| `pnpm db:migration:generate`     | Generate a TypeORM migration after C08          |
-| `pnpm db:migration:run`          | Apply TypeORM migrations after C08              |
-| `pnpm db:migration:show`         | Show TypeORM migration state after C08          |
-| `pnpm auth:schema:check`         | Check Better Auth schema drift after C08        |
-| `pnpm phase1:verify`             | Run the complete Phase 1 gate after C15         |
+| Command                          | Purpose                                        |
+| -------------------------------- | ---------------------------------------------- |
+| `pnpm install --frozen-lockfile` | Reproduce the dependency graph                 |
+| `pnpm dev`                       | Run the API and web development servers        |
+| `pnpm format:check`              | Check formatting                               |
+| `pnpm lint`                      | Run lint and package-boundary rules            |
+| `pnpm typecheck`                 | Run strict TypeScript checks                   |
+| `pnpm test`                      | Run workspace unit tests                       |
+| `pnpm test:integration`          | Run API integration tests                      |
+| `pnpm test:browser`              | Run browser-backed sync-client package units   |
+| `pnpm boundary:check`            | Check package boundaries and negative fixtures |
+| `pnpm build`                     | Build applications and packages                |
+| `pnpm db:migration:generate`     | Generate a TypeORM migration after C08         |
+| `pnpm db:migration:run`          | Apply TypeORM migrations after C08             |
+| `pnpm db:migration:show`         | Show TypeORM migration state after C08         |
+| `pnpm auth:schema:check`         | Check Better Auth schema drift after C08       |
+| `pnpm phase1:verify`             | Run the complete Phase 1 gate after C15        |
+| `pnpm phase2:measure`            | Measure the cached local editor in Chrome      |
+| `pnpm phase2:verify`             | Run the complete Phase 2 static/package gate   |
 
 The browser-backed sync-client units use Playwright with an installed stable Google Chrome. Package
 installation does not download a second browser binary. The web application does not retain an

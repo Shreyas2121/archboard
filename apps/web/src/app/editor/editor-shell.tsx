@@ -185,6 +185,8 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
   const [creationError, setCreationError] = useState<string | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<string | null>(null);
   const [resetPending, setResetPending] = useState(false);
+  const resetButtonRef = useRef<HTMLButtonElement>(null);
+  const helpButtonRef = useRef<HTMLButtonElement>(null);
   const [resetError, setResetError] = useState<string | null>(null);
   const { preference, cyclePreference } = useTheme();
   const viewState = editorViewState(phaseForSession(sessionSnapshot, narrowScreen));
@@ -479,6 +481,7 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
             <Redo2 />
           </IconButton>
           <IconButton
+            ref={resetButtonRef}
             className="max-sm:hidden"
             label={canReset ? 'Reset local demo' : 'Reset demo unavailable in this view'}
             variant="ghost"
@@ -509,6 +512,7 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
             <ThemeIcon />
           </IconButton>
           <IconButton
+            ref={helpButtonRef}
             label="Open keyboard help"
             variant="ghost"
             onClick={() => actions.openDialog('help')}
@@ -884,7 +888,12 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
           }
         }}
       >
-        <DialogContent>
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            resetButtonRef.current?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Reset the local demo?</DialogTitle>
             <DialogDescription>
@@ -930,7 +939,12 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
         open={activeDialog === 'help'}
         onOpenChange={(open) => (open ? actions.openDialog('help') : actions.closeDialog())}
       >
-        <DialogContent>
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            helpButtonRef.current?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Keyboard help</DialogTitle>
             <DialogDescription>
