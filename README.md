@@ -9,6 +9,10 @@ The active implementation scope is Phase 2: the local editor. Read [`plan.md`](.
 changes. The completed Phase 1 foundation and compatibility evidence remain authoritative inputs
 to this phase.
 
+The [Phase 2 audit](./docs/phase-2-editor.md) is **open, not passed**. The local editor's recorded
+pan p95 exceeds its target, and the spoken screen-reader check is unrun. See the
+[task evidence index](./docs/evidence/phase2/README.md) for the completed work and remaining proofs.
+
 ## Requirements
 
 - Node.js 22.23.2
