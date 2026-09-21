@@ -162,6 +162,9 @@ importers:
       '@archboard/document-model':
         specifier: 0.0.0
         version: link:../../packages/document-model
+      '@archboard/fixtures':
+        specifier: 0.0.0
+        version: link:../../packages/fixtures
       '@archboard/sync-client':
         specifier: 0.0.0
         version: link:../../packages/sync-client

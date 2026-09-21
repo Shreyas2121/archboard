@@ -145,6 +145,7 @@ export class LocalPersistenceAdapter {
   private status: LocalPersistenceStatus = loadingStatus();
   private closed = false;
   private observing = false;
+  private namespaceHadStoredState = false;
 
   private constructor(options: LocalPersistenceAdapterOptions) {
     this.namespace = boardStorageNamespaceKey(options.namespace);
@@ -192,6 +193,10 @@ export class LocalPersistenceAdapter {
 
   public exportInMemoryProjection(): GraphProjection {
     return projectGraphDocument(this.document);
+  }
+
+  public hadStoredStateOnOpen(): boolean {
+    return this.namespaceHadStoredState;
   }
 
   public async whenIdle(): Promise<void> {
@@ -360,6 +365,7 @@ export class LocalPersistenceAdapter {
           this.namespace,
         )
       ).sort((a, b) => a.localSequence - b.localSequence);
+      this.namespaceHadStoredState = snapshot !== undefined || records.length > 0;
     } catch {
       this.recordStorageFailure();
       return;

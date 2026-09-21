@@ -1,9 +1,16 @@
-import { GRAPH_SCHEMA_VERSION } from '@archboard/contracts';
+import {
+  COLOR_TOKENS,
+  COMPONENT_CATEGORIES,
+  GRAPH_SCHEMA_VERSION,
+  type GraphNode,
+} from '@archboard/contracts';
+import { createNode } from '@archboard/document-model';
 import { afterEach, describe, expect, it } from 'vitest';
 import { deleteDB } from 'idb';
 
 import { LOCAL_DEMO_USER_KEY, SYNC_DATABASE_NAME } from '../config/index.js';
 import type { BoardStorageNamespace } from '../persistence/namespace.js';
+import { listBoardStorageNamespaceRecords } from '../persistence/namespace-storage.js';
 import { LOCK_HINT_TYPES, WRITER_LOCK_PREFIX } from './constants.js';
 import type { WriterLockHarness } from './test-harness.js';
 import {
@@ -22,6 +29,8 @@ const POLL_INTERVAL_MS = 10;
 const POLL_ATTEMPTS = 500;
 const EXPECTED_OUTBOX_AFTER_TRANSFER = 2;
 const harnessWindows: HarnessWindow[] = [];
+const TEST_NODE_WIDTH = 240;
+const TEST_NODE_HEIGHT = 140;
 
 function namespace(boardId = crypto.randomUUID()): BoardStorageNamespace {
   return {
@@ -29,6 +38,23 @@ function namespace(boardId = crypto.randomUUID()): BoardStorageNamespace {
     userId: LOCAL_DEMO_USER_KEY,
     boardId,
     graphSchemaVersion: GRAPH_SCHEMA_VERSION,
+  };
+}
+
+function node(title: string): GraphNode {
+  return {
+    id: crypto.randomUUID(),
+    kind: 'component',
+    position: { x: 0, y: 0 },
+    size: { width: TEST_NODE_WIDTH, height: TEST_NODE_HEIGHT },
+    title,
+    color: COLOR_TOKENS.BLUE,
+    content: {
+      category: COMPONENT_CATEGORIES.SERVICE,
+      description: '',
+      technology: 'TypeScript',
+      externalUrl: null,
+    },
   };
 }
 
@@ -140,5 +166,40 @@ describe('Web Lock and BroadcastChannel writer ownership in independent pages', 
     await firstClose;
     expect(unsupported.getSnapshot().phase).toBe(WRITER_SESSION_PHASES.CLOSED);
     expect(phases).toContain(WRITER_SESSION_PHASES.CLOSED);
+  });
+
+  it('replaces only the exact namespace while retaining writer ownership', async () => {
+    const targetNamespace = namespace();
+    const neighborNamespace = namespace();
+    const target = await BrowserWriterSession.open({ namespace: targetNamespace });
+    const neighbor = await BrowserWriterSession.open({ namespace: neighborNamespace });
+    expect(target.hadStoredStateOnOpen()).toBe(false);
+
+    const original = node('Original target');
+    const neighboring = node('Neighboring board');
+    target.executeMutation((document) => createNode(document, original));
+    neighbor.executeMutation((document) => createNode(document, neighboring));
+    await Promise.all([target.whenIdle(), neighbor.whenIdle()]);
+
+    const replacement = node('Replacement target');
+    await target.replaceLocalState((document) => createNode(document, replacement));
+
+    expect(target.getSnapshot()).toMatchObject({
+      phase: WRITER_SESSION_PHASES.WRITER,
+      writable: true,
+    });
+    expect(target.getProjection().nodes.map(({ id }) => id)).toEqual([replacement.id]);
+    expect(neighbor.getProjection().nodes.map(({ id }) => id)).toEqual([neighboring.id]);
+    expect((await listBoardStorageNamespaceRecords(targetNamespace)).outbox).toHaveLength(1);
+    expect((await listBoardStorageNamespaceRecords(neighborNamespace)).outbox).toHaveLength(1);
+    expect((await navigator.locks.query()).held?.map(({ name }) => name)).toContain(
+      writerLockName(targetNamespace),
+    );
+
+    await Promise.all([target.close(), neighbor.close()]);
+    const reopened = await BrowserWriterSession.open({ namespace: targetNamespace });
+    expect(reopened.hadStoredStateOnOpen()).toBe(true);
+    expect(reopened.getProjection().nodes.map(({ id }) => id)).toEqual([replacement.id]);
+    await reopened.close();
   });
 });

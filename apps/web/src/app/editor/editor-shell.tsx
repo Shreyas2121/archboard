@@ -12,6 +12,7 @@ import {
   CircleHelp,
   Code2,
   Database,
+  Download,
   Grid3X3,
   Maximize,
   Monitor,
@@ -64,6 +65,7 @@ import {
   GraphCanvas,
 } from '@/features/editor/canvas';
 import { CardInspector } from '@/features/editor/inspector';
+import { downloadRecoveryArtifact } from '@/features/editor/demo';
 import {
   createClipboardNote,
   EditorActionsPanel,
@@ -132,6 +134,7 @@ function phaseForSession(
   narrowScreen: boolean,
 ): (typeof EDITOR_VIEW_PHASES)[keyof typeof EDITOR_VIEW_PHASES] {
   if (snapshot?.initializationError) return EDITOR_VIEW_PHASES.RECOVERY_REQUIRED;
+  if (snapshot?.preparingDemo) return EDITOR_VIEW_PHASES.SEEDING;
   if (snapshot?.projection === null || snapshot === null) return EDITOR_VIEW_PHASES.LOADING;
 
   const persistence = snapshot.writer.persistence;
@@ -181,6 +184,8 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
   const [viewport, setViewport] = useState<Viewport>(DEFAULT_CANVAS_VIEWPORT);
   const [creationError, setCreationError] = useState<string | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<string | null>(null);
+  const [resetPending, setResetPending] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
   const { preference, cyclePreference } = useTheme();
   const viewState = editorViewState(phaseForSession(sessionSnapshot, narrowScreen));
   const projection = sessionSnapshot?.projection ?? null;
@@ -390,6 +395,26 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
     clearSelection: actions.clearSelection,
   });
   const shortcutModifier = shortcutModifierLabel();
+  const canReset =
+    projection !== null && session !== null && sessionSnapshot?.writer.writable === true;
+  const downloadRecovery = useCallback((): void => {
+    if (projection !== null) downloadRecoveryArtifact(projection);
+  }, [projection]);
+  const confirmReset = useCallback(async (): Promise<void> => {
+    if (session === null || !canReset) return;
+    setResetPending(true);
+    setResetError(null);
+    try {
+      await session.resetDemo();
+      actions.clearSelection();
+      actions.closeDialog();
+      setConnectionNotice('Local demo reset with fresh entity IDs.');
+    } catch (error) {
+      setResetError(error instanceof Error ? error.message : 'The local demo could not be reset.');
+    } finally {
+      setResetPending(false);
+    }
+  }, [actions, canReset, session]);
 
   const ThemeIcon =
     preference === THEME_PREFERENCES.LIGHT
@@ -455,11 +480,25 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
           </IconButton>
           <IconButton
             className="max-sm:hidden"
-            label="Reset demo — unavailable while loading"
+            label={canReset ? 'Reset local demo' : 'Reset demo unavailable in this view'}
             variant="ghost"
-            disabled
+            disabled={!canReset}
+            onClick={() => actions.openDialog('reset')}
           >
             <RotateCcw />
+          </IconButton>
+          <IconButton
+            className="max-sm:hidden"
+            label={
+              projection === null
+                ? 'Download recovery unavailable while loading'
+                : 'Download local recovery'
+            }
+            variant="ghost"
+            disabled={projection === null}
+            onClick={downloadRecovery}
+          >
+            <Download />
           </IconButton>
           <span className="mx-1 h-5 w-px bg-border max-sm:hidden" aria-hidden="true" />
           <IconButton
@@ -831,6 +870,57 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
             </Button>
             <Button type="button" variant="destructive" onClick={editorCommands.confirmDelete}>
               Delete objects
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={activeDialog === 'reset'}
+        onOpenChange={(open) => {
+          if (!open && !resetPending) {
+            setResetError(null);
+            actions.closeDialog();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset the local demo?</DialogTitle>
+            <DialogDescription>
+              This replaces only this device&apos;s local demo board with a fresh copy. Download a
+              recovery file first if you want to keep the current graph.
+            </DialogDescription>
+          </DialogHeader>
+          {resetError !== null && (
+            <p className="text-sm text-destructive" role="alert">
+              {resetError}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={resetPending || projection === null}
+              onClick={downloadRecovery}
+            >
+              <Download /> Download recovery
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={resetPending}
+              onClick={actions.closeDialog}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={resetPending || !canReset}
+              onClick={() => void confirmReset()}
+            >
+              {resetPending ? 'Resetting…' : 'Reset local demo'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -9,6 +9,7 @@ import {
   type LocalPersistenceStatus,
 } from '../persistence/local-persistence-adapter.js';
 import { boardStorageNamespaceKey, type BoardStorageNamespace } from '../persistence/namespace.js';
+import { deleteBoardStorageNamespace } from '../persistence/namespace-storage.js';
 import { LOCK_HINT_TYPES, WRITER_LOCK_VERSION, type LockHintType } from './constants.js';
 import { lockHintChannelName, writerLockName } from './names.js';
 
@@ -190,6 +191,30 @@ export class BrowserWriterSession {
     await this.persistence?.whenIdle();
   }
 
+  public hadStoredStateOnOpen(): boolean {
+    if (this.persistence === null) throw new Error('Writer session has not hydrated a document.');
+    return this.persistence.hadStoredStateOnOpen();
+  }
+
+  public async replaceLocalState(initialize: (document: Y.Doc) => void): Promise<void> {
+    if (!this.ownsLock || this.snapshot.phase !== WRITER_SESSION_PHASES.WRITER) {
+      throw new WriterLockRequiredError();
+    }
+    this.publish(WRITER_SESSION_PHASES.OPENING);
+    await this.closeView();
+    await deleteBoardStorageNamespace(this.options.namespace);
+    await this.openView('read-write');
+    const binding = this.getBindingDuringOwnedTransition();
+    try {
+      initialize(binding.document);
+      await binding.persistence.whenIdle();
+    } finally {
+      this.publish(WRITER_SESSION_PHASES.WRITER);
+    }
+    binding.persistence.assertEditingAllowed();
+    this.announceResetComplete();
+  }
+
   public retry(): Promise<void> {
     if (
       this.closeRequested ||
@@ -257,6 +282,14 @@ export class BrowserWriterSession {
     }
   }
 
+  private async refreshReadOnlyInternal(): Promise<void> {
+    this.publish(WRITER_SESSION_PHASES.OPENING);
+    await this.closeView();
+    if (this.closeRequested) return;
+    await this.openView('read-only');
+    if (!this.closeRequested) this.publish(WRITER_SESSION_PHASES.READ_ONLY_HELD_ELSEWHERE);
+  }
+
   private async openView(mode: 'read-write' | 'read-only'): Promise<void> {
     const document = this.documentFactory();
     const persistence = await LocalPersistenceAdapter.open({
@@ -273,6 +306,14 @@ export class BrowserWriterSession {
     this.document = document;
     this.persistence = persistence;
     this.unsubscribePersistence = persistence.subscribe(this.handlePersistenceStatus);
+  }
+
+  private getBindingDuringOwnedTransition(): WritableDocumentBinding {
+    if (!this.ownsLock || this.document === null || this.persistence === null) {
+      throw new WriterLockRequiredError();
+    }
+    this.persistence.assertEditingAllowed();
+    return { document: this.document, persistence: this.persistence };
   }
 
   private async closeView(): Promise<void> {
@@ -330,6 +371,13 @@ export class BrowserWriterSession {
       this.snapshot.phase === WRITER_SESSION_PHASES.READ_ONLY_HELD_ELSEWHERE
     ) {
       void this.retry();
+    } else if (
+      event.data.type === LOCK_HINT_TYPES.RESET_COMPLETE &&
+      this.snapshot.phase === WRITER_SESSION_PHASES.READ_ONLY_HELD_ELSEWHERE
+    ) {
+      this.transition ??= this.refreshReadOnlyInternal().finally(() => {
+        this.transition = null;
+      });
     }
   };
 

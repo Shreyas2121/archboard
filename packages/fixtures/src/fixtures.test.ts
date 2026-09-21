@@ -28,13 +28,14 @@ import {
   createTypicalGraphFixture,
   minimalGraphFixture,
 } from './graph/index.js';
-import { FIXED_IDS } from './ids.js';
+import { FIXED_IDS, FIXTURE_NAMESPACES, fixtureId } from './ids.js';
 import {
   createInvalidContractFixtures,
   rawWebSocketFrameOverLimitFixture,
   zeroBytesAsCanonicalBase64,
 } from './limits/index.js';
 import { causalGapScenarios, malformedPhysicalScenarios } from './malformed/index.js';
+import { instantiateWebApplicationTemplate, webApplicationTemplate } from './templates/index.js';
 
 const EXPECTED_MINIMAL_NODE_COUNT = 2;
 const EXPECTED_MINIMAL_EDGE_COUNT = 1;
@@ -44,6 +45,9 @@ const EXPECTED_ALL_ENTITY_STEP_COUNT = 2;
 const EXPECTED_CONCURRENCY_SCENARIO_COUNT = 9;
 const EXPECTED_MALFORMED_SCENARIO_COUNT = 8;
 const EXPECTED_CAUSAL_GAP_SCENARIO_COUNT = 2;
+const EXPECTED_WEB_APPLICATION_NODE_COUNT = 5;
+const EXPECTED_WEB_APPLICATION_EDGE_COUNT = 3;
+const EXPECTED_WEB_APPLICATION_STEP_COUNT = 4;
 
 describe('valid graph fixtures', () => {
   it.each([
@@ -95,6 +99,39 @@ describe('valid graph fixtures', () => {
     expect(first.edges).toHaveLength(TYPICAL_GRAPH_COUNTS.edgeCount);
     expect(first.boundaries).toHaveLength(TYPICAL_GRAPH_COUNTS.boundaryCount);
     expect(first.steps).toHaveLength(TYPICAL_GRAPH_COUNTS.stepCount);
+  });
+
+  it('validates and freshly instantiates the web-application template', () => {
+    let ordinal = 1_000;
+    const first = instantiateWebApplicationTemplate(() =>
+      fixtureId(FIXTURE_NAMESPACES.NODE, ordinal++),
+    );
+    const second = instantiateWebApplicationTemplate(() =>
+      fixtureId(FIXTURE_NAMESPACES.NODE, ordinal++),
+    );
+    const firstNodeIds = new Set(first.nodes.map(({ id }) => id));
+    const firstEdgeIds = new Set(first.edges.map(({ id }) => id));
+
+    expect(graphProjectionSchema.parse(webApplicationTemplate)).toEqual(webApplicationTemplate);
+    expect(first.nodes).toHaveLength(EXPECTED_WEB_APPLICATION_NODE_COUNT);
+    expect(first.edges).toHaveLength(EXPECTED_WEB_APPLICATION_EDGE_COUNT);
+    expect(first.boundaries).toHaveLength(1);
+    expect(first.steps).toHaveLength(EXPECTED_WEB_APPLICATION_STEP_COUNT);
+    expect(first.nodes.map(({ id }) => id)).not.toEqual(
+      webApplicationTemplate.nodes.map(({ id }) => id),
+    );
+    expect(first.nodes.map(({ id }) => id)).not.toEqual(second.nodes.map(({ id }) => id));
+    expect(
+      first.edges.every(
+        ({ sourceId, targetId }) => firstNodeIds.has(sourceId) && firstNodeIds.has(targetId),
+      ),
+    ).toBe(true);
+    expect(first.steps.every(({ nodeIds }) => nodeIds.every((id) => firstNodeIds.has(id)))).toBe(
+      true,
+    );
+    expect(first.steps.every(({ edgeIds }) => edgeIds.every((id) => firstEdgeIds.has(id)))).toBe(
+      true,
+    );
   });
 
   it('builds exact live-count limits and maximum valid content', () => {

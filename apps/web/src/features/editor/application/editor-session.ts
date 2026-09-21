@@ -16,6 +16,7 @@ import {
   createBoundary,
   createEdge,
   createNode,
+  createPresentationStep,
   editGraphText,
   editEdge,
   editBoundary,
@@ -35,6 +36,7 @@ import {
   type NodeAlignment,
   type TextEdit,
 } from '@archboard/document-model';
+import { instantiateWebApplicationTemplate } from '@archboard/fixtures';
 import {
   BrowserWriterSession,
   LOCAL_DEMO_USER_KEY,
@@ -51,12 +53,18 @@ export interface EditorSessionSnapshot {
   readonly canUndo: boolean;
   readonly canRedo: boolean;
   readonly canRestoreDeletion: boolean;
+  readonly preparingDemo: boolean;
 }
 
 export type HistoryResult = 'applied' | 'empty' | 'skipped-deleted-target';
 
 type SessionListener = () => void;
 type UndoManager = ReturnType<typeof createLocalUndoManager>;
+const STATUS_PRESENTATION_DELAY_MS = 50;
+
+function allowStatusPresentation(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, STATUS_PRESENTATION_DELAY_MS));
+}
 
 export interface EditorSessionOptions {
   readonly deploymentOrigin: string;
@@ -72,6 +80,8 @@ export class EditorSession {
   private deletionCapture: GraphProjection | null = null;
   private opening: Promise<void> | null = null;
   private closePromise: Promise<void> | null = null;
+  private preparingDemo = false;
+  private initializing = true;
   private snapshot: EditorSessionSnapshot;
 
   public constructor(options: EditorSessionOptions) {
@@ -92,6 +102,7 @@ export class EditorSession {
       canUndo: false,
       canRedo: false,
       canRestoreDeletion: false,
+      preparingDemo: false,
     });
   }
 
@@ -105,6 +116,7 @@ export class EditorSession {
         canUndo: false,
         canRedo: false,
         canRestoreDeletion: false,
+        preparingDemo: false,
       });
       for (const listener of this.listeners) listener();
     });
@@ -120,6 +132,19 @@ export class EditorSession {
 
   public retry(): Promise<void> {
     return this.writerSession.retry();
+  }
+
+  public async resetDemo(): Promise<void> {
+    this.preparingDemo = true;
+    this.refresh();
+    try {
+      await allowStatusPresentation();
+      await this.writerSession.replaceLocalState((document) => this.seedDocument(document));
+      this.deletionCapture = null;
+    } finally {
+      this.preparingDemo = false;
+      this.refresh();
+    }
   }
 
   public createCard(node: GraphNode): void {
@@ -252,7 +277,28 @@ export class EditorSession {
   private async openInternal(): Promise<void> {
     this.unsubscribeWriter = this.writerSession.subscribe(this.refresh);
     await this.writerSession.initialize();
+    if (this.writerSession.getSnapshot().writable && !this.writerSession.hadStoredStateOnOpen()) {
+      this.preparingDemo = true;
+      this.refresh();
+      await allowStatusPresentation();
+      const binding = this.writerSession.getWritableBinding();
+      if (binding === null) throw new Error('The demo writer lock was released before seeding.');
+      this.seedDocument(binding.document);
+      await this.writerSession.whenIdle();
+      this.preparingDemo = false;
+    }
+    this.initializing = false;
     this.refresh();
+  }
+
+  private seedDocument(document: Parameters<typeof createGraphObjects>[0]): void {
+    const fixture = instantiateWebApplicationTemplate(() => crypto.randomUUID());
+    createGraphObjects(document, {
+      nodes: fixture.nodes,
+      edges: fixture.edges,
+      boundaries: fixture.boundaries,
+    });
+    for (const step of fixture.steps) createPresentationStep(document, step);
   }
 
   private readonly refresh = (): void => {
@@ -267,7 +313,7 @@ export class EditorSession {
     }
 
     let projection: GraphProjection | null = null;
-    if (writer.persistence !== null) {
+    if (writer.persistence !== null && !this.initializing) {
       projection = this.writerSession.getProjection();
     }
 
@@ -279,6 +325,7 @@ export class EditorSession {
       canUndo: this.undoManager?.canUndo() ?? false,
       canRedo: this.undoManager?.canRedo() ?? false,
       canRestoreDeletion: this.deletionCapture !== null,
+      preparingDemo: this.preparingDemo,
     });
     for (const listener of this.listeners) listener();
   };
