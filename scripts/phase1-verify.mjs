@@ -57,6 +57,8 @@ const productionEnvironment = {
   ALLOWED_WEB_ORIGINS: productionWebOrigin,
   VITE_API_ORIGIN: productionApiOrigin,
   VITE_WS_ORIGIN: 'wss://archboard-api.onrender.com',
+  GITHUB_CLIENT_ID: 'Ov23liExampleClientId1234567890',
+  GITHUB_CLIENT_SECRET: '0123456789abcdef0123456789abcdef01234567',
 };
 
 const checks = [

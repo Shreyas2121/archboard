@@ -11,6 +11,16 @@ function createAuth(config: ApiConfig, pool: Pool) {
     trustedOrigins: [...config.allowedWebOrigins],
     secret: config.betterAuthSecret,
     database: pool,
+    socialProviders:
+      config.githubClientId !== null && config.githubClientSecret !== null
+        ? {
+            github: {
+              clientId: config.githubClientId,
+              clientSecret: config.githubClientSecret,
+              scope: ['read:user', 'user:email'],
+            },
+          }
+        : {},
     emailAndPassword: { enabled: config.mode === 'test' },
     advanced: { database: { joins: true } },
   });

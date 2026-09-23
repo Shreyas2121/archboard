@@ -19,6 +19,8 @@ const VALID_ENVIRONMENT: NodeJS.ProcessEnv = {
   DATABASE_URL: 'postgresql://user:secret@pooled.example.com/archboard',
   DATABASE_DIRECT_URL: 'postgresql://user:other-secret@direct.example.com/archboard',
   BETTER_AUTH_SECRET: 'test-secret-that-is-at-least-32-characters',
+  GITHUB_CLIENT_ID: 'Ov23liExampleClientId1234567890',
+  GITHUB_CLIENT_SECRET: '0123456789abcdef0123456789abcdef01234567',
 };
 
 const EXPECTED_VALIDATION_TIMEOUT_MS = 2_000;
@@ -46,6 +48,8 @@ describe('API runtime configuration', () => {
       databaseConnectionTimeoutMs: 10_000,
       betterAuthIdleTimeoutMs: 30_000,
       betterAuthSecret: VALID_ENVIRONMENT.BETTER_AUTH_SECRET,
+      githubClientId: VALID_ENVIRONMENT.GITHUB_CLIENT_ID,
+      githubClientSecret: VALID_ENVIRONMENT.GITHUB_CLIENT_SECRET,
     });
     expect(Object.isFrozen(config)).toBe(true);
     expect(Object.isFrozen(config.allowedWebOrigins)).toBe(true);
@@ -53,6 +57,18 @@ describe('API runtime configuration', () => {
 
   it.each([
     ['missing pooled database URL', { DATABASE_URL: undefined }, 'DATABASE_URL'],
+    ['missing GitHub client ID', { GITHUB_CLIENT_ID: undefined }, 'GITHUB_CLIENT_ID'],
+    ['missing GitHub client secret', { GITHUB_CLIENT_SECRET: undefined }, 'GITHUB_CLIENT_SECRET'],
+    [
+      'malformed GitHub client ID',
+      { GITHUB_CLIENT_ID: 'replace-with-a-client-id' },
+      'GITHUB_CLIENT_ID',
+    ],
+    [
+      'malformed GitHub client secret',
+      { GITHUB_CLIENT_SECRET: 'too-short' },
+      'GITHUB_CLIENT_SECRET',
+    ],
     ['malformed port', { PORT: 'ten-thousand' }, 'PORT'],
     [
       'API origin with a path',
@@ -115,6 +131,27 @@ describe('API runtime configuration', () => {
       });
     } catch (error) {
       expect(String(error)).not.toContain(secret);
+    }
+  });
+
+  it('keeps GitHub credentials optional only outside production and never prints a rejected secret', () => {
+    const testConfig = loadApiConfig({
+      ...VALID_ENVIRONMENT,
+      NODE_ENV: 'test',
+      GITHUB_CLIENT_ID: undefined,
+      GITHUB_CLIENT_SECRET: undefined,
+    });
+    expect(testConfig.githubClientId).toBeNull();
+    expect(testConfig.githubClientSecret).toBeNull();
+
+    const rejectedSecret = 'invalid!github!secret!that!must!not!appear';
+    try {
+      loadApiConfig({ ...VALID_ENVIRONMENT, GITHUB_CLIENT_SECRET: rejectedSecret });
+      throw new Error('Expected invalid GitHub configuration to fail.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigurationError);
+      expect(String(error)).toContain('GITHUB_CLIENT_SECRET');
+      expect(String(error)).not.toContain(rejectedSecret);
     }
   });
 
