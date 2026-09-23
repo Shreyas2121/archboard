@@ -10,11 +10,16 @@ import {
   boardListResponseSchema,
   boardMemberResponseSchema,
   boardMembersResponseSchema,
+  boardInviteListResponseSchema,
+  boardInviteResponseSchema,
   boardVersionRequestSchema,
   changeMemberRoleSchema,
   createBoardSchema,
+  createInviteSchema,
   duplicateBoardSchema,
   idempotencyKeySchema,
+  inviteListQuerySchema,
+  invitePathSchema,
   memberPathSchema,
   patchBoardSchema,
   type ErrorCode,
@@ -39,18 +44,23 @@ import { ZodError } from 'zod';
 
 import { AUTH_REQUEST_ACTOR, type RequestActor } from '../auth/application/index.js';
 import { BoardService, BoardServiceError } from './application/board-service.js';
+import { InviteService } from './application/invite-service.js';
 import { IdempotencyConflictError } from './infrastructure/idempotency.js';
 
 function errorStatus(code: ErrorCode): number {
   switch (code) {
     case ERROR_CODES.NOT_FOUND:
+    case ERROR_CODES.INVITE_UNAVAILABLE:
       return HttpStatus.NOT_FOUND;
     case ERROR_CODES.FORBIDDEN:
       return HttpStatus.FORBIDDEN;
     case ERROR_CODES.VERSION_CONFLICT:
     case ERROR_CODES.IDEMPOTENCY_CONFLICT:
     case ERROR_CODES.BOARD_ARCHIVED:
+    case ERROR_CODES.INVITE_EXHAUSTED:
       return HttpStatus.CONFLICT;
+    case ERROR_CODES.INVITE_EXPIRED:
+      return HttpStatus.GONE;
     case ERROR_CODES.RATE_LIMITED:
       return HttpStatus.TOO_MANY_REQUESTS;
     default:
@@ -58,7 +68,7 @@ function errorStatus(code: ErrorCode): number {
   }
 }
 
-function fail(code: ErrorCode, message: string, status: number): never {
+export function fail(code: ErrorCode, message: string, status: number): never {
   throw new HttpException(
     apiErrorEnvelopeSchema.parse({
       error: { code, message, requestId: randomUUID() },
@@ -67,7 +77,7 @@ function fail(code: ErrorCode, message: string, status: number): never {
   );
 }
 
-function validate<T>(schema: { parse(value: unknown): T }, value: unknown): T {
+export function validate<T>(schema: { parse(value: unknown): T }, value: unknown): T {
   try {
     return schema.parse(value);
   } catch (error) {
@@ -78,7 +88,7 @@ function validate<T>(schema: { parse(value: unknown): T }, value: unknown): T {
   }
 }
 
-async function safe<T>(work: () => Promise<T>): Promise<T> {
+export async function safe<T>(work: () => Promise<T>): Promise<T> {
   try {
     return await work();
   } catch (error) {
@@ -101,6 +111,7 @@ export class BoardsController {
   public constructor(
     @Inject(AUTH_REQUEST_ACTOR) private readonly actor: RequestActor,
     @Inject(BoardService) private readonly boards: BoardService,
+    @Inject(InviteService) private readonly invites: InviteService,
   ) {}
 
   @Post()
@@ -239,6 +250,50 @@ export class BoardsController {
     return safe(async () => {
       const { id, userId } = validate(memberPathSchema, path);
       await this.boards.removeMember(session.user.id, id, userId);
+    });
+  }
+
+  @Get(':id/invites')
+  public async listInvites(
+    @Req() request: IncomingMessage,
+    @Param() path: unknown,
+    @Query() query: unknown,
+  ) {
+    const session = await this.actor.require(request.headers);
+    return safe(async () => {
+      const { id } = validate(boardIdPathSchema, path);
+      const parsed = validate(inviteListQuerySchema, query);
+      return boardInviteListResponseSchema.parse(
+        await this.invites.list(session.user.id, id, parsed),
+      );
+    });
+  }
+
+  @Post(':id/invites')
+  public async createInvite(
+    @Req() request: IncomingMessage,
+    @Param() path: unknown,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const session = await this.actor.require(request.headers);
+    return safe(async () => {
+      const { id } = validate(boardIdPathSchema, path);
+      const parsedKey = validate(idempotencyKeySchema, key);
+      const input = validate(createInviteSchema, body);
+      return boardInviteResponseSchema.parse({
+        data: await this.invites.create(session.user.id, id, parsedKey, input),
+      });
+    });
+  }
+
+  @Delete(':id/invites/:inviteId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  public async revokeInvite(@Req() request: IncomingMessage, @Param() path: unknown) {
+    const session = await this.actor.require(request.headers);
+    return safe(async () => {
+      const { id, inviteId } = validate(invitePathSchema, path);
+      await this.invites.revoke(session.user.id, id, inviteId);
     });
   }
 }

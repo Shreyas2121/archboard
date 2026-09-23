@@ -8,6 +8,9 @@ import { BoardsController } from './modules/boards/boards.controller.js';
 import { PostgresBoardAuthorityReader } from './modules/boards/infrastructure/postgres-board-authority-reader.js';
 import { PostgresBoardPersistence } from './modules/boards/infrastructure/postgres-board-persistence.js';
 import { BoardPermissionService } from './modules/boards/application/index.js';
+import { InviteService } from './modules/boards/application/invite-service.js';
+import { InvitesController } from './modules/boards/invites.controller.js';
+import { PostgresInvitePersistence } from './modules/boards/infrastructure/postgres-invite-persistence.js';
 import {
   WEBSOCKET_API_CONFIG,
   WebSocketUpgradeService,
@@ -22,7 +25,7 @@ export class AppModule {
     return {
       module: AppModule,
       imports: [AuthModule.register(config), DatabaseModule.register(config)],
-      controllers: [AppController, BoardsController],
+      controllers: [AppController, BoardsController, InvitesController],
       providers: [
         { provide: WEBSOCKET_API_CONFIG, useValue: config },
         WebSocketUpgradeService,
@@ -32,6 +35,15 @@ export class AppModule {
           useFactory: (dataSource: DataSource) =>
             new BoardService(
               new PostgresBoardPersistence(dataSource),
+              new BoardPermissionService(new PostgresBoardAuthorityReader(dataSource)),
+            ),
+        },
+        {
+          provide: InviteService,
+          inject: [DataSource],
+          useFactory: (dataSource: DataSource) =>
+            new InviteService(
+              new PostgresInvitePersistence(dataSource, config.allowedWebOrigins[0]!),
               new BoardPermissionService(new PostgresBoardAuthorityReader(dataSource)),
             ),
         },
