@@ -16,6 +16,8 @@ import { DataSource } from 'typeorm';
 import * as Y from 'yjs';
 
 import { InitialDatabaseFoundation1789300000000 } from '../../../../migrations/1789300000000-InitialDatabaseFoundation.js';
+import { BoardPermissionService } from '../../../boards/application/index.js';
+import { PostgresBoardAuthorityReader } from '../../../boards/infrastructure/postgres-board-authority-reader.js';
 import { loadApiConfig } from '../../../../platform/config/index.js';
 import { DATABASE_ENTITIES } from '../../../../platform/database/database-entities.js';
 import {
@@ -30,9 +32,11 @@ import { PostgresDurableUpdateHarness } from './postgres-durable-update-harness.
 const OWNER_USER_ID = 'durable-owner';
 const EDITOR_USER_ID = 'durable-editor';
 const VIEWER_USER_ID = 'durable-viewer';
+const NONMEMBER_USER_ID = 'durable-nonmember';
 const OWNER_SESSION = 'owner-session';
 const EDITOR_SESSION = 'editor-session';
 const VIEWER_SESSION = 'viewer-session';
+const NONMEMBER_SESSION = 'nonmember-session';
 const INVALID_SESSION = 'invalid-session';
 const INITIAL_CONTENT_TIME = new Date('2000-01-01T00:00:00.000Z');
 const DATABASE_INTEGRATION_TIMEOUT_MS = 30_000;
@@ -52,6 +56,7 @@ class TestSessionAuthenticator implements UpdateSessionAuthenticator {
       [OWNER_SESSION, OWNER_USER_ID],
       [EDITOR_SESSION, EDITOR_USER_ID],
       [VIEWER_SESSION, VIEWER_USER_ID],
+      [NONMEMBER_SESSION, NONMEMBER_USER_ID],
     ]).get(sessionToken);
     return Promise.resolve(userId === undefined ? null : { userId });
   }
@@ -157,6 +162,7 @@ describe('durable PostgreSQL update acceptance', () => {
       [OWNER_USER_ID, 'durable-owner@example.com'],
       [EDITOR_USER_ID, 'durable-editor@example.com'],
       [VIEWER_USER_ID, 'durable-viewer@example.com'],
+      [NONMEMBER_USER_ID, 'durable-nonmember@example.com'],
     ]) {
       await dataSource.query(
         `INSERT INTO "user" ("id", "name", "email", "emailVerified", "updatedAt")
@@ -183,6 +189,7 @@ describe('durable PostgreSQL update acceptance', () => {
       accepted,
       dataSource,
       new TestSessionAuthenticator(),
+      new BoardPermissionService(new PostgresBoardAuthorityReader(dataSource)),
       failpoints,
     );
   });
@@ -354,6 +361,26 @@ describe('durable PostgreSQL update acceptance', () => {
     );
   });
 
+  it('rejects viewer and nonmember graph updates without changing accepted or persisted state', async () => {
+    const before = harness.acceptedStateAsUpdate();
+    for (const [sessionToken, code] of [
+      [VIEWER_SESSION, ERROR_CODES.FORBIDDEN],
+      [NONMEMBER_SESSION, ERROR_CODES.NOT_FOUND],
+    ] as const) {
+      await expectCode(
+        harness.accept({
+          boardId,
+          updateId: randomUUID(),
+          sessionToken,
+          updateBytes: createUpdate(accepted, node('Denied graph write')),
+        }),
+        code,
+      );
+      expect(harness.acceptedStateAsUpdate()).toEqual(before);
+      await expectPersistedCounts(dataSource, boardId, 0);
+    }
+  });
+
   it('rechecks archive state while holding the board row lock', async () => {
     const before = harness.acceptedStateAsUpdate();
     failpoints.arm(DURABLE_UPDATE_FAILPOINTS.AFTER_VALIDATION_BEFORE_TRANSACTION, async () => {
@@ -392,7 +419,7 @@ describe('durable PostgreSQL update acceptance', () => {
         sessionToken: EDITOR_SESSION,
         updateBytes: createUpdate(accepted, node('Revoked before lock')),
       }),
-      ERROR_CODES.FORBIDDEN,
+      ERROR_CODES.NOT_FOUND,
     );
     expect(harness.acceptedStateAsUpdate()).toEqual(before);
     await expectPersistedCounts(dataSource, boardId, 0);
@@ -437,8 +464,9 @@ async function expectPersistedCounts(
   const rows = (await dataSource.query(
     `SELECT
        (SELECT count(*)::integer FROM "board_updates" WHERE "board_id" = $1) AS "updates",
-       (SELECT count(*)::integer FROM "update_receipts" WHERE "board_id" = $1) AS "receipts"`,
+       (SELECT count(*)::integer FROM "update_receipts" WHERE "board_id" = $1) AS "receipts",
+       (SELECT latest_seq::text FROM "boards" WHERE "id" = $1) AS "sequence"`,
     [boardId],
-  )) as { updates: number; receipts: number }[];
-  expect(rows[0]).toEqual({ updates: expected, receipts: expected });
+  )) as { updates: number; receipts: number; sequence: string }[];
+  expect(rows[0]).toEqual({ updates: expected, receipts: expected, sequence: String(expected) });
 }
