@@ -44,6 +44,7 @@ export class BoardRepository {
     archived: boolean,
     limit: number,
     cursor?: { contentUpdatedAt: string; id: string },
+    search?: string,
   ): Promise<BoardListRecord[]> {
     const query = this.runner.manager
       .getRepository(BoardEntity)
@@ -58,7 +59,10 @@ export class BoardRepository {
         }),
       )
       .andWhere(archived ? 'board.archived_at IS NOT NULL' : 'board.archived_at IS NULL')
-      .addSelect('board.content_updated_at::text', 'content_updated_at_cursor')
+      .addSelect(
+        `to_char(board.content_updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+        'content_updated_at_cursor',
+      )
       .orderBy('board.content_updated_at', 'DESC')
       .addOrderBy('board.id', 'DESC')
       .take(limit);
@@ -67,6 +71,7 @@ export class BoardRepository {
         '(board.content_updated_at, board.id) < (CAST(:timestamp AS timestamptz), CAST(:cursorId AS uuid))',
         { timestamp: cursor.contentUpdatedAt, cursorId: cursor.id },
       );
+    if (search) query.andWhere('position(lower(:search) in lower(board.title)) > 0', { search });
     const { entities, raw } = await query.getRawAndEntities();
     return entities.map((board, index) => ({
       ...board,
