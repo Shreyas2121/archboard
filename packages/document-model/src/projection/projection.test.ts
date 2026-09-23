@@ -7,8 +7,36 @@ import { getGraphDocumentRoots } from '../schema/document.js';
 import { hydrateGraphDocument } from '../schema/hydrate.js';
 import { validateGraphDocument } from '../validation/validate.js';
 import { projectGraphDocument } from './project.js';
+import { remapGraphProjection } from './remap.js';
 
 describe('deterministic graph projection', () => {
+  it('remaps every entity ID and keeps edge and step references connected', () => {
+    const remapped = remapGraphProjection(allEntityGraphFixture);
+    const oldIds = new Set(Object.values(FIXED_IDS));
+    for (const entity of [
+      ...remapped.nodes,
+      ...remapped.edges,
+      ...remapped.boundaries,
+      ...remapped.steps,
+    ])
+      expect(oldIds.has(entity.id)).toBe(false);
+    const mappedNodeIds = new Map(
+      allEntityGraphFixture.nodes.map((node, index) => [node.id, remapped.nodes[index]!.id]),
+    );
+    expect(remapped.edges[0]?.sourceId).toBe(
+      mappedNodeIds.get(allEntityGraphFixture.edges[0]!.sourceId),
+    );
+    expect(remapped.edges[0]?.targetId).toBe(
+      mappedNodeIds.get(allEntityGraphFixture.edges[0]!.targetId),
+    );
+    const nodeIds = new Set(remapped.nodes.map((node) => node.id));
+    const edgeIds = new Set(remapped.edges.map((edge) => edge.id));
+    for (const step of remapped.steps) {
+      expect(step.nodeIds.every((id) => nodeIds.has(id))).toBe(true);
+      expect(step.edgeIds.every((id) => edgeIds.has(id))).toBe(true);
+    }
+    validateGraphDocument(hydrateGraphDocument(remapped));
+  });
   it('sorts every entity collection stably regardless of insertion order', () => {
     const reversed = {
       ...allEntityGraphFixture,

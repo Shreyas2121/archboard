@@ -70,6 +70,14 @@ export class BoardPermissionService {
     return this.check('read', boardId, actorUserId);
   }
 
+  public readLocked(
+    transaction: BoardPermissionTransaction,
+    boardId: string,
+    actorUserId: string,
+  ): Promise<BoardPermissionDecision> {
+    return this.check('read', boardId, actorUserId, transaction);
+  }
+
   // Advisory preflight only. Mutations must call the locked operation again before writing.
   public previewEditGraph(boardId: string, actorUserId: string): Promise<BoardPermissionDecision> {
     return this.check('editGraph', boardId, actorUserId);

@@ -8,6 +8,8 @@ import {
   type BoardListResponse,
   type BoardSummary,
   type CreateBoard,
+  type DuplicateBoard,
+  type BoardVersionRequest,
   type ErrorCode,
   type PatchBoard,
 } from '@archboard/contracts';
@@ -36,8 +38,11 @@ export interface BoardWriteScope {
   lockOwnerAndCount(actorUserId: string): Promise<number>;
   create(actorUserId: string, title: string, description: string): Promise<string>;
   createEmptySnapshot(boardId: string): Promise<void>;
+  createSnapshot(boardId: string, updateBytes: Uint8Array): Promise<void>;
+  loadCommittedGraph(boardId: string, latestSeq: string): Promise<Uint8Array>;
   load(boardId: string, actorUserId: string): Promise<BoardView | null>;
   updateMetadata(boardId: string, title: string, description: string): Promise<void>;
+  setArchived(boardId: string, archived: boolean): Promise<void>;
 }
 
 export interface BoardPersistence {
@@ -182,5 +187,85 @@ export class BoardService {
       if (!updated) throw new Error('Updated board disappeared inside its transaction.');
       return detail(updated, decision.role);
     });
+  }
+
+  public async archive(
+    actorUserId: string,
+    boardId: string,
+    input: BoardVersionRequest,
+  ): Promise<BoardDetail> {
+    return this.setArchiveState(actorUserId, boardId, input, true);
+  }
+
+  public async restore(
+    actorUserId: string,
+    boardId: string,
+    input: BoardVersionRequest,
+  ): Promise<BoardDetail> {
+    return this.setArchiveState(actorUserId, boardId, input, false);
+  }
+
+  private async setArchiveState(
+    actorUserId: string,
+    boardId: string,
+    input: BoardVersionRequest,
+    archived: boolean,
+  ): Promise<BoardDetail> {
+    return this.persistence.run(async (scope) => {
+      const activeOwnedCount = archived ? undefined : await scope.lockOwnerAndCount(actorUserId);
+      const decision = await this.permissions.manageLifecycle(
+        scope.permissionTransaction,
+        boardId,
+        actorUserId,
+      );
+      if (!decision.allowed)
+        throw new BoardServiceError(decision.code, 'Board lifecycle action unavailable.');
+      const current = await scope.load(boardId, actorUserId);
+      if (!current) throw new Error('Locked board disappeared inside its transaction.');
+      if (current.metadataVersion !== input.expectedVersion)
+        throw new BoardServiceError(
+          ERROR_CODES.VERSION_CONFLICT,
+          'Board metadata version is stale.',
+        );
+      if ((current.archivedAt !== null) === archived) return detail(current, decision.role);
+      if (!archived && activeOwnedCount! >= MAX_ACTIVE_OWNED_BOARDS)
+        throw new BoardServiceError(ERROR_CODES.RATE_LIMITED, 'Active board limit reached.');
+      await scope.setArchived(boardId, archived);
+      const changed = await scope.load(boardId, actorUserId);
+      if (!changed) throw new Error('Updated board disappeared inside its transaction.');
+      return detail(changed, decision.role);
+    });
+  }
+
+  public async duplicate(
+    actorUserId: string,
+    sourceId: string,
+    key: string,
+    input: DuplicateBoard,
+  ): Promise<{ board: BoardDetail; replayed: boolean }> {
+    const result = await this.persistence.idempotent(
+      actorUserId,
+      'board.duplicate',
+      key,
+      { sourceId, title: input.title },
+      async (scope) => {
+        const count = await scope.lockOwnerAndCount(actorUserId);
+        if (count >= MAX_ACTIVE_OWNED_BOARDS)
+          throw new BoardServiceError(ERROR_CODES.RATE_LIMITED, 'Active board limit reached.');
+        const decision = await this.permissions.readLocked(
+          scope.permissionTransaction,
+          sourceId,
+          actorUserId,
+        );
+        if (!decision.allowed) throw new BoardServiceError(decision.code, 'Board not found.');
+        const bytes = await scope.loadCommittedGraph(sourceId, decision.board.latestSeq);
+        const boardId = await scope.create(actorUserId, input.title, '');
+        await scope.createSnapshot(boardId, bytes);
+        const view = await scope.load(boardId, actorUserId);
+        const readable = requireReadable(view, actorUserId);
+        return { status: 201, body: detail(readable.view, readable.role) };
+      },
+    );
+    return { board: result.body, replayed: result.replayed };
   }
 }

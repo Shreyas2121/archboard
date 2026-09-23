@@ -1,8 +1,22 @@
 import { In, type DataSource, type QueryRunner } from 'typeorm';
 
-import type { BoardListQuery } from '@archboard/contracts';
+import {
+  ERROR_CODES,
+  GRAPH_SCHEMA_VERSION,
+  MAX_ENCODED_YJS_STATE_BYTES,
+  type BoardListQuery,
+} from '@archboard/contracts';
+import {
+  DocumentValidationError,
+  hydrateGraphDocument,
+  projectGraphDocument,
+  remapGraphProjection,
+  validateGraphDocument,
+} from '@archboard/document-model';
+import * as Y from 'yjs';
 
 import type { BoardPersistence, BoardView, BoardWriteScope } from '../application/board-service.js';
+import { BoardServiceError } from '../application/board-service.js';
 import {
   BoardRepository,
   CommittedGraphRepository,
@@ -23,6 +37,8 @@ interface CountRow {
   boardId: string;
   count: number;
 }
+
+const SEQUENCE_INCREMENT = 1n;
 
 export class PostgresBoardPersistence implements BoardPersistence {
   private readonly transactions: BoardTransaction;
@@ -82,6 +98,57 @@ export class PostgresBoardPersistence implements BoardPersistence {
           boardId,
           createEmptyBoardSnapshot(),
         ),
+      createSnapshot: (boardId, updateBytes) =>
+        new CommittedGraphRepository(runner).createInitialSnapshot(boardId, {
+          schemaVersion: GRAPH_SCHEMA_VERSION,
+          throughSeq: '0',
+          updateBytes: Buffer.from(updateBytes),
+          byteLength: updateBytes.byteLength,
+        }),
+      loadCommittedGraph: async (boardId, latestSeq) => {
+        const graph = await new CommittedGraphRepository(runner).load(boardId, latestSeq);
+        if (
+          !graph ||
+          graph.snapshot.schemaVersion !== GRAPH_SCHEMA_VERSION ||
+          BigInt(graph.snapshot.throughSeq) > BigInt(latestSeq) ||
+          graph.snapshot.byteLength !== graph.snapshot.updateBytes.byteLength
+        )
+          throw new BoardServiceError(
+            ERROR_CODES.DOCUMENT_INVALID,
+            'Committed board content is invalid.',
+          );
+        const document = new Y.Doc();
+        try {
+          Y.applyUpdate(document, graph.snapshot.updateBytes);
+          let expected = BigInt(graph.snapshot.throughSeq);
+          for (const update of graph.updates) {
+            expected += SEQUENCE_INCREMENT;
+            if (BigInt(update.sequence) !== expected)
+              throw new Error('Committed graph sequence has a gap.');
+            Y.applyUpdate(document, update.updateBytes);
+          }
+          if (expected !== BigInt(latestSeq))
+            throw new Error('Committed graph sequence is incomplete.');
+          validateGraphDocument(document);
+          const copy = hydrateGraphDocument(remapGraphProjection(projectGraphDocument(document)));
+          validateGraphDocument(copy);
+          const bytes = Y.encodeStateAsUpdate(copy);
+          if (bytes.byteLength > MAX_ENCODED_YJS_STATE_BYTES)
+            throw new BoardServiceError(
+              ERROR_CODES.DOCUMENT_LIMIT,
+              'Duplicated board content exceeds the size limit.',
+            );
+          return bytes;
+        } catch (error) {
+          if (error instanceof BoardServiceError) throw error;
+          if (error instanceof DocumentValidationError)
+            throw new BoardServiceError(error.code, 'Committed board content is invalid.');
+          throw new BoardServiceError(
+            ERROR_CODES.DOCUMENT_INVALID,
+            'Committed board content is invalid.',
+          );
+        }
+      },
       load: (boardId, actorUserId) => this.loadInside(runner, boardId, actorUserId),
       updateMetadata: async (boardId, title, description) => {
         await runner.manager
@@ -91,6 +158,19 @@ export class PostgresBoardPersistence implements BoardPersistence {
           .set({
             title,
             description,
+            metadataVersion: () => 'metadata_version + 1',
+            updatedAt: () => 'CURRENT_TIMESTAMP',
+          })
+          .where('id = :boardId', { boardId })
+          .execute();
+      },
+      setArchived: async (boardId, archived) => {
+        await runner.manager
+          .getRepository(BoardEntity)
+          .createQueryBuilder()
+          .update()
+          .set({
+            archivedAt: () => (archived ? 'CURRENT_TIMESTAMP' : 'NULL'),
             metadataVersion: () => 'metadata_version + 1',
             updatedAt: () => 'CURRENT_TIMESTAMP',
           })

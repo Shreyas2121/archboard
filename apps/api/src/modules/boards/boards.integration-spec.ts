@@ -6,22 +6,40 @@ import type { AddressInfo } from 'node:net';
 import {
   ERROR_CODES,
   MAX_ACTIVE_OWNED_BOARDS,
+  GRAPH_SCHEMA_VERSION,
   apiErrorEnvelopeSchema,
   boardDetailResponseSchema,
   boardListResponseSchema,
   currentUserResponseSchema,
 } from '@archboard/contracts';
+import {
+  createNode,
+  createGraphDocument,
+  hydrateGraphDocument,
+  projectGraphDocument,
+  validateGraphDocument,
+} from '@archboard/document-model';
+import { allEntityGraphFixture } from '@archboard/fixtures';
 import { jest } from '@jest/globals';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Pool } from 'pg';
 import { DataSource } from 'typeorm';
+import * as Y from 'yjs';
 
 import { AppModule } from '../../app.module.js';
 import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
 import { loadApiConfig } from '../../platform/config/index.js';
 import { DATABASE_ENTITIES } from '../../platform/database/database-entities.js';
 import { BetterAuthRuntime, configureAuthHttp } from '../auth/index.js';
+import { AUTH_REQUEST_ACTOR, type RequestActor } from '../auth/application/index.js';
+import {
+  DURABLE_UPDATE_FAILPOINTS,
+  DurableUpdateFailpointController,
+} from '../collaboration/application/index.js';
+import { PostgresDurableUpdateHarness } from '../collaboration/infrastructure/persistence/postgres-durable-update-harness.js';
+import { BoardPermissionService } from './application/permissions/index.js';
+import { PostgresBoardAuthorityReader } from './infrastructure/postgres-board-authority-reader.js';
 
 const ORIGIN = 'http://localhost:5173';
 const PASSWORD = 'p305-test-password-32-characters';
@@ -364,6 +382,286 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     expect(final.latestSeq).toBe('0');
     expect(final.metadataVersion).toBe(updated.metadataVersion);
     expect(final.description).toBe('');
+  });
+
+  it('archives and restores with locked owner authority, stale versions, and repeat no-ops', async () => {
+    const board = await create('owner', 'Lifecycle source');
+    await database.query(
+      'INSERT INTO board_members (board_id, user_id, role) VALUES ($1, $2, $3)',
+      [board.id, users.get('viewer')!.id, 'viewer'],
+    );
+    const path = `/boards/${board.id}`;
+    const body = { expectedVersion: board.metadataVersion };
+    expect((await request(`${path}/archive`, 'viewer', { method: 'POST', body })).status).toBe(
+      HTTP_FORBIDDEN,
+    );
+    expect((await request(`${path}/archive`, 'outsider', { method: 'POST', body })).status).toBe(
+      HTTP_NOT_FOUND,
+    );
+    const archivedResponse = await request(`${path}/archive`, 'owner', { method: 'POST', body });
+    expect(archivedResponse.status).toBe(HTTP_OK);
+    const archived = boardDetailResponseSchema.parse(await archivedResponse.json()).data;
+    expect(archived.archivedAt).not.toBeNull();
+    expect(archived.metadataVersion).toBe(board.metadataVersion + 1);
+    expect((await request(`${path}/archive`, 'owner', { method: 'POST', body })).status).toBe(
+      HTTP_CONFLICT,
+    );
+    const repeat = boardDetailResponseSchema.parse(
+      await (
+        await request(`${path}/archive`, 'owner', {
+          method: 'POST',
+          body: { expectedVersion: archived.metadataVersion },
+        })
+      ).json(),
+    ).data;
+    expect(repeat).toEqual(archived);
+    const restored = boardDetailResponseSchema.parse(
+      await (
+        await request(`${path}/restore`, 'owner', {
+          method: 'POST',
+          body: { expectedVersion: archived.metadataVersion },
+        })
+      ).json(),
+    ).data;
+    expect(restored.archivedAt).toBeNull();
+    expect(restored.metadataVersion).toBe(archived.metadataVersion + 1);
+    const rows = (await database.query(
+      'SELECT count(*)::integer AS count FROM board_members WHERE board_id = $1',
+      [board.id],
+    )) as { count: number }[];
+    expect(rows[0]?.count).toBe(1);
+  });
+
+  it('duplicates committed content with fresh references and no source access or history', async () => {
+    const source = await create('owner', 'Graph source');
+    await database.query(
+      'INSERT INTO board_members (board_id, user_id, role) VALUES ($1, $2, $3)',
+      [source.id, users.get('viewer')!.id, 'viewer'],
+    );
+    const document = hydrateGraphDocument(allEntityGraphFixture);
+    validateGraphDocument(document);
+    const bytes = Buffer.from(Y.encodeStateAsUpdate(document));
+    await database.query(
+      'UPDATE board_snapshots SET schema_version = $2, update_bytes = $3, byte_length = $4 WHERE board_id = $1',
+      [source.id, GRAPH_SCHEMA_VERSION, bytes, bytes.byteLength],
+    );
+    const vector = Y.encodeStateVector(document);
+    createNode(document, {
+      ...allEntityGraphFixture.nodes[0]!,
+      id: randomUUID(),
+      title: 'Committed later',
+    });
+    const update = Buffer.from(Y.encodeStateAsUpdate(document, vector));
+    await database.query(
+      'INSERT INTO board_updates (board_id, seq, update_id, actor_user_id, update_bytes) VALUES ($1, 1, $2, $3, $4)',
+      [source.id, randomUUID(), users.get('owner')!.id, update],
+    );
+    await database.query('UPDATE boards SET latest_seq = 1 WHERE id = $1', [source.id]);
+    const key = randomUUID();
+    const path = `/boards/${source.id}/duplicate`;
+    const response = await request(path, 'viewer', {
+      method: 'POST',
+      key,
+      body: { title: '  Private copy  ' },
+    });
+    expect(response.status).toBe(HTTP_CREATED);
+    const copy = boardDetailResponseSchema.parse(await response.json()).data;
+    expect(copy).toMatchObject({
+      title: 'Private copy',
+      effectiveRole: 'owner',
+      latestSeq: '0',
+      memberCount: 1,
+    });
+    expect(copy.owner.id).toBe(users.get('viewer')!.id);
+    expect((await request(`/boards/${copy.id}`, 'owner')).status).toBe(HTTP_NOT_FOUND);
+    const sourceProjection = projectGraphDocument(document);
+    const snapshots = (await database.query(
+      'SELECT update_bytes FROM board_snapshots WHERE board_id = $1',
+      [copy.id],
+    )) as { update_bytes: Buffer }[];
+    const duplicated = new Y.Doc();
+    Y.applyUpdate(duplicated, snapshots[0]!.update_bytes);
+    validateGraphDocument(duplicated);
+    const projection = projectGraphDocument(duplicated);
+    expect(projection.nodes.map((node) => node.title).sort()).toEqual(
+      sourceProjection.nodes.map((node) => node.title).sort(),
+    );
+    expect(
+      projection.nodes.every(
+        (node) => !sourceProjection.nodes.some((original) => original.id === node.id),
+      ),
+    ).toBe(true);
+    expect(
+      projection.edges.every(
+        (edge) =>
+          projection.nodes.some((node) => node.id === edge.sourceId) &&
+          projection.nodes.some((node) => node.id === edge.targetId),
+      ),
+    ).toBe(true);
+    const counts = (await database.query(
+      `SELECT
+      (SELECT count(*)::integer FROM board_members WHERE board_id = $1) AS members,
+      (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+      (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts`,
+      [copy.id],
+    )) as { members: number; updates: number; receipts: number }[];
+    expect(counts[0]).toEqual({ members: 0, updates: 0, receipts: 0 });
+    const replay = await request(path, 'viewer', {
+      method: 'POST',
+      key,
+      body: { title: 'Private copy' },
+    });
+    expect(boardDetailResponseSchema.parse(await replay.json()).data).toEqual(copy);
+    const conflict = await request(path, 'viewer', {
+      method: 'POST',
+      key,
+      body: { title: 'Different copy' },
+    });
+    expect(conflict.status).toBe(HTTP_CONFLICT);
+    expect(apiErrorEnvelopeSchema.parse(await conflict.json()).error.code).toBe(
+      ERROR_CODES.IDEMPOTENCY_CONFLICT,
+    );
+    const archived = await request(`/boards/${source.id}/archive`, 'owner', {
+      method: 'POST',
+      body: { expectedVersion: source.metadataVersion },
+    });
+    expect(archived.status).toBe(HTTP_OK);
+    const archivedCopy = await request(path, 'viewer', {
+      method: 'POST',
+      key: randomUUID(),
+      body: { title: 'Archived copy' },
+    });
+    expect(archivedCopy.status).toBe(HTTP_CREATED);
+    await database.query('UPDATE board_snapshots SET schema_version = $2 WHERE board_id = $1', [
+      source.id,
+      GRAPH_SCHEMA_VERSION + 1,
+    ]);
+    const invalid = await request(path, 'viewer', {
+      method: 'POST',
+      key: randomUUID(),
+      body: { title: 'Invalid source copy' },
+    });
+    expect(invalid.status).toBe(HTTP_BAD_REQUEST);
+    expect(
+      (await database.query('SELECT id FROM boards WHERE title = $1', [
+        'Invalid source copy',
+      ])) as unknown[],
+    ).toHaveLength(0);
+  });
+
+  it('serializes a committed graph update before archive through the same board lock', async () => {
+    const board = await create('owner', 'A27 ordering');
+    const actor = application.get<RequestActor>(AUTH_REQUEST_ACTOR);
+    const failpoints = new DurableUpdateFailpointController();
+    let reached!: () => void;
+    let release!: () => void;
+    const atCommit = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    failpoints.arm(DURABLE_UPDATE_FAILPOINTS.DATABASE_COMMIT, async () => {
+      reached();
+      await barrier;
+    });
+    const accepted = createGraphDocument();
+    const replica = new Y.Doc();
+    Y.applyUpdate(replica, Y.encodeStateAsUpdate(accepted));
+    const vector = Y.encodeStateVector(replica);
+    createNode(replica, { ...allEntityGraphFixture.nodes[0]!, id: randomUUID() });
+    const harness = new PostgresDurableUpdateHarness(
+      board.id,
+      accepted,
+      database,
+      { authenticate: async (cookie) => ({ userId: (await actor.require({ cookie })).user.id }) },
+      new BoardPermissionService(new PostgresBoardAuthorityReader(database)),
+      failpoints,
+    );
+    const updateId = randomUUID();
+    const acceptedWrite = harness.accept({
+      boardId: board.id,
+      updateId,
+      sessionToken: users.get('owner')!.cookie,
+      updateBytes: Y.encodeStateAsUpdate(replica, vector),
+    });
+    await atCommit;
+    const archive = request(`/boards/${board.id}/archive`, 'owner', {
+      method: 'POST',
+      body: { expectedVersion: board.metadataVersion },
+    });
+    release();
+    expect((await acceptedWrite).receipt.sequence).toBe('1');
+    expect((await archive).status).toBe(HTTP_OK);
+    const rejected = harness.accept({
+      boardId: board.id,
+      updateId: randomUUID(),
+      sessionToken: users.get('owner')!.cookie,
+      updateBytes: Y.encodeStateAsUpdate(replica, vector),
+    });
+    await expect(rejected).rejects.toMatchObject({ code: ERROR_CODES.BOARD_ARCHIVED });
+    const rows = (await database.query(
+      `SELECT
+      (SELECT latest_seq::text FROM boards WHERE id = $1) AS sequence,
+      (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+      (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts`,
+      [board.id],
+    )) as { sequence: string; updates: number; receipts: number }[];
+    expect(rows[0]).toEqual({ sequence: '1', updates: 1, receipts: 1 });
+  });
+
+  it('rejects a validated graph update after archive commits without changing durable state', async () => {
+    const board = await create('owner', 'A27 archived first');
+    const actor = application.get<RequestActor>(AUTH_REQUEST_ACTOR);
+    const failpoints = new DurableUpdateFailpointController();
+    let reached!: () => void;
+    let release!: () => void;
+    const validated = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    failpoints.arm(DURABLE_UPDATE_FAILPOINTS.AFTER_VALIDATION_BEFORE_TRANSACTION, async () => {
+      reached();
+      await barrier;
+    });
+    const accepted = createGraphDocument();
+    const replica = new Y.Doc();
+    Y.applyUpdate(replica, Y.encodeStateAsUpdate(accepted));
+    const vector = Y.encodeStateVector(replica);
+    createNode(replica, { ...allEntityGraphFixture.nodes[0]!, id: randomUUID() });
+    const harness = new PostgresDurableUpdateHarness(
+      board.id,
+      accepted,
+      database,
+      { authenticate: async (cookie) => ({ userId: (await actor.require({ cookie })).user.id }) },
+      new BoardPermissionService(new PostgresBoardAuthorityReader(database)),
+      failpoints,
+    );
+    const attempted = harness.accept({
+      boardId: board.id,
+      updateId: randomUUID(),
+      sessionToken: users.get('owner')!.cookie,
+      updateBytes: Y.encodeStateAsUpdate(replica, vector),
+    });
+    await validated;
+    const archived = await request(`/boards/${board.id}/archive`, 'owner', {
+      method: 'POST',
+      body: { expectedVersion: board.metadataVersion },
+    });
+    expect(archived.status).toBe(HTTP_OK);
+    release();
+    await expect(attempted).rejects.toMatchObject({ code: ERROR_CODES.BOARD_ARCHIVED });
+    const rows = (await database.query(
+      `SELECT
+      (SELECT latest_seq::text FROM boards WHERE id = $1) AS sequence,
+      (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+      (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts`,
+      [board.id],
+    )) as { sequence: string; updates: number; receipts: number }[];
+    expect(rows[0]).toEqual({ sequence: '0', updates: 0, receipts: 0 });
+    expect(harness.acceptedStateAsUpdate()).toEqual(Y.encodeStateAsUpdate(accepted));
   });
 
   it('serializes two authenticated creates at the active-owned-board limit', async () => {

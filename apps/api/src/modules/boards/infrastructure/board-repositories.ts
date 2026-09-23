@@ -152,7 +152,7 @@ export class CommittedGraphRepository {
       .execute();
   }
 
-  public async load(boardId: string): Promise<CommittedGraph | null> {
+  public async load(boardId: string, latestSeq?: string): Promise<CommittedGraph | null> {
     const snapshot = (await this.runner.manager
       .createQueryBuilder()
       .select('snapshot.schema_version', 'schemaVersion')
@@ -163,7 +163,7 @@ export class CommittedGraphRepository {
       .where('snapshot.board_id = :boardId', { boardId })
       .getRawOne()) as CommittedGraph['snapshot'] | undefined;
     if (!snapshot) return null;
-    const updates = (await this.runner.manager
+    const updatesQuery = this.runner.manager
       .createQueryBuilder()
       .select('board_update.seq::text', 'sequence')
       .addSelect('board_update.update_bytes', 'updateBytes')
@@ -172,8 +172,10 @@ export class CommittedGraphRepository {
       .andWhere('board_update.seq > CAST(:throughSeq AS bigint)', {
         throughSeq: snapshot.throughSeq,
       })
-      .orderBy('board_update.seq', 'ASC')
-      .getRawMany()) as CommittedGraph['updates'];
+      .orderBy('board_update.seq', 'ASC');
+    if (latestSeq !== undefined)
+      updatesQuery.andWhere('board_update.seq <= CAST(:latestSeq AS bigint)', { latestSeq });
+    const updates = (await updatesQuery.getRawMany()) as CommittedGraph['updates'];
     return { snapshot, updates };
   }
 }

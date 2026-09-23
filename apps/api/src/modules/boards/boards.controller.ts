@@ -8,7 +8,9 @@ import {
   boardIdPathSchema,
   boardListQuerySchema,
   boardListResponseSchema,
+  boardVersionRequestSchema,
   createBoardSchema,
+  duplicateBoardSchema,
   idempotencyKeySchema,
   patchBoardSchema,
   type ErrorCode,
@@ -19,6 +21,7 @@ import {
   Get,
   Headers,
   HttpException,
+  HttpCode,
   HttpStatus,
   Inject,
   Param,
@@ -142,6 +145,57 @@ export class BoardsController {
       return boardDetailResponseSchema.parse({
         data: await this.boards.update(session.user.id, id, input),
       });
+    });
+  }
+
+  @Post(':id/archive')
+  @HttpCode(HttpStatus.OK)
+  public async archive(
+    @Req() request: IncomingMessage,
+    @Param() path: unknown,
+    @Body() body: unknown,
+  ) {
+    const session = await this.actor.require(request.headers);
+    return safe(async () => {
+      const { id } = validate(boardIdPathSchema, path);
+      const input = validate(boardVersionRequestSchema, body);
+      return boardDetailResponseSchema.parse({
+        data: await this.boards.archive(session.user.id, id, input),
+      });
+    });
+  }
+
+  @Post(':id/restore')
+  @HttpCode(HttpStatus.OK)
+  public async restore(
+    @Req() request: IncomingMessage,
+    @Param() path: unknown,
+    @Body() body: unknown,
+  ) {
+    const session = await this.actor.require(request.headers);
+    return safe(async () => {
+      const { id } = validate(boardIdPathSchema, path);
+      const input = validate(boardVersionRequestSchema, body);
+      return boardDetailResponseSchema.parse({
+        data: await this.boards.restore(session.user.id, id, input),
+      });
+    });
+  }
+
+  @Post(':id/duplicate')
+  public async duplicate(
+    @Req() request: IncomingMessage,
+    @Param() path: unknown,
+    @Headers('idempotency-key') key: unknown,
+    @Body() body: unknown,
+  ) {
+    const session = await this.actor.require(request.headers);
+    return safe(async () => {
+      const { id } = validate(boardIdPathSchema, path);
+      const parsedKey = validate(idempotencyKeySchema, key);
+      const input = validate(duplicateBoardSchema, body);
+      const result = await this.boards.duplicate(session.user.id, id, parsedKey, input);
+      return boardDetailResponseSchema.parse({ data: result.board });
     });
   }
 }
