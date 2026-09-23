@@ -21,6 +21,7 @@ const OPERATIONS: BoardOperation[] = [
   'editGraph',
   'manageAccess',
   'manageLifecycle',
+  'leave',
 ];
 
 function authority(
@@ -117,5 +118,22 @@ describe('central board permission matrix', () => {
         ACTOR,
       ),
     ).toMatchObject({ allowed: true, role: 'owner' });
+  });
+
+  it('allows only active nonowners to leave their board', () => {
+    expect(decideBoardPermission('leave', authority('owner', false), ACTOR)).toEqual({
+      allowed: false,
+      code: ERROR_CODES.FORBIDDEN,
+    });
+    for (const role of ['editor', 'viewer'] as const) {
+      expect(decideBoardPermission('leave', authority(role, false), ACTOR)).toMatchObject({
+        allowed: true,
+        role,
+      });
+      expect(decideBoardPermission('leave', authority(role, true), ACTOR)).toEqual({
+        allowed: false,
+        code: ERROR_CODES.BOARD_ARCHIVED,
+      });
+    }
   });
 });

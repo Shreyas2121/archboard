@@ -9,6 +9,8 @@ import {
   GRAPH_SCHEMA_VERSION,
   apiErrorEnvelopeSchema,
   boardDetailResponseSchema,
+  boardMemberResponseSchema,
+  boardMembersResponseSchema,
   boardListResponseSchema,
   currentUserResponseSchema,
 } from '@archboard/contracts';
@@ -46,6 +48,7 @@ const PASSWORD = 'p305-test-password-32-characters';
 const TEST_TIMEOUT_MS = 90_000;
 const HTTP_OK = 200;
 const HTTP_CREATED = 201;
+const HTTP_NO_CONTENT = 204;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
@@ -662,6 +665,317 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     )) as { sequence: string; updates: number; receipts: number }[];
     expect(rows[0]).toEqual({ sequence: '0', updates: 0, receipts: 0 });
     expect(harness.acceptedStateAsUpdate()).toEqual(Y.encodeStateAsUpdate(accepted));
+  });
+
+  it('lists safe owner/member summaries and enforces the member role matrix', async () => {
+    const board = await create('owner', 'Member authority');
+    const other = await create('owner', 'Other member board');
+    const editorId = users.get('editor')!.id;
+    const viewerId = users.get('viewer')!.id;
+    await database.query(
+      `INSERT INTO board_members (board_id, user_id, role)
+       VALUES ($1, $2, 'editor'), ($1, $3, 'viewer'), ($4, $3, 'editor')`,
+      [board.id, editorId, viewerId, other.id],
+    );
+    const membersPath = `/boards/${board.id}/members`;
+    const listedResponse = await request(membersPath, 'viewer');
+    expect(listedResponse.status).toBe(HTTP_OK);
+    const listed = boardMembersResponseSchema.parse(await listedResponse.json());
+    expect(listed.nextCursor).toBeNull();
+    expect(listed.data[0]).toMatchObject({
+      user: { id: users.get('owner')!.id },
+      role: 'owner',
+    });
+    expect(new Map(listed.data.map((member) => [member.user.id, member.role]))).toEqual(
+      new Map([
+        [users.get('owner')!.id, 'owner'],
+        [editorId, 'editor'],
+        [viewerId, 'viewer'],
+      ]),
+    );
+    expect(JSON.stringify(listed)).not.toContain('email');
+    expect(JSON.stringify(listed)).not.toContain('provider');
+    const ownerMembership = (await database.query(
+      'SELECT count(*)::integer AS count FROM board_members WHERE board_id = $1 AND user_id = $2',
+      [board.id, users.get('owner')!.id],
+    )) as { count: number }[];
+    expect(ownerMembership[0]?.count).toBe(0);
+    expect((await request(membersPath, 'outsider')).status).toBe(HTTP_NOT_FOUND);
+    expect((await request(membersPath)).status).toBe(HTTP_UNAUTHORIZED);
+
+    const rolePath = `${membersPath}/${viewerId}`;
+    const denied = await request(rolePath, 'editor', {
+      method: 'PATCH',
+      body: { role: 'editor' },
+    });
+    expect(denied.status).toBe(HTTP_FORBIDDEN);
+    expect(
+      (
+        await request(rolePath, 'outsider', {
+          method: 'PATCH',
+          body: { role: 'editor' },
+        })
+      ).status,
+    ).toBe(HTTP_NOT_FOUND);
+    expect(
+      (
+        await request(`${membersPath}/${users.get('owner')!.id}`, 'owner', {
+          method: 'PATCH',
+          body: { role: 'viewer' },
+        })
+      ).status,
+    ).toBe(HTTP_FORBIDDEN);
+    expect(
+      (
+        await request(`${membersPath}/${users.get('outsider')!.id}`, 'owner', {
+          method: 'PATCH',
+          body: { role: 'viewer' },
+        })
+      ).status,
+    ).toBe(HTTP_NOT_FOUND);
+    expect(
+      (
+        await request(`${membersPath}/${viewerId}`, 'owner', {
+          method: 'PATCH',
+          body: { role: 'owner' },
+        })
+      ).status,
+    ).toBe(HTTP_BAD_REQUEST);
+    const changed = await request(rolePath, 'owner', {
+      method: 'PATCH',
+      body: { role: 'editor' },
+    });
+    expect(changed.status).toBe(HTTP_OK);
+    const member = boardMemberResponseSchema.parse(await changed.json()).data;
+    expect(member.role).toBe('editor');
+    expect(member.joinedAt).toBe(listed.data.find((entry) => entry.user.id === viewerId)!.joinedAt);
+    const counts = (await database.query(
+      'SELECT count(*)::integer AS count FROM board_members WHERE board_id = $1 AND user_id = $2',
+      [board.id, viewerId],
+    )) as { count: number }[];
+    expect(counts[0]!.count).toBe(1);
+    expect(
+      (
+        await request(`${membersPath}/${users.get('owner')!.id}`, 'owner', {
+          method: 'DELETE',
+        })
+      ).status,
+    ).toBe(HTTP_FORBIDDEN);
+    expect(
+      (
+        await request(`${membersPath}/${viewerId}`, 'editor', {
+          method: 'DELETE',
+        })
+      ).status,
+    ).toBe(HTTP_FORBIDDEN);
+    expect(
+      (
+        await request(`${membersPath}/${viewerId}`, 'owner', {
+          method: 'DELETE',
+        })
+      ).status,
+    ).toBe(HTTP_NO_CONTENT);
+    expect(
+      (
+        await request(`${membersPath}/${viewerId}`, 'owner', {
+          method: 'DELETE',
+        })
+      ).status,
+    ).toBe(HTTP_NO_CONTENT);
+    expect((await request(membersPath, 'viewer')).status).toBe(HTTP_NOT_FOUND);
+    expect(
+      (
+        await request(`${membersPath}/${viewerId}`, 'owner', {
+          method: 'PATCH',
+          body: { role: 'viewer' },
+        })
+      ).status,
+    ).toBe(HTTP_NOT_FOUND);
+    expect(
+      (
+        await request(`${membersPath}/${editorId}`, 'editor', {
+          method: 'DELETE',
+        })
+      ).status,
+    ).toBe(HTTP_NO_CONTENT);
+    expect((await request(membersPath, 'editor')).status).toBe(HTTP_NOT_FOUND);
+    expect(
+      (
+        await request(`/boards/${other.id}/members/${viewerId}`, 'owner', {
+          method: 'PATCH',
+          body: { role: 'viewer' },
+        })
+      ).status,
+    ).toBe(HTTP_OK);
+  });
+
+  it('hides cross-board member targets and blocks changes while archived', async () => {
+    const board = await create('owner', 'Scoped members');
+    const another = await create('owner', 'Other scoped members');
+    const viewerId = users.get('viewer')!.id;
+    await database.query(
+      'INSERT INTO board_members (board_id, user_id, role) VALUES ($1, $2, $3)',
+      [another.id, viewerId, 'viewer'],
+    );
+    const path = `/boards/${board.id}/members/${viewerId}`;
+    expect(
+      (
+        await request(path, 'owner', {
+          method: 'PATCH',
+          body: { role: 'editor' },
+        })
+      ).status,
+    ).toBe(HTTP_NOT_FOUND);
+    expect((await request(path, 'owner', { method: 'DELETE' })).status).toBe(HTTP_NO_CONTENT);
+    const untouched = (await database.query(
+      'SELECT role FROM board_members WHERE board_id = $1 AND user_id = $2',
+      [another.id, viewerId],
+    )) as { role: string }[];
+    expect(untouched[0]?.role).toBe('viewer');
+    await database.query(
+      'INSERT INTO board_members (board_id, user_id, role) VALUES ($1, $2, $3)',
+      [board.id, users.get('editor')!.id, 'editor'],
+    );
+    expect(
+      (
+        await request(`/boards/${board.id}/archive`, 'owner', {
+          method: 'POST',
+          body: { expectedVersion: board.metadataVersion },
+        })
+      ).status,
+    ).toBe(HTTP_OK);
+    expect((await request(`/boards/${board.id}/members`, 'editor')).status).toBe(HTTP_OK);
+    expect(
+      (
+        await request(`/boards/${board.id}/members/${users.get('editor')!.id}`, 'owner', {
+          method: 'PATCH',
+          body: { role: 'viewer' },
+        })
+      ).status,
+    ).toBe(HTTP_CONFLICT);
+    expect(
+      (
+        await request(`/boards/${board.id}/members/${users.get('editor')!.id}`, 'editor', {
+          method: 'DELETE',
+        })
+      ).status,
+    ).toBe(HTTP_CONFLICT);
+  });
+
+  it('orders member removal and role change against durable graph writes', async () => {
+    const actor = application.get<RequestActor>(AUTH_REQUEST_ACTOR);
+    const permissions = new BoardPermissionService(new PostgresBoardAuthorityReader(database));
+    const editorId = users.get('editor')!.id;
+    const cookie = users.get('editor')!.cookie;
+    const proposalFor = (boardId: string, accepted: Y.Doc) => {
+      const replica = new Y.Doc();
+      Y.applyUpdate(replica, Y.encodeStateAsUpdate(accepted));
+      const vector = Y.encodeStateVector(replica);
+      createNode(replica, { ...allEntityGraphFixture.nodes[0]!, id: randomUUID() });
+      return {
+        boardId,
+        updateId: randomUUID(),
+        sessionToken: cookie,
+        updateBytes: Y.encodeStateAsUpdate(replica, vector),
+      };
+    };
+    const authenticator = {
+      authenticate: async (sessionCookie: string) => ({
+        userId: (await actor.require({ cookie: sessionCookie })).user.id,
+      }),
+    };
+
+    const removedBoard = await create('owner', 'Removal ordering');
+    await database.query(
+      'INSERT INTO board_members (board_id, user_id, role) VALUES ($1, $2, $3)',
+      [removedBoard.id, editorId, 'editor'],
+    );
+    const removeFailpoints = new DurableUpdateFailpointController();
+    let validated!: () => void;
+    let resumeRemoved!: () => void;
+    const validationReached = new Promise<void>((resolve) => {
+      validated = resolve;
+    });
+    const removedBarrier = new Promise<void>((resolve) => {
+      resumeRemoved = resolve;
+    });
+    removeFailpoints.arm(
+      DURABLE_UPDATE_FAILPOINTS.AFTER_VALIDATION_BEFORE_TRANSACTION,
+      async () => {
+        validated();
+        await removedBarrier;
+      },
+    );
+    const removedAccepted = createGraphDocument();
+    const removedHarness = new PostgresDurableUpdateHarness(
+      removedBoard.id,
+      removedAccepted,
+      database,
+      authenticator,
+      permissions,
+      removeFailpoints,
+    );
+    const removedWrite = removedHarness.accept(proposalFor(removedBoard.id, removedAccepted));
+    await validationReached;
+    expect(
+      (
+        await request(`/boards/${removedBoard.id}/members/${editorId}`, 'owner', {
+          method: 'DELETE',
+        })
+      ).status,
+    ).toBe(HTTP_NO_CONTENT);
+    resumeRemoved();
+    await expect(removedWrite).rejects.toMatchObject({ code: ERROR_CODES.NOT_FOUND });
+    const removedRows = (await database.query(
+      'SELECT latest_seq::text AS sequence FROM boards WHERE id = $1',
+      [removedBoard.id],
+    )) as { sequence: string }[];
+    expect(removedRows[0]?.sequence).toBe('0');
+
+    const demotedBoard = await create('owner', 'Role ordering');
+    await database.query(
+      'INSERT INTO board_members (board_id, user_id, role) VALUES ($1, $2, $3)',
+      [demotedBoard.id, editorId, 'editor'],
+    );
+    const roleFailpoints = new DurableUpdateFailpointController();
+    let atCommit!: () => void;
+    let resumeCommit!: () => void;
+    const commitReached = new Promise<void>((resolve) => {
+      atCommit = resolve;
+    });
+    const commitBarrier = new Promise<void>((resolve) => {
+      resumeCommit = resolve;
+    });
+    roleFailpoints.arm(DURABLE_UPDATE_FAILPOINTS.DATABASE_COMMIT, async () => {
+      atCommit();
+      await commitBarrier;
+    });
+    const demotedAccepted = createGraphDocument();
+    const demotedHarness = new PostgresDurableUpdateHarness(
+      demotedBoard.id,
+      demotedAccepted,
+      database,
+      authenticator,
+      permissions,
+      roleFailpoints,
+    );
+    const acceptedWrite = demotedHarness.accept(proposalFor(demotedBoard.id, demotedAccepted));
+    await commitReached;
+    const roleChange = request(`/boards/${demotedBoard.id}/members/${editorId}`, 'owner', {
+      method: 'PATCH',
+      body: { role: 'viewer' },
+    });
+    resumeCommit();
+    expect((await acceptedWrite).receipt.sequence).toBe('1');
+    expect((await roleChange).status).toBe(HTTP_OK);
+    await expect(
+      demotedHarness.accept(proposalFor(demotedBoard.id, demotedAccepted)),
+    ).rejects.toMatchObject({ code: ERROR_CODES.FORBIDDEN });
+    const demotedRows = (await database.query(
+      'SELECT latest_seq::text AS sequence FROM boards WHERE id = $1',
+      [demotedBoard.id],
+    )) as { sequence: string }[];
+    expect(demotedRows[0]?.sequence).toBe('1');
   });
 
   it('serializes two authenticated creates at the active-owned-board limit', async () => {

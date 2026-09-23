@@ -8,16 +8,21 @@ import {
   boardIdPathSchema,
   boardListQuerySchema,
   boardListResponseSchema,
+  boardMemberResponseSchema,
+  boardMembersResponseSchema,
   boardVersionRequestSchema,
+  changeMemberRoleSchema,
   createBoardSchema,
   duplicateBoardSchema,
   idempotencyKeySchema,
+  memberPathSchema,
   patchBoardSchema,
   type ErrorCode,
 } from '@archboard/contracts';
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   HttpException,
@@ -196,6 +201,44 @@ export class BoardsController {
       const input = validate(duplicateBoardSchema, body);
       const result = await this.boards.duplicate(session.user.id, id, parsedKey, input);
       return boardDetailResponseSchema.parse({ data: result.board });
+    });
+  }
+
+  @Get(':id/members')
+  public async members(@Req() request: IncomingMessage, @Param() path: unknown) {
+    const session = await this.actor.require(request.headers);
+    return safe(async () => {
+      const { id } = validate(boardIdPathSchema, path);
+      return boardMembersResponseSchema.parse({
+        data: await this.boards.members(session.user.id, id),
+        nextCursor: null,
+      });
+    });
+  }
+
+  @Patch(':id/members/:userId')
+  public async changeMemberRole(
+    @Req() request: IncomingMessage,
+    @Param() path: unknown,
+    @Body() body: unknown,
+  ) {
+    const session = await this.actor.require(request.headers);
+    return safe(async () => {
+      const { id, userId } = validate(memberPathSchema, path);
+      const input = validate(changeMemberRoleSchema, body);
+      return boardMemberResponseSchema.parse({
+        data: await this.boards.changeMemberRole(session.user.id, id, userId, input),
+      });
+    });
+  }
+
+  @Delete(':id/members/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  public async removeMember(@Req() request: IncomingMessage, @Param() path: unknown) {
+    const session = await this.actor.require(request.headers);
+    return safe(async () => {
+      const { id, userId } = validate(memberPathSchema, path);
+      await this.boards.removeMember(session.user.id, id, userId);
     });
   }
 }

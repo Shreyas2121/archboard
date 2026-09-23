@@ -6,7 +6,7 @@ export interface BoardPermissionTransaction {
 }
 
 export type BoardOperation =
-  'read' | 'editMetadata' | 'editGraph' | 'manageAccess' | 'manageLifecycle';
+  'read' | 'editMetadata' | 'editGraph' | 'manageAccess' | 'manageLifecycle' | 'leave';
 export type EffectiveBoardRole = 'owner' | 'editor' | 'viewer';
 
 export interface BoardAuthorityState {
@@ -54,6 +54,9 @@ export function decideBoardPermission(
       : { allowed: false, code: ERROR_CODES.FORBIDDEN };
   }
   if (operation === 'manageAccess' && role !== BOARD_ROLES.OWNER) {
+    return { allowed: false, code: ERROR_CODES.FORBIDDEN };
+  }
+  if (operation === 'leave' && role === BOARD_ROLES.OWNER) {
     return { allowed: false, code: ERROR_CODES.FORBIDDEN };
   }
   if ((operation === 'editMetadata' || operation === 'editGraph') && role === BOARD_ROLES.VIEWER) {
@@ -105,6 +108,14 @@ export class BoardPermissionService {
     actorUserId: string,
   ): Promise<BoardPermissionDecision> {
     return this.check('manageAccess', boardId, actorUserId, transaction);
+  }
+
+  public leave(
+    transaction: BoardPermissionTransaction,
+    boardId: string,
+    actorUserId: string,
+  ): Promise<BoardPermissionDecision> {
+    return this.check('leave', boardId, actorUserId, transaction);
   }
 
   public manageLifecycle(

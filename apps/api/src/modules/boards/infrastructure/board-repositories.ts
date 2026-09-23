@@ -1,5 +1,7 @@
 import { Brackets, type QueryRunner } from 'typeorm';
 
+import type { BoardMember, ChangeMemberRole } from '@archboard/contracts';
+
 import { BoardEntity } from './entities/board.entity.js';
 import { BoardInviteEntity } from './entities/board-invite.entity.js';
 import { BoardMemberEntity } from './entities/board-member.entity.js';
@@ -95,6 +97,69 @@ export class BoardMemberRepository {
       order: { createdAt: 'ASC', userId: 'ASC' },
     });
   }
+
+  public async listSafe(boardId: string): Promise<BoardMember[]> {
+    const rows = (await this.runner.query(
+      `SELECT member.id, member.name, member.image, member.role, member.joined_at
+       FROM (
+         SELECT owner.id, owner.name, owner.image, 'owner'::text AS role,
+           board.created_at AS joined_at, 0 AS sort_rank
+         FROM boards board JOIN "user" owner ON owner.id = board.owner_user_id
+         WHERE board.id = $1
+         UNION ALL
+         SELECT person.id, person.name, person.image, membership.role,
+           membership.created_at AS joined_at, 1 AS sort_rank
+         FROM board_members membership
+         JOIN boards board ON board.id = membership.board_id
+         JOIN "user" person ON person.id = membership.user_id
+         WHERE membership.board_id = $1 AND membership.user_id <> board.owner_user_id
+       ) member
+       ORDER BY member.sort_rank, member.joined_at, member.id`,
+      [boardId],
+    )) as SafeMemberRow[];
+    return rows.map(toBoardMember);
+  }
+
+  public async getSafe(boardId: string, userId: string): Promise<BoardMember | null> {
+    const rows = (await this.runner.query(
+      `SELECT person.id, person.name, person.image, membership.role,
+         membership.created_at AS joined_at
+       FROM board_members membership JOIN "user" person ON person.id = membership.user_id
+       WHERE membership.board_id = $1 AND membership.user_id = $2`,
+      [boardId, userId],
+    )) as SafeMemberRow[];
+    return rows[0] ? toBoardMember(rows[0]) : null;
+  }
+
+  public async setRole(
+    boardId: string,
+    userId: string,
+    role: ChangeMemberRole['role'],
+  ): Promise<void> {
+    await this.runner.manager
+      .getRepository(BoardMemberEntity)
+      .update({ boardId, userId }, { role });
+  }
+
+  public async remove(boardId: string, userId: string): Promise<void> {
+    await this.runner.manager.getRepository(BoardMemberEntity).delete({ boardId, userId });
+  }
+}
+
+interface SafeMemberRow {
+  id: string;
+  name: string;
+  image: string | null;
+  role: BoardMember['role'];
+  joined_at: Date;
+}
+
+function toBoardMember(row: SafeMemberRow): BoardMember {
+  return {
+    user: { id: row.id, name: row.name, image: row.image },
+    role: row.role,
+    joinedAt: row.joined_at.toISOString(),
+  };
 }
 
 export type InviteRecord = Readonly<BoardInviteEntity>;

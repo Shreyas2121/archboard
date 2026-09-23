@@ -19,6 +19,7 @@ import type { BoardPersistence, BoardView, BoardWriteScope } from '../applicatio
 import { BoardServiceError } from '../application/board-service.js';
 import {
   BoardRepository,
+  BoardMemberRepository,
   CommittedGraphRepository,
   type BoardRecord,
 } from './board-repositories.js';
@@ -177,6 +178,11 @@ export class PostgresBoardPersistence implements BoardPersistence {
           .where('id = :boardId', { boardId })
           .execute();
       },
+      listMembers: (boardId) => new BoardMemberRepository(runner).listSafe(boardId),
+      getMember: (boardId, userId) => new BoardMemberRepository(runner).getSafe(boardId, userId),
+      setMemberRole: (boardId, userId, role) =>
+        new BoardMemberRepository(runner).setRole(boardId, userId, role),
+      removeMember: (boardId, userId) => new BoardMemberRepository(runner).remove(boardId, userId),
     };
   }
 

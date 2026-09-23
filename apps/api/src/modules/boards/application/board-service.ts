@@ -4,10 +4,12 @@ import {
   decodePageCursor,
   encodePageCursor,
   type BoardDetail,
+  type BoardMember,
   type BoardListQuery,
   type BoardListResponse,
   type BoardSummary,
   type CreateBoard,
+  type ChangeMemberRole,
   type DuplicateBoard,
   type BoardVersionRequest,
   type ErrorCode,
@@ -43,6 +45,10 @@ export interface BoardWriteScope {
   load(boardId: string, actorUserId: string): Promise<BoardView | null>;
   updateMetadata(boardId: string, title: string, description: string): Promise<void>;
   setArchived(boardId: string, archived: boolean): Promise<void>;
+  listMembers(boardId: string): Promise<BoardMember[]>;
+  getMember(boardId: string, userId: string): Promise<BoardMember | null>;
+  setMemberRole(boardId: string, userId: string, role: ChangeMemberRole['role']): Promise<void>;
+  removeMember(boardId: string, userId: string): Promise<void>;
 }
 
 export interface BoardPersistence {
@@ -267,5 +273,61 @@ export class BoardService {
       },
     );
     return { board: result.body, replayed: result.replayed };
+  }
+
+  public async members(actorUserId: string, boardId: string): Promise<BoardMember[]> {
+    return this.persistence.run(async (scope) => {
+      const decision = await this.permissions.readLocked(
+        scope.permissionTransaction,
+        boardId,
+        actorUserId,
+      );
+      if (!decision.allowed) throw new BoardServiceError(decision.code, 'Board not found.');
+      return scope.listMembers(boardId);
+    });
+  }
+
+  public async changeMemberRole(
+    actorUserId: string,
+    boardId: string,
+    targetUserId: string,
+    input: ChangeMemberRole,
+  ): Promise<BoardMember> {
+    return this.persistence.run(async (scope) => {
+      const decision = await this.permissions.manageAccess(
+        scope.permissionTransaction,
+        boardId,
+        actorUserId,
+      );
+      if (!decision.allowed)
+        throw new BoardServiceError(decision.code, 'Board member change unavailable.');
+      if (targetUserId === decision.board.ownerUserId)
+        throw new BoardServiceError(ERROR_CODES.FORBIDDEN, 'The board owner cannot be demoted.');
+      const member = await scope.getMember(boardId, targetUserId);
+      if (!member) throw new BoardServiceError(ERROR_CODES.NOT_FOUND, 'Board member not found.');
+      if (member.role === input.role) return member;
+      await scope.setMemberRole(boardId, targetUserId, input.role);
+      const changed = await scope.getMember(boardId, targetUserId);
+      if (!changed) throw new Error('Updated member disappeared inside its transaction.');
+      return changed;
+    });
+  }
+
+  public async removeMember(
+    actorUserId: string,
+    boardId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    await this.persistence.run(async (scope) => {
+      const decision =
+        targetUserId === actorUserId
+          ? await this.permissions.leave(scope.permissionTransaction, boardId, actorUserId)
+          : await this.permissions.manageAccess(scope.permissionTransaction, boardId, actorUserId);
+      if (!decision.allowed)
+        throw new BoardServiceError(decision.code, 'Board member removal unavailable.');
+      if (targetUserId === decision.board.ownerUserId)
+        throw new BoardServiceError(ERROR_CODES.FORBIDDEN, 'The board owner cannot be removed.');
+      await scope.removeMember(boardId, targetUserId);
+    });
   }
 }
