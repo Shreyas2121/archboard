@@ -9,8 +9,8 @@ import {
 import { Body, Controller, HttpCode, HttpStatus, Inject, Post, Req } from '@nestjs/common';
 
 import { AUTH_REQUEST_ACTOR, type RequestActor } from '../auth/application/index.js';
+import { fail, safe, validate } from '../../platform/http/api-boundary.js';
 import { InviteService } from './application/invite-service.js';
-import { fail, safe, validate } from './boards.controller.js';
 
 function tokenRequest(body: unknown): { token: string } {
   const result = inviteTokenRequestSchema.safeParse(body);

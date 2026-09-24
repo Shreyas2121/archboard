@@ -10,6 +10,7 @@ function createAuth(config: ApiConfig, pool: Pool) {
     baseURL: config.publicApiOrigin,
     trustedOrigins: [...config.allowedWebOrigins],
     secret: config.betterAuthSecret,
+    rateLimit: { enabled: config.mode === 'production' },
     database: pool,
     socialProviders:
       config.githubClientId !== null && config.githubClientSecret !== null

@@ -3,6 +3,7 @@ import { toNodeHandler } from 'better-auth/node';
 
 import type { ApiConfig } from '../../../platform/config/index.js';
 import type { BetterAuthRuntime } from './better-auth.runtime.js';
+import { configureProductHttp } from '../../../platform/http/product-http.js';
 
 type AuthNodeHandler = ReturnType<typeof toNodeHandler>;
 const HTTP_FORBIDDEN = 403;
@@ -37,6 +38,5 @@ export function configureAuthHttp(
     return authHandler(request, response);
   });
 
-  // Better Auth must receive the untouched request stream before Nest installs JSON parsing.
-  application.useBodyParser('json');
+  configureProductHttp(application);
 }

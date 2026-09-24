@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import type { DynamicModule } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 
 import { AppController } from './app.controller.js';
 import { AuthModule } from './modules/auth/index.js';
@@ -18,6 +19,9 @@ import {
 import type { ApiConfig } from './platform/config/index.js';
 import { DatabaseModule } from './platform/database/index.js';
 import { DataSource } from 'typeorm';
+import { ApiExceptionFilter } from './platform/http/api-exception.filter.js';
+import { HealthController, ReadinessService } from './platform/http/health.controller.js';
+import { OpenApiController } from './platform/http/openapi.controller.js';
 
 @Module({})
 export class AppModule {
@@ -25,8 +29,16 @@ export class AppModule {
     return {
       module: AppModule,
       imports: [AuthModule.register(config), DatabaseModule.register(config)],
-      controllers: [AppController, BoardsController, InvitesController],
+      controllers: [
+        AppController,
+        BoardsController,
+        InvitesController,
+        HealthController,
+        OpenApiController,
+      ],
       providers: [
+        { provide: APP_FILTER, useClass: ApiExceptionFilter },
+        ReadinessService,
         { provide: WEBSOCKET_API_CONFIG, useValue: config },
         WebSocketUpgradeService,
         {

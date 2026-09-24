@@ -5,6 +5,8 @@ import { apiErrorEnvelopeSchema, ERROR_CODES } from '@archboard/contracts';
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { fromNodeHeaders } from 'better-auth/node';
 
+import { recordActor } from '../../../platform/http/api-boundary.js';
+
 import {
   AUTH_SESSION_LOOKUP,
   type AuthenticatedSession,
@@ -41,6 +43,7 @@ export class BetterAuthRequestActor implements RequestActor {
         HttpStatus.UNAUTHORIZED,
       );
     }
+    recordActor(session.user.id);
     return session;
   }
 }

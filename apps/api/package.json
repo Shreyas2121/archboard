@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/copy-database-assets.mjs",
+    "security:scan": "node --env-file-if-exists=../../.env.local scripts/check-public-secrets.mjs",
     "auth:schema:check": "node scripts/check-auth-schema.mjs",
     "dev:build": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
     "dev:serve": "node --env-file-if-exists=../../.env --env-file-if-exists=../../.env.local --watch --watch-preserve-output dist/main.js",
@@ -36,11 +37,13 @@
     "zod": "4.6.4"
   },
   "devDependencies": {
-    "@jest/globals": "30.5.1",
     "@archboard/fixtures": "workspace:*",
+    "@jest/globals": "30.5.1",
     "@types/node": "22.20.2",
     "@types/pg": "8.23.1",
+    "@types/supertest": "catalog:",
     "@types/ws": "8.18.1",
-    "auth": "1.7.4"
+    "auth": "1.7.4",
+    "supertest": "catalog:"
   }
 }
