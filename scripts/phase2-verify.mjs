@@ -24,7 +24,7 @@ const checks = [
 
 for (const [label, argumentsForPnpm] of checks) {
   process.stdout.write(`\nPhase 2 check: ${label}\n`);
-  const result = spawnSync(packageManagerScript, argumentsForPnpm, {
+  const result = spawnSync(process.execPath, [packageManagerScript, ...argumentsForPnpm], {
     cwd: workspace,
     env: productionEnvironment,
     stdio: 'inherit',

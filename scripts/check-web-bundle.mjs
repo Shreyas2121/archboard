@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url';
 const buildDirectory = fileURLToPath(new URL('../apps/web/dist/', import.meta.url));
 const textExtensions = new Set(['.js', '.css', '.html']);
 const forbiddenPatterns = [
-  ['backend database URL name', /\bDATABASE_(?:DIRECT_)?URL\b/i],
+  ['backend database URL name', /\bDATABASE_(?:DIRECT_)?URL(?:_UNPOOLED)?\b/i],
   ['backend authentication secret name', /\bBETTER_AUTH_SECRET\b/i],
+  ['backend GitHub OAuth setting name', /\bGITHUB_CLIENT_(?:ID|SECRET)\b/i],
   ['Postgres connection URL', /postgres(?:ql)?:\/\//i],
   ['shadcn runtime registry', /ui\.shadcn\.com/i],
   [

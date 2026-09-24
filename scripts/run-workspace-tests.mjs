@@ -31,7 +31,7 @@ if (filterPattern) {
   packageManagerArguments.push('--', filterPattern);
 }
 
-const result = spawnSync(packageManagerScript, packageManagerArguments, {
+const result = spawnSync(process.execPath, [packageManagerScript, ...packageManagerArguments], {
   stdio: 'inherit',
 });
 

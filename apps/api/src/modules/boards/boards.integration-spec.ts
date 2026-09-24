@@ -59,6 +59,8 @@ const HTTP_UNAVAILABLE = 503;
 const PAGE_SIZE = 2;
 const SCHEMA_SUFFIX_LENGTH = 8;
 const EXPECTED_MEMBER_COUNT = 3;
+const LOCK_POLL_ATTEMPTS = 50;
+const LOCK_POLL_INTERVAL_MS = 50;
 const SCHEMA = `archboard_p305_${process.pid}_${randomUUID().replaceAll('-', '').slice(0, SCHEMA_SUFFIX_LENGTH)}`;
 
 jest.setTimeout(TEST_TIMEOUT_MS);
@@ -73,6 +75,19 @@ function cookies(response: Response): string {
   const all = response.headers.getSetCookie();
   expect(all.some((value) => value.includes('HttpOnly'))).toBe(true);
   return all.map((value) => value.split(';', 1)[0]).join('; ');
+}
+
+async function waitForBoardLock(database: DataSource): Promise<void> {
+  for (let attempt = 0; attempt < LOCK_POLL_ATTEMPTS; attempt += 1) {
+    const rows = (await database.query(
+      `SELECT count(*)::integer AS count FROM pg_stat_activity
+       WHERE datname = current_database() AND pid <> pg_backend_pid()
+       AND wait_event_type = 'Lock' AND query LIKE '%FOR UPDATE%'`,
+    )) as { count: number }[];
+    if (rows[0]?.count) return;
+    await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_INTERVAL_MS));
+  }
+  throw new Error('The competing board transaction did not reach a PostgreSQL lock wait.');
 }
 
 describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
@@ -552,6 +567,54 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     ).toHaveLength(0);
   });
 
+  it('rejects viewer, nonmember, and cross-board graph proposals through real sessions without changing state', async () => {
+    const board = await create('owner', 'A11 graph authority');
+    const other = await create('owner', 'A11 other board');
+    await database.query(
+      'INSERT INTO board_members (board_id, user_id, role) VALUES ($1, $2, $3)',
+      [board.id, users.get('viewer')!.id, 'viewer'],
+    );
+    const actor = application.get<RequestActor>(AUTH_REQUEST_ACTOR);
+    const accepted = createGraphDocument();
+    const replica = new Y.Doc();
+    Y.applyUpdate(replica, Y.encodeStateAsUpdate(accepted));
+    const vector = Y.encodeStateVector(replica);
+    createNode(replica, { ...allEntityGraphFixture.nodes[0]!, id: randomUUID() });
+    const updateBytes = Y.encodeStateAsUpdate(replica, vector);
+    const harness = new PostgresDurableUpdateHarness(
+      board.id,
+      accepted,
+      database,
+      { authenticate: async (cookie) => ({ userId: (await actor.require({ cookie })).user.id }) },
+      new BoardPermissionService(new PostgresBoardAuthorityReader(database)),
+    );
+    const before = harness.acceptedStateAsUpdate();
+    for (const [user, boardId, code] of [
+      ['viewer', board.id, ERROR_CODES.FORBIDDEN],
+      ['outsider', board.id, ERROR_CODES.NOT_FOUND],
+      ['owner', other.id, ERROR_CODES.FORBIDDEN],
+      ['owner', randomUUID(), ERROR_CODES.FORBIDDEN],
+    ] as const) {
+      await expect(
+        harness.accept({
+          boardId,
+          updateId: randomUUID(),
+          sessionToken: users.get(user)!.cookie,
+          updateBytes,
+        }),
+      ).rejects.toMatchObject({ code });
+      expect(harness.acceptedStateAsUpdate()).toEqual(before);
+    }
+    const rows = (await database.query(
+      `SELECT
+       (SELECT latest_seq::text FROM boards WHERE id = $1) AS sequence,
+       (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+       (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts`,
+      [board.id],
+    )) as { sequence: string; updates: number; receipts: number }[];
+    expect(rows[0]).toEqual({ sequence: '0', updates: 0, receipts: 0 });
+  });
+
   it('serializes a committed graph update before archive through the same board lock', async () => {
     const board = await create('owner', 'A27 ordering');
     const actor = application.get<RequestActor>(AUTH_REQUEST_ACTOR);
@@ -593,7 +656,11 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       method: 'POST',
       body: { expectedVersion: board.metadataVersion },
     });
-    release();
+    try {
+      await waitForBoardLock(database);
+    } finally {
+      release();
+    }
     expect((await acceptedWrite).receipt.sequence).toBe('1');
     expect((await archive).status).toBe(HTTP_OK);
     const rejected = harness.accept({
@@ -665,6 +732,56 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     )) as { sequence: string; updates: number; receipts: number }[];
     expect(rows[0]).toEqual({ sequence: '0', updates: 0, receipts: 0 });
     expect(harness.acceptedStateAsUpdate()).toEqual(Y.encodeStateAsUpdate(accepted));
+  });
+
+  it('blocks a graph transaction behind an uncommitted archive and rejects it after commit', async () => {
+    const board = await create('owner', 'A27 blocked graph');
+    const actor = application.get<RequestActor>(AUTH_REQUEST_ACTOR);
+    const accepted = createGraphDocument();
+    const replica = new Y.Doc();
+    Y.applyUpdate(replica, Y.encodeStateAsUpdate(accepted));
+    const vector = Y.encodeStateVector(replica);
+    createNode(replica, { ...allEntityGraphFixture.nodes[0]!, id: randomUUID() });
+    const harness = new PostgresDurableUpdateHarness(
+      board.id,
+      accepted,
+      database,
+      { authenticate: async (cookie) => ({ userId: (await actor.require({ cookie })).user.id }) },
+      new BoardPermissionService(new PostgresBoardAuthorityReader(database)),
+    );
+    const archiveRunner = database.createQueryRunner();
+    await archiveRunner.connect();
+    await archiveRunner.startTransaction();
+    try {
+      await archiveRunner.query('SELECT id FROM boards WHERE id = $1 FOR UPDATE', [board.id]);
+      await archiveRunner.query(
+        `UPDATE boards SET archived_at = CURRENT_TIMESTAMP,
+         metadata_version = metadata_version + 1, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1`,
+        [board.id],
+      );
+      const attempted = harness.accept({
+        boardId: board.id,
+        updateId: randomUUID(),
+        sessionToken: users.get('owner')!.cookie,
+        updateBytes: Y.encodeStateAsUpdate(replica, vector),
+      });
+      await waitForBoardLock(database);
+      await archiveRunner.commitTransaction();
+      await expect(attempted).rejects.toMatchObject({ code: ERROR_CODES.BOARD_ARCHIVED });
+      const rows = (await database.query(
+        `SELECT
+         (SELECT latest_seq::text FROM boards WHERE id = $1) AS sequence,
+         (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+         (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts`,
+        [board.id],
+      )) as { sequence: string; updates: number; receipts: number }[];
+      expect(rows[0]).toEqual({ sequence: '0', updates: 0, receipts: 0 });
+      expect(harness.acceptedStateAsUpdate()).toEqual(Y.encodeStateAsUpdate(accepted));
+    } finally {
+      if (archiveRunner.isTransactionActive) await archiveRunner.rollbackTransaction();
+      await archiveRunner.release();
+    }
   });
 
   it('lists safe owner/member summaries and enforces the member role matrix', async () => {

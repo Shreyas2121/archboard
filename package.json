@@ -23,6 +23,7 @@
     "phase1:verify": "node scripts/phase1-verify.mjs",
     "phase2:measure": "node scripts/phase2-measure.mjs",
     "phase2:verify": "node scripts/phase2-verify.mjs",
+    "phase3:verify": "node scripts/phase3-verify.mjs",
     "test": "node scripts/run-workspace-tests.mjs",
     "test:browser": "node scripts/run-browser-unit-tests.mjs",
     "test:integration": "pnpm --filter @archboard/api run test:integration",
