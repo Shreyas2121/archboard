@@ -9,6 +9,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // The client receives an explicit API origin; server environment discovery is unused.
+      '@better-auth/core/env': fileURLToPath(
+        new URL('./src/platform/config/better-auth-browser-env.ts', import.meta.url),
+      ),
     },
   },
 });
