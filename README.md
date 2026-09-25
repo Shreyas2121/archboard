@@ -9,9 +9,9 @@ The current implementation scope is Phase 3: identity and board lifecycle. Read
 [Phase 3 audit](./docs/phase-3-identity-boards.md) before changing this scope. Phase 1 and Phase 2
 evidence remain authoritative inputs.
 
-The Phase 3 exit gate is **open**. Automated checks passed, but a real GitHub OAuth callback and
-browser cookie lifecycle remain unrun because development OAuth credentials are unavailable. The
-[Phase 3 evidence index](./docs/evidence/phase3/README.md) distinguishes these results.
+The Phase 3 exit gate is **passed** on the recorded automated checks and subsequent real GitHub
+browser follow-up. The [Phase 3 evidence index](./docs/evidence/phase3/README.md) distinguishes
+independently observed checks from user-reported browser and screen-reader results.
 
 The [Phase 2 audit](./docs/phase-2-editor.md) is **open, not passed**. The local editor's recorded
 pan p95 exceeds its target, and the spoken screen-reader check is unrun. See the
