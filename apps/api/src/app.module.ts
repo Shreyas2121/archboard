@@ -12,6 +12,8 @@ import { BoardPermissionService } from './modules/boards/application/index.js';
 import { InviteService } from './modules/boards/application/invite-service.js';
 import { InvitesController } from './modules/boards/invites.controller.js';
 import { PostgresInvitePersistence } from './modules/boards/infrastructure/postgres-invite-persistence.js';
+import { CollaborationRoomRegistry } from './modules/collaboration/application/room-registry.js';
+import { PostgresRoomLoader } from './modules/collaboration/infrastructure/room/postgres-room-loader.js';
 import {
   WEBSOCKET_API_CONFIG,
   WebSocketUpgradeService,
@@ -41,6 +43,12 @@ export class AppModule {
         ReadinessService,
         { provide: WEBSOCKET_API_CONFIG, useValue: config },
         WebSocketUpgradeService,
+        PostgresRoomLoader,
+        {
+          provide: CollaborationRoomRegistry,
+          inject: [PostgresRoomLoader],
+          useFactory: (loader: PostgresRoomLoader) => new CollaborationRoomRegistry(loader),
+        },
         {
           provide: BoardService,
           inject: [DataSource],

@@ -3,6 +3,13 @@ import type { DataSource, QueryRunner } from 'typeorm';
 
 import { CollaborationWriterLockService } from './collaboration-writer-lock.service.js';
 
+class TestWriterLockService extends CollaborationWriterLockService {
+  public terminations = 0;
+
+  protected override terminateProcess(): void {
+    this.terminations += 1;
+  }
+}
 describe('collaboration writer lock readiness', () => {
   it('fails readiness immediately when the dedicated session reports connection loss', async () => {
     let connectionError: (() => void) | undefined;
@@ -30,12 +37,13 @@ describe('collaboration writer lock readiness', () => {
         this.isInitialized = false;
       }),
     } as unknown as DataSource;
-    const service = new CollaborationWriterLockService(dataSource);
+    const service = new TestWriterLockService(dataSource);
 
     await service.onModuleInit();
     expect(await service.isReady()).toBe(true);
     connectionError?.();
     expect(await service.isReady()).toBe(false);
+    expect(service.terminations).toBe(1);
     await service.onApplicationShutdown();
   });
 });
