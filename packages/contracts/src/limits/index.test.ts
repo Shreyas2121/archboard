@@ -3,6 +3,43 @@ import { describe, expect, it } from 'vitest';
 import * as limits from './index.js';
 
 describe('central product limits', () => {
+  it('keeps Phase 4 admission, timing, and rate budgets in one shared source', () => {
+    expect({
+      connections: limits.MAX_BOARD_CONNECTIONS,
+      rooms: limits.MAX_ACTIVE_ROOMS,
+      updateRate: limits.CONTENT_UPDATES_PER_SECOND,
+      updateBurst: limits.CONTENT_UPDATE_BURST,
+      presenceRate: limits.PRESENCE_UPDATES_PER_SECOND,
+      workers: limits.MAX_VALIDATION_WORKERS,
+      validationMs: limits.VALIDATION_TIMEOUT_MS,
+      helloMs: limits.HELLO_TIMEOUT_MS,
+      pingMs: limits.WS_PING_INTERVAL_MS,
+      pongMs: limits.WS_PONG_TIMEOUT_MS,
+      presenceMs: limits.PRESENCE_EXPIRY_MS,
+      compactionUpdates: limits.SNAPSHOT_COMPACTION_UPDATES,
+      compactionMs: limits.SNAPSHOT_COMPACTION_INTERVAL_MS,
+      idleMs: limits.ROOM_IDLE_EVICTION_MS,
+      retryStartMs: limits.RECONNECT_INITIAL_DELAY_MS,
+      retryMaxMs: limits.RECONNECT_MAX_DELAY_MS,
+    }).toEqual({
+      connections: 10,
+      rooms: 20,
+      updateRate: 20,
+      updateBurst: 40,
+      presenceRate: 15,
+      workers: 2,
+      validationMs: 2_000,
+      helloMs: 5_000,
+      pingMs: 15_000,
+      pongMs: 45_000,
+      presenceMs: 30_000,
+      compactionUpdates: 200,
+      compactionMs: 60_000,
+      idleMs: 300_000,
+      retryStartMs: 1_000,
+      retryMaxMs: 30_000,
+    });
+  });
   it('matches the Phase 1 graph, content, byte, and presence budgets', () => {
     expect(limits).toMatchObject({
       KIBIBYTE: 1_024,
