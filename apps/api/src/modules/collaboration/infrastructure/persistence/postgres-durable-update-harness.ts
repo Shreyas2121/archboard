@@ -1,15 +1,14 @@
 import { createHash } from 'node:crypto';
 
-import {
-  BOARD_ROLES,
-  ERROR_CODES,
-  type ErrorCode,
-  type ServerSequence,
-} from '@archboard/contracts';
+import { ERROR_CODES, type ErrorCode, type ServerSequence } from '@archboard/contracts';
 import { DocumentValidationError, validateGraphDocument } from '@archboard/document-model';
 import { DataSource, type QueryRunner } from 'typeorm';
 import * as Y from 'yjs';
 
+import type {
+  BoardPermissionService,
+  BoardPermissionDecision,
+} from '../../../boards/application/index.js';
 import {
   DURABLE_UPDATE_FAILPOINTS,
   DurableUpdateFailpointController,
@@ -24,12 +23,6 @@ import {
   YjsCausalCompatibilityError,
   assertCausallyComplete,
 } from '../yjs-compatibility/index.js';
-
-interface AuthorityRow {
-  readonly archived_at: Date | null;
-  readonly owner_user_id: string;
-  readonly member_role: string | null;
-}
 
 interface ReceiptRow {
   readonly actor_user_id: string;
@@ -84,6 +77,7 @@ export class PostgresDurableUpdateHarness {
     acceptedDocument: Y.Doc,
     private readonly dataSource: DataSource,
     private readonly authenticator: UpdateSessionAuthenticator,
+    private readonly permissions: BoardPermissionService,
     private readonly failpoints = new DurableUpdateFailpointController(),
   ) {
     validateGraphDocument(acceptedDocument);
@@ -115,7 +109,7 @@ export class PostgresDurableUpdateHarness {
       throw rejection(ERROR_CODES.UNAUTHENTICATED, 'An authenticated session is required.');
     }
 
-    await this.requireWriteAuthority(this.dataSource, actor.userId, false);
+    await this.requireGraphAuthority(actor.userId);
     const exactBytes = Buffer.from(proposal.updateBytes);
     const payloadHash = hashUpdate(exactBytes);
     const existing = await this.findReceipt(this.dataSource, proposal.updateId);
@@ -166,7 +160,7 @@ export class PostgresDurableUpdateHarness {
     await runner.connect();
     await runner.startTransaction();
     try {
-      await this.requireWriteAuthority(runner, actorUserId, true);
+      await this.requireGraphAuthority(actorUserId, runner);
       const existing = await this.findReceipt(runner, updateId);
       if (existing !== undefined) {
         const receipt = this.requireMatchingReceipt(updateId, actorUserId, payloadHash, existing);
@@ -222,29 +216,12 @@ export class PostgresDurableUpdateHarness {
     }
   }
 
-  private async requireWriteAuthority(
-    executor: DataSource | QueryRunner,
-    actorUserId: string,
-    lockBoard: boolean,
-  ): Promise<void> {
-    const query = `SELECT b."owner_user_id", b."archived_at", bm."role" AS "member_role"
-       FROM "boards" b
-       LEFT JOIN "board_members" bm
-         ON bm."board_id" = b."id" AND bm."user_id" = $2
-       WHERE b."id" = $1${lockBoard ? ' FOR UPDATE OF b' : ''}`;
-    const rows = (await (executor instanceof DataSource
-      ? executor.query(query, [this.boardId, actorUserId])
-      : executor.manager.query(query, [this.boardId, actorUserId]))) as AuthorityRow[];
-    const authority = rows[0];
-    if (authority === undefined) {
-      throw rejection(ERROR_CODES.FORBIDDEN, 'The board is unavailable.');
-    }
-    if (authority.archived_at !== null) {
-      throw rejection(ERROR_CODES.BOARD_ARCHIVED, 'Archived boards cannot accept updates.');
-    }
-    if (authority.owner_user_id !== actorUserId && authority.member_role !== BOARD_ROLES.EDITOR) {
-      throw rejection(ERROR_CODES.FORBIDDEN, 'Write access to the board is required.');
-    }
+  private async requireGraphAuthority(actorUserId: string, runner?: QueryRunner): Promise<void> {
+    const decision: BoardPermissionDecision =
+      runner === undefined
+        ? await this.permissions.previewEditGraph(this.boardId, actorUserId)
+        : await this.permissions.editGraph(runner, this.boardId, actorUserId);
+    if (!decision.allowed) throw rejection(decision.code, 'Board graph write unavailable.');
   }
 
   private async findReceipt(

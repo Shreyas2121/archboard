@@ -6,6 +6,8 @@ if (!packageManagerScript) throw new Error('Browser unit tests must be invoked t
 
 const command = ['--filter', '@archboard/sync-client', 'run', 'test'];
 if (patterns.length > 0) command.push('--', ...patterns);
-const result = spawnSync(packageManagerScript, command, { stdio: 'inherit' });
+const result = spawnSync(process.execPath, [packageManagerScript, ...command], {
+  stdio: 'inherit',
+});
 if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;

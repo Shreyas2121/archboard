@@ -30,7 +30,7 @@ const productionEnvironment = {
 
 function runBuild() {
   process.stdout.write('Phase 2 measurement: building the production workspace\n');
-  const result = spawnSync(packageManagerScript, ['build'], {
+  const result = spawnSync(process.execPath, [packageManagerScript, 'build'], {
     cwd: workspace,
     env: productionEnvironment,
     stdio: 'inherit',

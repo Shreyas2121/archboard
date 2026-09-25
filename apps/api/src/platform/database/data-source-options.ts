@@ -1,4 +1,5 @@
 import type { ApiConfig } from '../config/index.js';
+import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
 import { DATABASE_ENTITIES } from './database-entities.js';
 
 export function runtimeDataSourceOptions(config: ApiConfig) {
@@ -6,6 +7,7 @@ export function runtimeDataSourceOptions(config: ApiConfig) {
     type: 'postgres' as const,
     url: config.databaseUrl,
     entities: [...DATABASE_ENTITIES],
+    migrations: [InitialDatabaseFoundation1789300000000],
     synchronize: false,
     migrationsRun: false,
     extra: {

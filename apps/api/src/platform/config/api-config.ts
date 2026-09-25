@@ -16,6 +16,9 @@ const MAX_POOL_SIZE = 50;
 const MIN_DATABASE_TIMEOUT_MS = 1;
 const MAX_DATABASE_TIMEOUT_MS = 120_000;
 const MIN_BETTER_AUTH_SECRET_CHARACTERS = 32;
+const GITHUB_CLIENT_ID_PATTERN = /^[A-Za-z0-9._-]{16,128}$/;
+const GITHUB_CLIENT_SECRET_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
+const GITHUB_PLACEHOLDER_PREFIX = 'replace-with-';
 
 const deploymentModeSchema = z.enum(['development', 'test', 'production']);
 
@@ -102,6 +105,8 @@ const rawApiConfigSchema = z
       MIN_BETTER_AUTH_SECRET_CHARACTERS,
       `BETTER_AUTH_SECRET must contain at least ${MIN_BETTER_AUTH_SECRET_CHARACTERS} characters.`,
     ),
+    GITHUB_CLIENT_ID: z.string().optional(),
+    GITHUB_CLIENT_SECRET: z.string().optional(),
   })
   .strict();
 
@@ -117,6 +122,8 @@ export interface ApiConfig {
   readonly databaseConnectionTimeoutMs: number;
   readonly betterAuthIdleTimeoutMs: number;
   readonly betterAuthSecret: string;
+  readonly githubClientId: string | null;
+  readonly githubClientSecret: string | null;
 }
 
 interface ConfigIssue {
@@ -162,6 +169,8 @@ export function loadApiConfig(environment: NodeJS.ProcessEnv): ApiConfig {
     DATABASE_CONNECTION_TIMEOUT_MS: environment.DATABASE_CONNECTION_TIMEOUT_MS,
     BETTER_AUTH_IDLE_TIMEOUT_MS: environment.BETTER_AUTH_IDLE_TIMEOUT_MS,
     BETTER_AUTH_SECRET: environment.BETTER_AUTH_SECRET,
+    GITHUB_CLIENT_ID: environment.GITHUB_CLIENT_ID,
+    GITHUB_CLIENT_SECRET: environment.GITHUB_CLIENT_SECRET,
   });
   if (!parsed.success) {
     throw new ConfigurationError(
@@ -216,6 +225,31 @@ export function loadApiConfig(environment: NodeJS.ProcessEnv): ApiConfig {
   validateDatabaseUrl(parsed.data.DATABASE_URL, 'DATABASE_URL', issues);
   validateDatabaseUrl(parsed.data.DATABASE_DIRECT_URL, 'DATABASE_DIRECT_URL', issues);
 
+  const githubClientId = parsed.data.GITHUB_CLIENT_ID?.trim() || null;
+  const githubClientSecret = parsed.data.GITHUB_CLIENT_SECRET?.trim() || null;
+  if (mode === 'production' || githubClientId !== null || githubClientSecret !== null) {
+    if (
+      githubClientId === null ||
+      !GITHUB_CLIENT_ID_PATTERN.test(githubClientId) ||
+      githubClientId.startsWith(GITHUB_PLACEHOLDER_PREFIX)
+    ) {
+      issues.push({
+        variable: 'GITHUB_CLIENT_ID',
+        message: 'GITHUB_CLIENT_ID must be a valid GitHub OAuth client ID.',
+      });
+    }
+    if (
+      githubClientSecret === null ||
+      !GITHUB_CLIENT_SECRET_PATTERN.test(githubClientSecret) ||
+      githubClientSecret.startsWith(GITHUB_PLACEHOLDER_PREFIX)
+    ) {
+      issues.push({
+        variable: 'GITHUB_CLIENT_SECRET',
+        message: 'GITHUB_CLIENT_SECRET must be a valid GitHub OAuth client secret.',
+      });
+    }
+  }
+
   if (issues.length > 0) {
     throw new ConfigurationError('API', issues);
   }
@@ -232,5 +266,7 @@ export function loadApiConfig(environment: NodeJS.ProcessEnv): ApiConfig {
     databaseConnectionTimeoutMs: parsed.data.DATABASE_CONNECTION_TIMEOUT_MS,
     betterAuthIdleTimeoutMs: parsed.data.BETTER_AUTH_IDLE_TIMEOUT_MS,
     betterAuthSecret: parsed.data.BETTER_AUTH_SECRET,
+    githubClientId,
+    githubClientSecret,
   });
 }

@@ -3,3 +3,4 @@ export {
   type AuthenticatedSession,
   type AuthSessionLookup,
 } from './session-lookup.js';
+export { AUTH_REQUEST_ACTOR, type RequestActor } from './request-actor.js';

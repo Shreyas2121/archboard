@@ -36,6 +36,7 @@ const workerUrl = pathToFileURL(
   ),
 );
 const pools: ValidationWorkerPool[] = [];
+const FAULT_INJECTION_TIMEOUT_MS = 1_500;
 
 function pool(
   options: ConstructorParameters<typeof ValidationWorkerPool>[0] = {},
@@ -140,7 +141,7 @@ describe('validation-worker', () => {
       steps: [],
     });
     const acceptedSnapshot = input.acceptedState.slice();
-    const created = pool({ timeoutMs: 300 });
+    const created = pool({ timeoutMs: FAULT_INJECTION_TIMEOUT_MS });
     created.injectNextWorkerDirective(directive);
     await expect(created.validate(input)).rejects.toMatchObject({
       code: ERROR_CODES.SERVER_BUSY,
@@ -160,7 +161,11 @@ describe('validation-worker', () => {
       steps: [],
     });
     const acceptedSnapshot = input.acceptedState.slice();
-    const created = pool({ timeoutMs: 300, maxWorkers: 1, maxQueueDepth: 1 });
+    const created = pool({
+      timeoutMs: FAULT_INJECTION_TIMEOUT_MS,
+      maxWorkers: 1,
+      maxQueueDepth: 1,
+    });
     created.injectNextWorkerDirective(VALIDATION_WORKER_DIRECTIVES.HANG);
     const running = created.validate(input);
     const queued = created.validate(input);
