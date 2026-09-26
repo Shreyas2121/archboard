@@ -6,6 +6,7 @@ import {
   type ErrorCode,
   type GraphProjection,
   type ServerSequence,
+  type BoardRole,
 } from '@archboard/contracts';
 import {
   COMMAND_ORIGINS,
@@ -70,6 +71,11 @@ export interface LocalPersistenceAdapterOptions {
   readonly failpoints?: IndexedDbFailpointController;
   readonly createUpdateId?: () => string;
   readonly now?: () => Date;
+}
+
+export interface CachedBoardAccess {
+  readonly role: BoardRole;
+  readonly archived: boolean;
 }
 
 export class EditingPausedForStorageError extends Error {
@@ -248,14 +254,64 @@ export class LocalPersistenceAdapter {
     return records.sort((a, b) => a.localSequence - b.localSequence);
   }
 
+  public async hasQueuedInitialState(): Promise<boolean> {
+    await this.initialize();
+    const transaction = this.requireDatabase().transaction(
+      [SYNC_STORE_NAMES.OUTBOX, SYNC_STORE_NAMES.OUTBOX_RECEIPTS],
+      'readonly',
+    );
+    const [pending, acknowledged] = await Promise.all([
+      transaction
+        .objectStore(SYNC_STORE_NAMES.OUTBOX)
+        .index(SYNC_INDEX_NAMES.BY_NAMESPACE)
+        .getAll(this.namespace),
+      transaction
+        .objectStore(SYNC_STORE_NAMES.OUTBOX_RECEIPTS)
+        .index(SYNC_INDEX_NAMES.BY_NAMESPACE)
+        .getAll(this.namespace),
+    ]);
+    await transaction.done;
+    return (
+      pending.some((record) => record.initialState === true) ||
+      acknowledged.some((record) => record.initialState === true)
+    );
+  }
+
   public async lastReceivedServerSequence(): Promise<ServerSequence> {
     await this.initialize();
     const state = await this.requireDatabase().get(SYNC_STORE_NAMES.RECEIVED_STATE, this.namespace);
     return state?.lastServerSequence ?? '0';
   }
 
+  public async readCachedBoardAccess(): Promise<CachedBoardAccess | null> {
+    await this.initialize();
+    const record = await this.requireDatabase().get(SYNC_STORE_NAMES.BOARD_CACHE, this.namespace);
+    if (record === undefined) return null;
+    return { role: record.role, archived: record.metadata.archived === true };
+  }
+
+  public async cacheBoardAccess(access: CachedBoardAccess): Promise<void> {
+    await this.whenIdle();
+    if (this.readOnly) return;
+    await this.requireDatabase().put(SYNC_STORE_NAMES.BOARD_CACHE, {
+      namespace: this.namespace,
+      role: access.role,
+      metadata: { archived: access.archived },
+      cachedAt: this.now().toISOString(),
+      lastServerSequence: await this.lastReceivedServerSequence(),
+    });
+  }
+
   public hydrate(updateBytes: Uint8Array): void {
     applyHydrationUpdate(this.document, updateBytes);
+  }
+
+  public async enqueueInitialDocumentState(updateBytes: Uint8Array): Promise<void> {
+    this.assertEditingAllowed();
+    await this.whenIdle();
+    this.queueLocalBytes(updateBytes, true);
+    await this.whenIdle();
+    this.assertEditingAllowed();
   }
 
   public async applyRemoteAndPersist(
@@ -374,6 +430,7 @@ export class LocalPersistenceAdapter {
         localSequence: outbox.localSequence,
         serverSequence,
         acknowledgedAt,
+        ...(outbox.initialState === true ? { initialState: true as const } : {}),
       });
       const receivedStore = transaction.objectStore(SYNC_STORE_NAMES.RECEIVED_STATE);
       const previous = await receivedStore.get(this.namespace);
@@ -512,6 +569,10 @@ export class LocalPersistenceAdapter {
 
   private readonly handleDocumentUpdate = (updateBytes: Uint8Array, origin: unknown): void => {
     if (!isPersistableLocalOrigin(origin) || this.status.editingPaused || this.closed) return;
+    this.queueLocalBytes(updateBytes);
+  };
+
+  private queueLocalBytes(updateBytes: Uint8Array, initialState = false): void {
     const exactBytes = Uint8Array.from(updateBytes);
     let updateId: string;
     try {
@@ -525,7 +586,7 @@ export class LocalPersistenceAdapter {
     this.publishSaving(this.pendingLocalWrites);
     this.writeTail = this.writeTail.then(async () => {
       if (this.status.editingPaused) return;
-      await this.persistLocalUpdate(updateId, localSequence, exactBytes);
+      await this.persistLocalUpdate(updateId, localSequence, exactBytes, initialState);
       this.pendingLocalWrites = Math.max(0, this.pendingLocalWrites - 1);
       this.publishSaving(this.pendingLocalWrites);
       if (this.pendingLocalWrites === 0) {
@@ -534,7 +595,7 @@ export class LocalPersistenceAdapter {
       }
     });
     this.writeTail = this.writeTail.catch(() => this.recordStorageFailure());
-  };
+  }
 
   private reserveLocalSequence(): number {
     this.nextLocalSequence += 1;
@@ -545,6 +606,7 @@ export class LocalPersistenceAdapter {
     updateId: string,
     localSequence: number,
     updateBytes: Uint8Array,
+    initialState: boolean,
   ): Promise<void> {
     const createdAt = this.now().toISOString();
     const payloadHash = new Uint8Array(
@@ -583,6 +645,7 @@ export class LocalPersistenceAdapter {
         payloadHash,
         createdAt,
         status: OUTBOX_STATUSES.PENDING,
+        ...(initialState ? { initialState: true as const } : {}),
       });
       await transaction.done;
     } catch (error) {

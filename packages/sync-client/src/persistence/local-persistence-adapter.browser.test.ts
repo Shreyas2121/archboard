@@ -141,6 +141,46 @@ afterEach(async () => {
 });
 
 describe('IndexedDB persistence and outbox units in a real browser', () => {
+  it('queues the initial Yjs schema clock before fresh-board edits', async () => {
+    const document = createGraphDocument();
+    const adapter = await openAdapter(document, namespace());
+    const bootstrap = Y.encodeStateAsUpdate(document);
+    await adapter.enqueueInitialDocumentState(bootstrap);
+    const created = node('First authenticated edit');
+    createNode(document, created);
+    await adapter.whenIdle();
+
+    const [initial, edit] = await adapter.listTransportEligibleUpdates();
+    expect(initial?.updateBytes).toEqual(bootstrap);
+    expect(initial?.initialState).toBe(true);
+    expect(edit?.localSequence).toBe((initial?.localSequence ?? 0) + 1);
+    const server = createGraphDocument();
+    Y.applyUpdate(server, initial!.updateBytes);
+    Y.applyUpdate(server, edit!.updateBytes);
+    expect(projectGraphDocument(server).nodes.map(({ id }) => id)).toContain(created.id);
+    await adapter.acknowledgeUpdate(initial!.updateId, FIRST_SERVER_SEQUENCE);
+    expect((await adapter.listAcknowledgedUpdates())[0]?.initialState).toBe(true);
+  });
+
+  it('detects an unqueued initial clock after an aborted transaction and reload', async () => {
+    const storageNamespace = namespace();
+    const document = createGraphDocument();
+    const failpoints = new IndexedDbFailpointController();
+    const adapter = await openAdapter(document, storageNamespace, failpoints);
+    failpoints.arm(INDEXEDDB_FAILPOINTS.AFTER_LOCAL_UPDATE_WRITE);
+    await expect(
+      adapter.enqueueInitialDocumentState(Y.encodeStateAsUpdate(document)),
+    ).rejects.toThrow();
+    expect(await adapter.hasQueuedInitialState()).toBe(false);
+    await adapter.close();
+
+    const reopened = createGraphDocument();
+    const recovered = await openAdapter(reopened, storageNamespace);
+    expect(await recovered.hasQueuedInitialState()).toBe(false);
+    await recovered.enqueueInitialDocumentState(Y.encodeStateAsUpdate(reopened));
+    expect(await recovered.hasQueuedInitialState()).toBe(true);
+  });
+
   it('creates the named stores at the versioned database boundary', async () => {
     const database = await openSyncClientDatabase();
     const storeNames = [...database.objectStoreNames].sort();

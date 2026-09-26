@@ -53,6 +53,8 @@ export interface OrderedSyncClientOptions {
   readonly persistence: LocalPersistenceAdapter;
   readonly createWebSocket?: (url: string) => WebSocket;
   readonly random?: () => number;
+  readonly canSend?: () => boolean;
+  readonly beforeDrain?: () => Promise<void>;
 }
 
 function encodeBase64(bytes: Uint8Array): string {
@@ -172,6 +174,10 @@ export class OrderedSyncClient {
     this.connect();
   }
 
+  public resumeDrain(): void {
+    if (this.started && !this.stopped) this.enqueueRefresh();
+  }
+
   private connect(): void {
     if (this.stopped || this.socket !== null || this.localFailure()) return;
     const url = new URL(`/ws/boards/${this.options.boardId}`, this.options.webSocketOrigin);
@@ -262,6 +268,7 @@ export class OrderedSyncClient {
       this.handshakeComplete = true;
       this.retryDelay = INITIAL_RETRY_MS;
       await this.refresh();
+      await this.options.beforeDrain?.();
       await this.drain();
       return;
     }
@@ -350,6 +357,7 @@ export class OrderedSyncClient {
       this.inFlightId !== null ||
       this.socket?.readyState !== WebSocket.OPEN ||
       !isWritableRole(this.role) ||
+      this.options.canSend?.() === false ||
       this.accessDenied ||
       this.recoveryCode !== null
     )

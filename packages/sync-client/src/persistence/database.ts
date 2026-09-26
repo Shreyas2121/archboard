@@ -31,6 +31,7 @@ export interface OutboxRecord {
   readonly payloadHash: Uint8Array;
   readonly createdAt: string;
   readonly status: (typeof OUTBOX_STATUSES)['PENDING'];
+  readonly initialState?: true;
 }
 
 export interface OutboxReceiptRecord {
@@ -39,6 +40,7 @@ export interface OutboxReceiptRecord {
   readonly localSequence: number;
   readonly serverSequence: ServerSequence;
   readonly acknowledgedAt: string;
+  readonly initialState?: true;
 }
 
 export interface ReceivedStateRecord {

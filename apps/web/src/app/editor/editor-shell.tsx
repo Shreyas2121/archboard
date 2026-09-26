@@ -2,10 +2,15 @@ import { useCallback, useRef, useState } from 'react';
 import {
   MAX_GRAPH_COORDINATE,
   NODE_KINDS,
+  BOARD_ROLES,
   handleSchema,
   type NodeKind,
 } from '@archboard/contracts';
-import { LOCAL_PERSISTENCE_PHASES, WRITER_SESSION_PHASES } from '@archboard/sync-client';
+import {
+  LOCAL_PERSISTENCE_PHASES,
+  SYNC_PHASES,
+  WRITER_SESSION_PHASES,
+} from '@archboard/sync-client';
 import {
   Box,
   Braces,
@@ -127,11 +132,13 @@ interface EditorShellProps {
   readonly narrowScreen: boolean;
   readonly session: EditorSession | null;
   readonly sessionSnapshot: EditorSessionSnapshot | null;
+  readonly boardTitle?: string;
 }
 
 function phaseForSession(
   snapshot: EditorSessionSnapshot | null,
   narrowScreen: boolean,
+  boardMode: boolean,
 ): (typeof EDITOR_VIEW_PHASES)[keyof typeof EDITOR_VIEW_PHASES] {
   if (snapshot?.initializationError) return EDITOR_VIEW_PHASES.RECOVERY_REQUIRED;
   if (snapshot?.preparingDemo) return EDITOR_VIEW_PHASES.SEEDING;
@@ -144,12 +151,38 @@ function phaseForSession(
   if (persistence?.phase === LOCAL_PERSISTENCE_PHASES.RECOVERY_REQUIRED) {
     return EDITOR_VIEW_PHASES.RECOVERY_REQUIRED;
   }
+  if (boardMode) {
+    if (snapshot.accessDenied || snapshot.sync?.phase === SYNC_PHASES.ACCESS_CHANGED)
+      return EDITOR_VIEW_PHASES.ACCESS_CHANGED;
+    if (snapshot.sync?.phase === SYNC_PHASES.STORAGE_ERROR) return EDITOR_VIEW_PHASES.STORAGE_ERROR;
+    if (snapshot.sync?.phase === SYNC_PHASES.RECOVERY_REQUIRED)
+      return EDITOR_VIEW_PHASES.RECOVERY_REQUIRED;
+    if (snapshot.archived) return EDITOR_VIEW_PHASES.ARCHIVED;
+    if (snapshot.boardRole === BOARD_ROLES.VIEWER) return EDITOR_VIEW_PHASES.VIEWER;
+  }
   if (narrowScreen) return EDITOR_VIEW_PHASES.NARROW_SCREEN;
   if (snapshot.writer.phase === WRITER_SESSION_PHASES.READ_ONLY_HELD_ELSEWHERE) {
     return EDITOR_VIEW_PHASES.READ_ONLY;
   }
   if (snapshot.writer.phase === WRITER_SESSION_PHASES.UNSUPPORTED) {
     return EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED;
+  }
+  if (boardMode) {
+    const sync = snapshot.sync;
+    if (
+      !snapshot.hasLocalCopy &&
+      (sync?.phase === SYNC_PHASES.OFFLINE_CACHED ||
+        sync?.phase === SYNC_PHASES.SAVED_ON_DEVICE_OFFLINE)
+    ) {
+      return EDITOR_VIEW_PHASES.UNAVAILABLE;
+    }
+    if (persistence?.phase === LOCAL_PERSISTENCE_PHASES.SAVING) return EDITOR_VIEW_PHASES.SAVING;
+    if (sync?.phase === SYNC_PHASES.SYNCING) return EDITOR_VIEW_PHASES.SYNCING;
+    if (sync?.phase === SYNC_PHASES.SAVED_TO_SERVER) return EDITOR_VIEW_PHASES.SAVED_TO_SERVER;
+    if (sync?.phase === SYNC_PHASES.SAVED_ON_DEVICE_OFFLINE)
+      return EDITOR_VIEW_PHASES.SAVED_ON_DEVICE_OFFLINE;
+    if (sync?.phase === SYNC_PHASES.OFFLINE_CACHED) return EDITOR_VIEW_PHASES.OFFLINE_CACHED;
+    return EDITOR_VIEW_PHASES.CONNECTING;
   }
   if (persistence?.phase === LOCAL_PERSISTENCE_PHASES.SAVING) {
     return EDITOR_VIEW_PHASES.SAVING;
@@ -170,7 +203,12 @@ function connectionEndpoints(connection: Connection): ConnectionEndpoints {
   };
 }
 
-export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorShellProps) {
+export function EditorShell({
+  narrowScreen,
+  session,
+  sessionSnapshot,
+  boardTitle,
+}: EditorShellProps) {
   const paletteOpen = usePaletteOpen();
   const inspectorOpen = useInspectorOpen();
   const selection = useEditorSelection();
@@ -189,7 +227,21 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const [resetError, setResetError] = useState<string | null>(null);
   const { preference, cyclePreference } = useTheme();
-  const viewState = editorViewState(phaseForSession(sessionSnapshot, narrowScreen));
+  const boardMode = boardTitle !== undefined;
+  const baseViewState = editorViewState(phaseForSession(sessionSnapshot, narrowScreen, boardMode));
+  const viewState = boardMode
+    ? {
+        ...baseViewState,
+        editable:
+          baseViewState.phase !== EDITOR_VIEW_PHASES.UNAVAILABLE &&
+          !narrowScreen &&
+          (session?.canEdit() ?? false),
+        label:
+          baseViewState.phase === EDITOR_VIEW_PHASES.SYNCING
+            ? `Syncing ${sessionSnapshot?.sync?.pendingCount ?? 0} changes…`
+            : baseViewState.label,
+      }
+    : baseViewState;
   const projection = sessionSnapshot?.projection ?? null;
   const canvasReady = projection !== null;
   const selectedNode =
@@ -398,7 +450,10 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
   });
   const shortcutModifier = shortcutModifierLabel();
   const canReset =
-    projection !== null && session !== null && sessionSnapshot?.writer.writable === true;
+    !boardMode &&
+    projection !== null &&
+    session !== null &&
+    sessionSnapshot?.writer.writable === true;
   const downloadRecovery = useCallback((): void => {
     if (projection !== null) downloadRecoveryArtifact(projection);
   }, [projection]);
@@ -439,18 +494,18 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
       <header className="relative z-20 flex items-center gap-3 border-b bg-background/95 px-3 backdrop-blur sm:px-4">
         <Link
           className="flex items-center gap-2.5 text-sm font-semibold tracking-tight"
-          to="/"
-          aria-label="Archboard home"
+          to={boardMode ? '/boards' : '/'}
+          aria-label={boardMode ? 'Back to your boards' : 'Archboard home'}
         >
           <BrandMark />
           <span>Archboard</span>
         </Link>
-        <span className="rounded-md border bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
-          Local demo
+        <span className="max-w-48 truncate rounded-md border bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
+          {boardMode ? boardTitle : 'Local demo'}
         </span>
 
         <div
-          className="group absolute left-1/2 hidden -translate-x-1/2 items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs font-medium shadow-sm sm:flex"
+          className="group absolute left-1/2 hidden -translate-x-1/2 items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs font-medium shadow-sm md:flex"
           data-tone={viewState.tone}
           role="status"
         >
@@ -460,6 +515,14 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
           />
           <span>{viewState.label}</span>
         </div>
+
+        <span
+          className="ml-auto max-w-32 truncate text-xs text-muted-foreground md:hidden"
+          role="status"
+          aria-live="polite"
+        >
+          {viewState.label}
+        </span>
 
         <div className="ml-auto flex items-center gap-0.5" aria-label="Board actions">
           <IconButton
@@ -480,16 +543,18 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
           >
             <Redo2 />
           </IconButton>
-          <IconButton
-            ref={resetButtonRef}
-            className="max-sm:hidden"
-            label={canReset ? 'Reset local demo' : 'Reset demo unavailable in this view'}
-            variant="ghost"
-            disabled={!canReset}
-            onClick={() => actions.openDialog('reset')}
-          >
-            <RotateCcw />
-          </IconButton>
+          {!boardMode && (
+            <IconButton
+              ref={resetButtonRef}
+              className="max-sm:hidden"
+              label={canReset ? 'Reset local demo' : 'Reset demo unavailable in this view'}
+              variant="ghost"
+              disabled={!canReset}
+              onClick={() => actions.openDialog('reset')}
+            >
+              <RotateCcw />
+            </IconButton>
+          )}
           <IconButton
             className="max-sm:hidden"
             label={
@@ -598,7 +663,7 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
           aria-labelledby="canvas-heading"
         >
           <h1 id="canvas-heading" className="sr-only">
-            Local demo architecture canvas
+            {boardMode ? `${boardTitle} architecture canvas` : 'Local demo architecture canvas'}
           </h1>
           <div
             className="relative grid size-full place-items-center overflow-hidden"
@@ -627,6 +692,10 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
               </div>
             )}
             {(viewState.showStableSkeleton ||
+              viewState.phase === EDITOR_VIEW_PHASES.UNAVAILABLE ||
+              (viewState.phase === EDITOR_VIEW_PHASES.CONNECTING &&
+                boardMode &&
+                !sessionSnapshot?.hasLocalCopy) ||
               viewState.phase === EDITOR_VIEW_PHASES.STORAGE_ERROR ||
               viewState.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED) && (
               <section
@@ -648,14 +717,21 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
                 </p>
               </section>
             )}
-            {canvasReady && projection.nodes.length === 0 && projection.boundaries.length === 0 && (
-              <section className="pointer-events-none absolute z-10 rounded-xl border bg-card/90 px-6 py-5 text-center shadow-sm backdrop-blur">
-                <h2 className="text-sm font-semibold">Local board is empty</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  No cards or boundaries are stored on this device yet.
-                </p>
-              </section>
-            )}
+            {canvasReady &&
+              (!boardMode || sessionSnapshot?.hasLocalCopy) &&
+              projection.nodes.length === 0 &&
+              projection.boundaries.length === 0 && (
+                <section className="pointer-events-none absolute z-10 rounded-xl border bg-card/90 px-6 py-5 text-center shadow-sm backdrop-blur">
+                  <h2 className="text-sm font-semibold">
+                    {boardMode ? 'Board is empty' : 'Local board is empty'}
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {boardMode
+                      ? 'Create a card to begin mapping this architecture.'
+                      : 'No cards or boundaries are stored on this device yet.'}
+                  </p>
+                </section>
+              )}
             {viewState.phase === EDITOR_VIEW_PHASES.READ_ONLY && (
               <aside className="absolute inset-x-3 top-3 z-20 flex items-center justify-center gap-3 rounded-lg border border-status-warning/30 bg-background/90 px-3 py-2 text-xs font-medium text-status-warning-foreground backdrop-blur">
                 Another tab owns editing access.
@@ -669,6 +745,17 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
                 </Button>
               </aside>
             )}
+            {boardMode &&
+              (viewState.phase === EDITOR_VIEW_PHASES.VIEWER ||
+                viewState.phase === EDITOR_VIEW_PHASES.ARCHIVED ||
+                viewState.phase === EDITOR_VIEW_PHASES.ACCESS_CHANGED) && (
+                <aside
+                  className="absolute inset-x-3 top-3 z-20 rounded-lg border border-status-warning/30 bg-background/90 px-3 py-2 text-center text-xs font-medium text-status-warning-foreground backdrop-blur"
+                  role="status"
+                >
+                  {viewState.detail}
+                </aside>
+              )}
             {narrowScreen && (
               <aside className="absolute inset-x-3 top-3 z-20 rounded-lg border border-status-warning/30 bg-background/90 px-3 py-2 text-center text-xs font-medium text-status-warning-foreground backdrop-blur">
                 This view stays read-only on narrow screens. Use a wider window to edit.
@@ -880,7 +967,7 @@ export function EditorShell({ narrowScreen, session, sessionSnapshot }: EditorSh
       </Dialog>
 
       <Dialog
-        open={activeDialog === 'reset'}
+        open={!boardMode && activeDialog === 'reset'}
         onOpenChange={(open) => {
           if (!open && !resetPending) {
             setResetError(null);
