@@ -18,7 +18,6 @@ import { assertCausallyComplete } from '../yjs-compatibility/index.js';
 
 interface BoardRow {
   readonly latestSeq: string;
-  readonly archivedAt: Date | null;
 }
 
 interface SnapshotRow {
@@ -68,12 +67,10 @@ export class PostgresRoomLoader implements RoomLoader {
     const board = (await runner.manager
       .createQueryBuilder()
       .select('board.latest_seq::text', 'latestSeq')
-      .addSelect('board.archived_at', 'archivedAt')
       .from('boards', 'board')
       .where('board.id = :boardId', { boardId })
       .getRawOne()) as BoardRow | undefined;
     if (board === undefined) throw new RoomLoadError(ERROR_CODES.NOT_FOUND);
-    if (board.archivedAt !== null) throw new RoomLoadError(ERROR_CODES.BOARD_ARCHIVED);
     const latestSeq = this.sequence(board.latestSeq);
 
     const snapshot = (await runner.manager

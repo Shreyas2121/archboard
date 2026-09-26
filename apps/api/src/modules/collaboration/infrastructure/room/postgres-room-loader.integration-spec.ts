@@ -152,6 +152,13 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
     );
   });
 
+  it('loads committed content for an archived board that remains readable to members', async () => {
+    await dataSource.getRepository(BoardEntity).update({ id: boardId }, { archivedAt: new Date() });
+    const room = await new PostgresRoomLoader(dataSource).load(boardId);
+    expect(room.latestSeq).toBe(NEXT_SEQUENCE);
+    expect(projectGraphDocument(room.document)).toEqual(projectGraphDocument(expected));
+  });
+
   it('blocks a missing update or malformed snapshot without serving partial state', async () => {
     await dataSource.getRepository(BoardUpdateEntity).delete({ boardId, sequence: NEXT_SEQUENCE });
     await expect(new PostgresRoomLoader(dataSource).load(boardId)).rejects.toMatchObject({
