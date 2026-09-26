@@ -13,7 +13,10 @@ import { InviteService } from './modules/boards/application/invite-service.js';
 import { InvitesController } from './modules/boards/invites.controller.js';
 import { PostgresInvitePersistence } from './modules/boards/infrastructure/postgres-invite-persistence.js';
 import { CollaborationRoomRegistry } from './modules/collaboration/application/room-registry.js';
+import { CollaborationUpdateService } from './modules/collaboration/application/collaboration-update-service.js';
+import { DurableUpdateFailpointController } from './modules/collaboration/application/durable-update.js';
 import { PostgresRoomLoader } from './modules/collaboration/infrastructure/room/postgres-room-loader.js';
+import { ValidationWorkerPool } from './modules/collaboration/infrastructure/validation-worker/index.js';
 import {
   WEBSOCKET_API_CONFIG,
   CollaborationGateway,
@@ -46,6 +49,8 @@ export class AppModule {
         CollaborationGateway,
         CollaborationUpgradeService,
         PostgresRoomLoader,
+        DurableUpdateFailpointController,
+        { provide: ValidationWorkerPool, useFactory: () => new ValidationWorkerPool() },
         {
           provide: BoardPermissionService,
           inject: [DataSource],
@@ -56,6 +61,21 @@ export class AppModule {
           provide: CollaborationRoomRegistry,
           inject: [PostgresRoomLoader],
           useFactory: (loader: PostgresRoomLoader) => new CollaborationRoomRegistry(loader),
+        },
+        {
+          provide: CollaborationUpdateService,
+          inject: [
+            DataSource,
+            BoardPermissionService,
+            ValidationWorkerPool,
+            DurableUpdateFailpointController,
+          ],
+          useFactory: (
+            dataSource: DataSource,
+            permissions: BoardPermissionService,
+            validator: ValidationWorkerPool,
+            failpoints: DurableUpdateFailpointController,
+          ) => new CollaborationUpdateService(dataSource, permissions, validator, failpoints),
         },
         {
           provide: BoardService,

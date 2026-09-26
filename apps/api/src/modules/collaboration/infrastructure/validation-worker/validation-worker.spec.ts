@@ -45,8 +45,9 @@ const workerUrl = pathToFileURL(
 );
 const pools: ValidationWorkerPool[] = [];
 const FAULT_INJECTION_TIMEOUT_MS = 1_500;
+const WORKER_TEST_TIMEOUT_MS = 15_000;
 
-jest.setTimeout(15_000);
+jest.setTimeout(WORKER_TEST_TIMEOUT_MS);
 
 function pool(
   options: ConstructorParameters<typeof ValidationWorkerPool>[0] = {},

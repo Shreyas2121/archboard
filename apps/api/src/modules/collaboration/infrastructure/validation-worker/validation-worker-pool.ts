@@ -8,6 +8,7 @@ import {
   type ErrorCode,
 } from '@archboard/contracts';
 import { Worker } from 'node:worker_threads';
+import { existsSync } from 'node:fs';
 
 import {
   VALIDATION_FAILURE_KINDS,
@@ -58,6 +59,16 @@ function requireNonNegativeInteger(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} cannot be negative.`);
 }
 
+function defaultWorkerUrl(): URL {
+  const adjacent = new URL('./validation-worker.entry.js', import.meta.url);
+  if (existsSync(adjacent)) return adjacent;
+  // Source-mode Nest tests run against compiled worker assets in dist.
+  return new URL(
+    '../../../../../dist/modules/collaboration/infrastructure/validation-worker/validation-worker.entry.js',
+    import.meta.url,
+  );
+}
+
 export class ValidationWorkerPool {
   readonly timeoutMs: number;
   readonly maxWorkers: number;
@@ -73,7 +84,7 @@ export class ValidationWorkerPool {
     this.timeoutMs = options.timeoutMs ?? VALIDATION_TIMEOUT_MS;
     this.maxWorkers = options.maxWorkers ?? MAX_VALIDATION_WORKERS;
     this.maxQueueDepth = options.maxQueueDepth ?? MAX_VALIDATION_QUEUE;
-    this.workerUrl = options.workerUrl ?? new URL('./validation-worker.entry.js', import.meta.url);
+    this.workerUrl = options.workerUrl ?? defaultWorkerUrl();
     requirePositiveInteger('timeoutMs', this.timeoutMs);
     requirePositiveInteger('maxWorkers', this.maxWorkers);
     requireNonNegativeInteger('maxQueueDepth', this.maxQueueDepth);

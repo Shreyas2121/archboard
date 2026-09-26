@@ -1,18 +1,20 @@
 import 'reflect-metadata';
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 
 import {
   GRAPH_SCHEMA_VERSION,
   ERROR_CODES,
+  COLOR_TOKENS,
+  COMPONENT_CATEGORIES,
   MAX_BOARD_CONNECTIONS,
   MAX_WS_FRAME_BYTES,
   PROTOCOL_VERSION,
   SERVER_EVENT_NAMES,
   serverMessageSchema,
 } from '@archboard/contracts';
-import { projectGraphDocument, validateGraphDocument } from '@archboard/document-model';
+import { createNode, projectGraphDocument, validateGraphDocument } from '@archboard/document-model';
 import { jest } from '@jest/globals';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -28,6 +30,10 @@ import { BoardEntity } from '../boards/infrastructure/entities/board.entity.js';
 import { createEmptyBoardSnapshot } from '../boards/infrastructure/empty-board-snapshot.js';
 import { BoardSnapshotEntity } from '../collaboration/infrastructure/entities/board-snapshot.entity.js';
 import { CollaborationRoomRegistry } from '../collaboration/application/room-registry.js';
+import {
+  DURABLE_UPDATE_FAILPOINTS,
+  DurableUpdateFailpointController,
+} from '../collaboration/application/durable-update.js';
 import { configureCollaborationWebSockets } from '../collaboration/infrastructure/websocket/index.js';
 import { DATABASE_ENTITIES } from '../../platform/database/database-entities.js';
 import { loadApiConfig } from '../../platform/config/index.js';
@@ -41,6 +47,7 @@ const CLIENT_EVENT_TIMEOUT_MS = 10_000;
 const NO_EARLY_MESSAGE_WINDOW_MS = 100;
 const CLOSE_POLICY_VIOLATION = 1008;
 const CLOSE_MESSAGE_TOO_BIG = 1009;
+const CLOSE_ABNORMAL = 1006;
 const HTTP_OK = 200;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
@@ -145,6 +152,62 @@ function rejectedUpgradeStatus(url: string, options: ClientOptions): Promise<num
   });
 }
 
+async function joinRoom(url: string, cookie: string) {
+  const socket = new WebSocket(url, websocketOptions(ALLOWED_FRONTEND_ORIGIN, cookie));
+  await waitForOpen(socket);
+  const responsePromise = waitForMessage(socket);
+  socket.send(
+    JSON.stringify({
+      event: 'hello',
+      data: {
+        protocolVersion: PROTOCOL_VERSION,
+        schemaVersion: GRAPH_SCHEMA_VERSION,
+        tabId: randomUUID(),
+      },
+    }),
+  );
+  const response = serverMessageSchema.parse(JSON.parse((await responsePromise).toString()));
+  if (response.event !== SERVER_EVENT_NAMES.READY) throw new Error('Expected room ready.');
+  return { socket, ready: response.data };
+}
+
+function makeNodeUpdate(snapshotBase64: string, title: string) {
+  const document = new Y.Doc();
+  try {
+    Y.applyUpdate(document, Buffer.from(snapshotBase64, 'base64'));
+    const before = Y.encodeStateVector(document);
+    const nodeId = randomUUID();
+    createNode(document, {
+      id: nodeId,
+      kind: 'component',
+      position: { x: 0, y: 0 },
+      size: { width: 240, height: 140 },
+      title,
+      color: COLOR_TOKENS.BLUE,
+      content: {
+        category: COMPONENT_CATEGORIES.SERVICE,
+        description: '',
+        technology: 'TypeScript',
+        externalUrl: null,
+      },
+    });
+    return { bytes: Y.encodeStateAsUpdate(document, before), nodeId };
+  } finally {
+    document.destroy();
+  }
+}
+
+async function sendUpdate(socket: WebSocket, updateId: string, bytes: Uint8Array) {
+  const responsePromise = waitForMessage(socket);
+  socket.send(
+    JSON.stringify({
+      event: 'update',
+      data: { updateId, updateBase64: Buffer.from(bytes).toString('base64') },
+    }),
+  );
+  return serverMessageSchema.parse(JSON.parse((await responsePromise).toString()));
+}
+
 describe('authenticated Nest collaboration WebSocket gateway', () => {
   let admin: Pool;
   let database: DataSource;
@@ -153,7 +216,10 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
   let authUrl: string;
   let sessionCookie: string;
   let nonmemberCookie: string;
+  let viewerCookie: string;
   let nonmemberId: string;
+  let ownerId: string;
+  let viewerId: string;
   let boardId: string;
   let testEmail: string;
 
@@ -215,7 +281,7 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
     const users = (await database.query('SELECT id FROM "user" WHERE email = $1', [testEmail])) as {
       id: string;
     }[];
-    const ownerId = users[0]!.id;
+    ownerId = users[0]!.id;
     const now = new Date();
     await database.getRepository(BoardEntity).save({
       id: boardId,
@@ -253,6 +319,25 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
       nonmemberEmail,
     ])) as { id: string }[];
     nonmemberId = nonmemberUsers[0]!.id;
+    const viewerEmail = `viewer-${randomUUID()}@example.com`;
+    const viewer = await fetch(`${authUrl}/api/auth/sign-up/email`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: ALLOWED_FRONTEND_ORIGIN },
+      body: JSON.stringify({
+        name: 'Viewer',
+        email: viewerEmail,
+        password: 'correct-horse-battery-staple',
+      }),
+    });
+    expect(viewer.status).toBe(HTTP_OK);
+    viewerCookie = viewer.headers
+      .getSetCookie()
+      .find((header) => header.includes('.session_token='))!
+      .split(';', 1)[0]!;
+    const viewerUsers = (await database.query('SELECT id FROM "user" WHERE email = $1', [
+      viewerEmail,
+    ])) as { id: string }[];
+    viewerId = viewerUsers[0]!.id;
   });
 
   afterAll(async () => {
@@ -269,6 +354,35 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
       }
     }
   });
+
+  async function createUpdateBoard(withViewer = false) {
+    const id = randomUUID();
+    const now = new Date();
+    await database.getRepository(BoardEntity).save({
+      id,
+      ownerUserId: ownerId,
+      title: 'Update room',
+      description: '',
+      archivedAt: null,
+      metadataVersion: 1,
+      latestSeq: '0',
+      contentUpdatedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await database.getRepository(BoardSnapshotEntity).save({
+      boardId: id,
+      ...createEmptyBoardSnapshot(),
+      updatedAt: now,
+    });
+    if (withViewer) {
+      await database.query(
+        'INSERT INTO "board_members" ("board_id", "user_id", "role") VALUES ($1, $2, $3)',
+        [id, viewerId, 'viewer'],
+      );
+    }
+    return { id, url: websocketUrl.replace(boardId, id) };
+  }
 
   it('preserves the session cookie and opens from the exact credentialed frontend origin', async () => {
     const websocket = new WebSocket(
@@ -483,5 +597,261 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
     websocket.send(Buffer.alloc(MAX_WS_FRAME_BYTES + 1));
     await expect(closePromise).resolves.toBe(CLOSE_MESSAGE_TOO_BIG);
     expect(disclosedMessages).toBe(0);
+  });
+
+  it('commits once, ACKs the sender, broadcasts to a peer, and returns the original receipt on retry', async () => {
+    const board = await createUpdateBoard();
+    const owner = await joinRoom(board.url, sessionCookie);
+    const peer = await joinRoom(board.url, sessionCookie);
+    try {
+      const updateId = randomUUID();
+      const { bytes, nodeId } = makeNodeUpdate(owner.ready.snapshotBase64, 'Durable socket node');
+      const peerMessage = waitForMessage(peer.socket);
+      void peerMessage.catch(() => undefined);
+      const acknowledgement = await sendUpdate(owner.socket, updateId, bytes);
+      if (acknowledgement.event === SERVER_EVENT_NAMES.ERROR)
+        throw new Error(`First update failed: ${JSON.stringify(acknowledgement.data)}`);
+      expect(acknowledgement).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+        data: { updateId, seq: '1' },
+      });
+      const broadcast = serverMessageSchema.parse(JSON.parse((await peerMessage).toString()));
+      expect(broadcast).toMatchObject({ event: SERVER_EVENT_NAMES.UPDATE, data: { seq: '1' } });
+      if (broadcast.event === SERVER_EVENT_NAMES.UPDATE)
+        expect(Buffer.from(broadcast.data.updateBase64, 'base64')).toEqual(Buffer.from(bytes));
+
+      const rows = (await database.query(
+        `SELECT u."update_bytes", r."payload_hash", r."seq"::text AS "seq"
+         FROM "board_updates" u JOIN "update_receipts" r USING ("board_id", "update_id")
+         WHERE u."board_id" = $1`,
+        [board.id],
+      )) as { update_bytes: Buffer; payload_hash: Buffer; seq: string }[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ seq: '1', update_bytes: Buffer.from(bytes) });
+      expect(rows[0]!.payload_hash).toEqual(createHash('sha256').update(bytes).digest());
+      const room = application.get(CollaborationRoomRegistry);
+      const reservation = await room.reserve(board.id);
+      expect(reservation.room.latestSeq).toBe('1');
+      expect(
+        projectGraphDocument(reservation.room.document).nodes.map((node) => node.id),
+      ).toContain(nodeId);
+      reservation.release();
+
+      let extraPeerMessages = 0;
+      peer.socket.on('message', () => {
+        extraPeerMessages += 1;
+      });
+      expect(await sendUpdate(owner.socket, updateId, bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+        data: { updateId, seq: '1' },
+      });
+      const different = makeNodeUpdate(owner.ready.snapshotBase64, 'Different payload');
+      expect(await sendUpdate(owner.socket, updateId, different.bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ERROR,
+        data: { code: ERROR_CODES.UPDATE_ID_REUSED, updateId },
+      });
+      await new Promise((resolve) => setTimeout(resolve, NO_EARLY_MESSAGE_WINDOW_MS));
+      expect(extraPeerMessages).toBe(0);
+      const counts = (await database.query(
+        `SELECT (SELECT count(*)::integer FROM "board_updates" WHERE "board_id" = $1) AS updates,
+                (SELECT count(*)::integer FROM "update_receipts" WHERE "board_id" = $1) AS receipts,
+                (SELECT latest_seq::text FROM "boards" WHERE id = $1) AS seq`,
+        [board.id],
+      )) as { updates: number; receipts: number; seq: string }[];
+      expect(counts[0]).toEqual({ updates: 1, receipts: 1, seq: '1' });
+    } finally {
+      await Promise.all([closeWebSocket(owner.socket), closeWebSocket(peer.socket)]);
+    }
+  });
+
+  it('denies viewer writes before receipt lookup or validation without changing the room', async () => {
+    const board = await createUpdateBoard(true);
+    const owner = await joinRoom(board.url, sessionCookie);
+    const viewer = await joinRoom(board.url, viewerCookie);
+    try {
+      expect(viewer.ready.role).toBe('viewer');
+      const { bytes } = makeNodeUpdate(viewer.ready.snapshotBase64, 'Denied viewer node');
+      let peerMessages = 0;
+      owner.socket.on('message', () => {
+        peerMessages += 1;
+      });
+      const response = await sendUpdate(viewer.socket, randomUUID(), bytes);
+      expect(response).toMatchObject({
+        event: SERVER_EVENT_NAMES.ERROR,
+        data: { code: ERROR_CODES.FORBIDDEN },
+      });
+      await new Promise((resolve) => setTimeout(resolve, NO_EARLY_MESSAGE_WINDOW_MS));
+      expect(peerMessages).toBe(0);
+      const room = await application.get(CollaborationRoomRegistry).reserve(board.id);
+      expect(room.room.latestSeq).toBe('0');
+      expect(projectGraphDocument(room.room.document).nodes).toEqual([]);
+      room.release();
+      const rows = (await database.query(
+        'SELECT latest_seq::text AS seq FROM "boards" WHERE id = $1',
+        [board.id],
+      )) as { seq: string }[];
+      expect(rows[0]!.seq).toBe('0');
+      const receipts = (await database.query(
+        'SELECT count(*)::integer AS count FROM "update_receipts" WHERE board_id = $1',
+        [board.id],
+      )) as { count: number }[];
+      expect(receipts[0]!.count).toBe(0);
+    } finally {
+      await Promise.all([closeWebSocket(owner.socket), closeWebSocket(viewer.socket)]);
+    }
+  });
+
+  it('rolls back a failed commit and accepts the same bytes on retry', async () => {
+    const board = await createUpdateBoard();
+    const owner = await joinRoom(board.url, sessionCookie);
+    const peer = await joinRoom(board.url, sessionCookie);
+    try {
+      const updateId = randomUUID();
+      const { bytes } = makeNodeUpdate(owner.ready.snapshotBase64, 'Rollback node');
+      let peerMessages = 0;
+      peer.socket.on('message', () => {
+        peerMessages += 1;
+      });
+      application
+        .get(DurableUpdateFailpointController)
+        .arm(DURABLE_UPDATE_FAILPOINTS.DATABASE_COMMIT);
+      expect(await sendUpdate(owner.socket, updateId, bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ERROR,
+        data: { code: ERROR_CODES.PERSISTENCE_FAILED },
+      });
+      const afterFailure = (await database.query(
+        'SELECT latest_seq::text AS seq FROM "boards" WHERE id = $1',
+        [board.id],
+      )) as { seq: string }[];
+      expect(afterFailure[0]!.seq).toBe('0');
+      expect(peerMessages).toBe(0);
+      const room = await application.get(CollaborationRoomRegistry).reserve(board.id);
+      expect(room.room.latestSeq).toBe('0');
+      room.release();
+      const peerMessage = waitForMessage(peer.socket);
+      expect(await sendUpdate(owner.socket, updateId, bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+        data: { updateId, seq: '1' },
+      });
+      expect(serverMessageSchema.parse(JSON.parse((await peerMessage).toString()))).toMatchObject({
+        event: SERVER_EVENT_NAMES.UPDATE,
+        data: { seq: '1' },
+      });
+      expect(peerMessages).toBe(1);
+    } finally {
+      await Promise.all([closeWebSocket(owner.socket), closeWebSocket(peer.socket)]);
+    }
+  });
+
+  it('recovers the original receipt after commit but before ACK', async () => {
+    const board = await createUpdateBoard();
+    const owner = await joinRoom(board.url, sessionCookie);
+    const peer = await joinRoom(board.url, sessionCookie);
+    const updateId = randomUUID();
+    const { bytes, nodeId } = makeNodeUpdate(owner.ready.snapshotBase64, 'Crash boundary node');
+    let peerMessages = 0;
+    peer.socket.on('message', () => {
+      peerMessages += 1;
+    });
+    try {
+      application
+        .get(DurableUpdateFailpointController)
+        .arm(DURABLE_UPDATE_FAILPOINTS.AFTER_COMMIT_BEFORE_ACK);
+      const closed = waitForClose(owner.socket);
+      owner.socket.send(
+        JSON.stringify({
+          event: 'update',
+          data: { updateId, updateBase64: Buffer.from(bytes).toString('base64') },
+        }),
+      );
+      await expect(closed).resolves.toBe(CLOSE_ABNORMAL);
+      const rows = (await database.query(
+        `SELECT "seq"::text AS seq FROM "update_receipts"
+         WHERE "board_id" = $1 AND "update_id" = $2`,
+        [board.id, updateId],
+      )) as { seq: string }[];
+      expect(rows).toEqual([{ seq: '1' }]);
+      expect(peerMessages).toBe(0);
+      await closeWebSocket(peer.socket);
+
+      const resumed = await joinRoom(board.url, sessionCookie);
+      try {
+        expect(resumed.ready.latestSeq).toBe('1');
+        const document = new Y.Doc();
+        Y.applyUpdate(document, Buffer.from(resumed.ready.snapshotBase64, 'base64'));
+        expect(projectGraphDocument(document).nodes.map((node) => node.id)).toContain(nodeId);
+        document.destroy();
+        expect(await sendUpdate(resumed.socket, updateId, bytes)).toMatchObject({
+          event: SERVER_EVENT_NAMES.ACK,
+          data: { updateId, seq: '1' },
+        });
+        const counts = (await database.query(
+          `SELECT (SELECT count(*)::integer FROM "board_updates" WHERE "board_id" = $1) AS updates,
+                  (SELECT count(*)::integer FROM "update_receipts" WHERE "board_id" = $1) AS receipts`,
+          [board.id],
+        )) as { updates: number; receipts: number }[];
+        expect(counts[0]).toEqual({ updates: 1, receipts: 1 });
+      } finally {
+        await closeWebSocket(resumed.socket);
+      }
+    } finally {
+      await Promise.all([closeWebSocket(owner.socket), closeWebSocket(peer.socket)]);
+    }
+  });
+
+  it('rechecks archive under the board row lock after validation', async () => {
+    const board = await createUpdateBoard();
+    const owner = await joinRoom(board.url, sessionCookie);
+    try {
+      const { bytes } = makeNodeUpdate(owner.ready.snapshotBase64, 'Archived race node');
+      application
+        .get(DurableUpdateFailpointController)
+        .arm(DURABLE_UPDATE_FAILPOINTS.AFTER_VALIDATION_BEFORE_TRANSACTION, async () => {
+          await database.query(
+            'UPDATE "boards" SET "archived_at" = CURRENT_TIMESTAMP WHERE "id" = $1',
+            [board.id],
+          );
+        });
+      expect(await sendUpdate(owner.socket, randomUUID(), bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ERROR,
+        data: { code: ERROR_CODES.BOARD_ARCHIVED },
+      });
+      const rows = (await database.query(
+        `SELECT b."latest_seq"::text AS seq,
+                (SELECT count(*)::integer FROM "board_updates" WHERE "board_id" = $1) AS updates,
+                (SELECT count(*)::integer FROM "update_receipts" WHERE "board_id" = $1) AS receipts
+         FROM "boards" b WHERE b."id" = $1`,
+        [board.id],
+      )) as { seq: string; updates: number; receipts: number }[];
+      expect(rows[0]).toEqual({ seq: '0', updates: 0, receipts: 0 });
+      const room = await application.get(CollaborationRoomRegistry).reserve(board.id);
+      expect(room.room.latestSeq).toBe('0');
+      room.release();
+    } finally {
+      await closeWebSocket(owner.socket);
+    }
+  });
+
+  it('rejects a write when the session expires after ready', async () => {
+    const board = await createUpdateBoard();
+    const owner = await joinRoom(board.url, sessionCookie);
+    try {
+      const { bytes } = makeNodeUpdate(owner.ready.snapshotBase64, 'Expired session node');
+      await database.query('UPDATE "session" SET "expiresAt" = $1 WHERE "userId" = $2', [
+        new Date(0),
+        ownerId,
+      ]);
+      expect(await sendUpdate(owner.socket, randomUUID(), bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ERROR,
+        data: { code: ERROR_CODES.UNAUTHENTICATED },
+      });
+      const rows = (await database.query(
+        'SELECT latest_seq::text AS seq FROM "boards" WHERE id = $1',
+        [board.id],
+      )) as { seq: string }[];
+      expect(rows[0]!.seq).toBe('0');
+    } finally {
+      await closeWebSocket(owner.socket);
+    }
   });
 });

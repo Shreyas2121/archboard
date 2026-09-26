@@ -4,6 +4,8 @@ import type { Duplex } from 'node:stream';
 
 import {
   CLIENT_EVENT_NAMES,
+  CONTENT_UPDATE_BURST,
+  CONTENT_UPDATES_PER_SECOND,
   ERROR_CODES,
   GRAPH_SCHEMA_VERSION,
   HELLO_TIMEOUT_MS,
@@ -28,17 +30,26 @@ import { WebSocketGateway, WebSocketServer as NestWebSocketServer } from '@nestj
 import type { OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
 import WebSocket from 'ws';
 import type { RawData, WebSocketServer } from 'ws';
+import { fromNodeHeaders } from 'better-auth/node';
 import * as Y from 'yjs';
 
 import { BoardPermissionService } from '../../../boards/application/index.js';
+import { AUTH_SESSION_LOOKUP, type AuthSessionLookup } from '../../../auth/application/index.js';
+import { CollaborationUpdateService } from '../../application/collaboration-update-service.js';
+import {
+  DurableUpdateRejectedError,
+  InjectedPostCommitCrashError,
+} from '../../application/durable-update.js';
 import {
   CollaborationRoomRegistry,
   RoomAdmissionError,
   type RoomReservation,
 } from '../../application/room-registry.js';
 import { RoomLoadError } from '../room/postgres-room-loader.js';
+import { ValidationWorkerError } from '../validation-worker/index.js';
 
 const CLOSE_POLICY_VIOLATION = 1008;
+const MILLISECONDS_PER_SECOND = 1_000;
 const READY_LIMITS = {
   maxClientUpdateBytes: MAX_CLIENT_UPDATE_BYTES,
   maxEncodedYjsStateBytes: MAX_ENCODED_YJS_STATE_BYTES,
@@ -59,12 +70,17 @@ interface ConnectionState extends AuthorizedBoardSocket {
   readonly connectionId: string;
   readonly helloDeadline: NodeJS.Timeout;
   readonly liveness: NodeJS.Timeout;
+  readonly sessionHeaders: Headers;
   lastPongAt: number;
   joining: boolean;
   ready: boolean;
   closed: boolean;
+  updateInFlight: boolean;
+  updateTokens: number;
+  updateRefillAt: number;
   reservation?: RoomReservation;
   unsubscribe?: () => void;
+  deliverUpdate?: (update: { seq: string; updateBase64: string }) => void;
 }
 
 // The adapter creates a noServer ws instance; the authenticated upgrade broker matches dynamic IDs.
@@ -79,6 +95,8 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
   public constructor(
     @Inject(CollaborationRoomRegistry) private readonly rooms: CollaborationRoomRegistry,
     @Inject(BoardPermissionService) private readonly permissions: BoardPermissionService,
+    @Inject(AUTH_SESSION_LOOKUP) private readonly sessions: AuthSessionLookup,
+    @Inject(CollaborationUpdateService) private readonly updates: CollaborationUpdateService,
   ) {}
 
   public acceptUpgrade(
@@ -106,6 +124,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     const state: ConnectionState = {
       ...context,
       connectionId: randomUUID(),
+      sessionHeaders: fromNodeHeaders(request.headers),
       helloDeadline,
       liveness: setInterval(() => {
         if (Date.now() - state.lastPongAt > WS_PONG_TIMEOUT_MS) {
@@ -118,6 +137,9 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       joining: false,
       ready: false,
       closed: false,
+      updateInFlight: false,
+      updateTokens: CONTENT_UPDATE_BURST,
+      updateRefillAt: Date.now(),
     };
     helloDeadline.unref();
     state.liveness.unref();
@@ -177,12 +199,33 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       websocket.close(CLOSE_POLICY_VIOLATION, 'Hello already received');
       return;
     }
-    this.sendError(
-      websocket,
-      ERROR_CODES.SERVER_BUSY,
-      true,
-      message.event === CLIENT_EVENT_NAMES.UPDATE ? message.data.updateId : undefined,
+    if (message.event === CLIENT_EVENT_NAMES.UPDATE) {
+      if (!this.consumeUpdateBudget(state)) {
+        this.sendError(websocket, ERROR_CODES.RATE_LIMITED, true, message.data.updateId);
+        return;
+      }
+      if (state.updateInFlight) {
+        this.sendError(websocket, ERROR_CODES.SERVER_BUSY, true, message.data.updateId);
+        return;
+      }
+      state.updateInFlight = true;
+      void this.acceptUpdate(websocket, state, message.data.updateId, message.data.updateBase64);
+      return;
+    }
+    this.sendError(websocket, ERROR_CODES.SERVER_BUSY, true);
+  }
+
+  private consumeUpdateBudget(state: ConnectionState): boolean {
+    const now = Date.now();
+    state.updateTokens = Math.min(
+      CONTENT_UPDATE_BURST,
+      state.updateTokens +
+        ((now - state.updateRefillAt) * CONTENT_UPDATES_PER_SECOND) / MILLISECONDS_PER_SECOND,
     );
+    state.updateRefillAt = now;
+    if (state.updateTokens < 1) return false;
+    state.updateTokens -= 1;
+    return true;
   }
 
   private async join(websocket: WebSocket, state: ConnectionState): Promise<void> {
@@ -203,12 +246,14 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
           websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
           return;
         }
-        const subscription = reservation.room.subscribe((update) => {
+        const deliverUpdate = (update: { seq: string; updateBase64: string }) => {
           this.send(websocket, {
             event: SERVER_EVENT_NAMES.UPDATE,
             data: update,
           });
-        });
+        };
+        state.deliverUpdate = deliverUpdate;
+        const subscription = reservation.room.subscribe(deliverUpdate);
         state.unsubscribe = subscription.unsubscribe;
         const snapshotBase64 = Buffer.from(
           Y.encodeStateAsUpdate(reservation.room.document),
@@ -249,6 +294,56 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         code === ERROR_CODES.SERVER_BUSY || code === ERROR_CODES.ROOM_FULL,
       );
       websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
+    }
+  }
+
+  private async acceptUpdate(
+    websocket: WebSocket,
+    state: ConnectionState,
+    updateId: string,
+    updateBase64: string,
+  ): Promise<void> {
+    try {
+      const room = state.reservation?.room;
+      if (room === undefined) throw new Error('Room reservation missing.');
+      await room.run(async () => {
+        const session = await this.sessions.lookup(state.sessionHeaders);
+        if (session === null || session.userId !== state.userId) {
+          throw new DurableUpdateRejectedError(ERROR_CODES.UNAUTHENTICATED, 'Session unavailable.');
+        }
+        const bytes = Buffer.from(updateBase64, 'base64');
+        const result = await this.updates.accept(room, {
+          actorUserId: session.userId,
+          updateId,
+          updateBytes: bytes,
+        });
+        this.send(websocket, {
+          event: SERVER_EVENT_NAMES.ACK,
+          data: { updateId, seq: result.sequence },
+        });
+        if (!result.duplicate) {
+          room.publishCommittedUpdate({ seq: result.sequence, updateBase64 }, state.deliverUpdate);
+        }
+      });
+    } catch (error) {
+      if (error instanceof InjectedPostCommitCrashError) {
+        websocket.terminate();
+        return;
+      }
+      const code =
+        error instanceof DurableUpdateRejectedError || error instanceof ValidationWorkerError
+          ? error.code
+          : ERROR_CODES.PERSISTENCE_FAILED;
+      this.sendError(
+        websocket,
+        code,
+        code === ERROR_CODES.SERVER_BUSY || code === ERROR_CODES.PERSISTENCE_FAILED,
+        updateId,
+      );
+      if (code === ERROR_CODES.UNAUTHENTICATED)
+        websocket.close(CLOSE_POLICY_VIOLATION, 'Session unavailable');
+    } finally {
+      state.updateInFlight = false;
     }
   }
 

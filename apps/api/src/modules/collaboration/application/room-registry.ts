@@ -42,14 +42,35 @@ export class CollaborationRoom {
   private durable = true;
   private lastActivityAt: number;
   private readonly subscribers = new Set<RoomSubscriber>();
+  private currentDocument: Y.Doc;
+  private currentSequence: ServerSequence;
 
   public constructor(
     public readonly boardId: string,
-    public readonly document: Y.Doc,
-    public readonly latestSeq: ServerSequence,
+    document: Y.Doc,
+    latestSeq: ServerSequence,
     private readonly now: () => number,
   ) {
+    this.currentDocument = document;
+    this.currentSequence = latestSeq;
     this.lastActivityAt = now();
+  }
+
+  public get document(): Y.Doc {
+    return this.currentDocument;
+  }
+
+  public get latestSeq(): ServerSequence {
+    return this.currentSequence;
+  }
+
+  /** Called under the room queue only after the corresponding transaction commits. */
+  public installCommittedCandidate(candidate: Y.Doc, sequence: ServerSequence): void {
+    const previous = this.currentDocument;
+    this.currentDocument = candidate;
+    this.currentSequence = sequence;
+    this.lastActivityAt = this.now();
+    previous.destroy();
   }
 
   public get connectionCount(): number {
@@ -110,8 +131,12 @@ export class CollaborationRoom {
   }
 
   /** Called under the board queue only after a later durable update commits. */
-  public publishCommittedUpdate(update: BufferedRoomUpdate): void {
+  public publishCommittedUpdate(
+    update: BufferedRoomUpdate,
+    except?: (update: BufferedRoomUpdate) => void,
+  ): void {
     for (const subscriber of this.subscribers) {
+      if (subscriber.deliver === except) continue;
       if (subscriber.active) subscriber.deliver(update);
       else subscriber.pending.push(update);
     }
