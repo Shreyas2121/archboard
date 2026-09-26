@@ -174,6 +174,12 @@ export class CollaborationRoomRegistry {
     return this.rooms.get(boardId)?.connectionCount ?? 0;
   }
 
+  /** Queue a committed access transition only when a room is already open. */
+  public async runIfActive(boardId: string, work: () => Promise<void>): Promise<void> {
+    const room = this.rooms.get(boardId) ?? (await this.opening.get(boardId));
+    if (room !== undefined) await room.run(work);
+  }
+
   public async reserve(boardId: string): Promise<RoomReservation> {
     let room = this.rooms.get(boardId);
     if (room === undefined) {

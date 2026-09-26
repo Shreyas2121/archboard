@@ -164,6 +164,37 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     this.connections.delete(websocket);
   }
 
+  /** Called after a board access transaction commits; the room queue orders socket state with updates. */
+  public async accessChanged(boardId: string, userId?: string): Promise<void> {
+    const affected = [...this.connections].filter(
+      ([, state]) => state.boardId === boardId && (userId === undefined || state.userId === userId),
+    );
+    if (affected.length === 0) return;
+    try {
+      await this.rooms.runIfActive(boardId, async () => {
+        for (const [websocket, state] of affected) {
+          if (state.closed || !state.ready) continue;
+          const decision = await this.permissions.read(boardId, state.userId);
+          if (!decision.allowed) {
+            this.send(websocket, {
+              event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
+              data: { role: null, archived: false },
+            });
+            websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
+          } else {
+            this.send(websocket, {
+              event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
+              data: { role: decision.role, archived: decision.board.archivedAt !== null },
+            });
+          }
+        }
+      });
+    } catch {
+      // A failed authority refresh must fail closed without changing the committed REST result.
+      for (const [websocket] of affected) websocket.terminate();
+    }
+  }
+
   private onMessage(
     websocket: WebSocket,
     state: ConnectionState,

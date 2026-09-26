@@ -79,9 +79,17 @@ export class AppModule {
         },
         {
           provide: BoardService,
-          inject: [DataSource, BoardPermissionService],
-          useFactory: (dataSource: DataSource, permissions: BoardPermissionService) =>
-            new BoardService(new PostgresBoardPersistence(dataSource), permissions),
+          inject: [DataSource, BoardPermissionService, CollaborationGateway],
+          useFactory: (
+            dataSource: DataSource,
+            permissions: BoardPermissionService,
+            gateway: CollaborationGateway,
+          ) =>
+            new BoardService(
+              new PostgresBoardPersistence(dataSource),
+              permissions,
+              (boardId, userId) => gateway.accessChanged(boardId, userId),
+            ),
         },
         {
           provide: InviteService,

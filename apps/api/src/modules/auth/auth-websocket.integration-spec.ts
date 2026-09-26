@@ -27,6 +27,7 @@ import * as Y from 'yjs';
 import { AppModule } from '../../app.module.js';
 import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
 import { BoardEntity } from '../boards/infrastructure/entities/board.entity.js';
+import { BoardService } from '../boards/application/board-service.js';
 import { createEmptyBoardSnapshot } from '../boards/infrastructure/empty-board-snapshot.js';
 import { BoardSnapshotEntity } from '../collaboration/infrastructure/entities/board-snapshot.entity.js';
 import { CollaborationRoomRegistry } from '../collaboration/application/room-registry.js';
@@ -45,6 +46,9 @@ const INVALID_FRONTEND_ORIGIN = 'http://attacker.example';
 const AUTH_WEBSOCKET_INTEGRATION_TIMEOUT_MS = 60_000;
 const CLIENT_EVENT_TIMEOUT_MS = 10_000;
 const NO_EARLY_MESSAGE_WINDOW_MS = 100;
+const COMMIT_POLL_ATTEMPTS = 100;
+const COMMIT_POLL_INTERVAL_MS = 10;
+const ARCHIVED_BOARD_VERSION = 2;
 const CLOSE_POLICY_VIOLATION = 1008;
 const CLOSE_MESSAGE_TOO_BIG = 1009;
 const CLOSE_ABNORMAL = 1006;
@@ -103,6 +107,23 @@ function waitForMessage(websocket: WebSocket): Promise<RawData> {
       resolve(data);
     });
     websocket.once('error', reject);
+  });
+}
+
+function waitForEvent(websocket: WebSocket, event: string) {
+  return new Promise<ReturnType<typeof serverMessageSchema.parse>>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      websocket.off('message', onMessage);
+      reject(new Error(`Timed out waiting for ${event}.`));
+    }, CLIENT_EVENT_TIMEOUT_MS);
+    const onMessage = (raw: RawData) => {
+      const message = serverMessageSchema.parse(JSON.parse(raw.toString()));
+      if (message.event !== event) return;
+      clearTimeout(timeout);
+      websocket.off('message', onMessage);
+      resolve(message);
+    };
+    websocket.on('message', onMessage);
   });
 }
 
@@ -382,6 +403,23 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
       );
     }
     return { id, url: websocketUrl.replace(boardId, id) };
+  }
+
+  async function changeArchiveOverHttp(
+    boardId: string,
+    action: 'archive' | 'restore',
+    expectedVersion: number,
+  ) {
+    const response = await fetch(`${authUrl}/api/v1/boards/${boardId}/${action}`, {
+      method: 'POST',
+      headers: {
+        origin: ALLOWED_FRONTEND_ORIGIN,
+        cookie: sessionCookie,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ expectedVersion }),
+    });
+    expect(response.status).toBe(HTTP_OK);
   }
 
   it('preserves the session cookie and opens from the exact credentialed frontend origin', async () => {
@@ -829,6 +867,321 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
       room.release();
     } finally {
       await closeWebSocket(owner.socket);
+    }
+  });
+
+  it('keeps archived rooms readable, freezes writes, and resumes after restore', async () => {
+    const board = await createUpdateBoard(true);
+    const owner = await joinRoom(board.url, sessionCookie);
+    const viewer = await joinRoom(board.url, viewerCookie);
+    try {
+      const ownerChanged = waitForEvent(owner.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+      const viewerChanged = waitForEvent(viewer.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+      await changeArchiveOverHttp(board.id, 'archive', 1);
+      expect(await ownerChanged).toMatchObject({ data: { role: 'owner', archived: true } });
+      expect(await viewerChanged).toMatchObject({ data: { role: 'viewer', archived: true } });
+
+      const archivedReader = await joinRoom(board.url, viewerCookie);
+      try {
+        expect(archivedReader.ready.role).toBe('viewer');
+      } finally {
+        await closeWebSocket(archivedReader.socket);
+      }
+      const { bytes } = makeNodeUpdate(owner.ready.snapshotBase64, 'Archived write');
+      expect(await sendUpdate(owner.socket, randomUUID(), bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ERROR,
+        data: { code: ERROR_CODES.BOARD_ARCHIVED },
+      });
+      const restored = waitForEvent(owner.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+      await changeArchiveOverHttp(board.id, 'restore', ARCHIVED_BOARD_VERSION);
+      expect(await restored).toMatchObject({ data: { role: 'owner', archived: false } });
+      expect(await sendUpdate(owner.socket, randomUUID(), bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+        data: { seq: '1' },
+      });
+    } finally {
+      await Promise.all([closeWebSocket(owner.socket), closeWebSocket(viewer.socket)]);
+    }
+  });
+
+  it('updates an editor role and closes a removed member after commit', async () => {
+    const board = await createUpdateBoard(true);
+    await application
+      .get(BoardService)
+      .changeMemberRole(ownerId, board.id, viewerId, { role: 'editor' });
+    const editor = await joinRoom(board.url, viewerCookie);
+    try {
+      expect(editor.ready.role).toBe('editor');
+      const demoted = waitForEvent(editor.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+      await application
+        .get(BoardService)
+        .changeMemberRole(ownerId, board.id, viewerId, { role: 'viewer' });
+      expect(await demoted).toMatchObject({ data: { role: 'viewer', archived: false } });
+      const { bytes } = makeNodeUpdate(editor.ready.snapshotBase64, 'Demoted write');
+      expect(await sendUpdate(editor.socket, randomUUID(), bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ERROR,
+        data: { code: ERROR_CODES.FORBIDDEN },
+      });
+      const removed = waitForEvent(editor.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+      const closed = waitForClose(editor.socket);
+      await application.get(BoardService).removeMember(ownerId, board.id, viewerId);
+      expect(await removed).toMatchObject({ data: { role: null, archived: false } });
+      await expect(closed).resolves.toBe(CLOSE_POLICY_VIOLATION);
+      await expect(
+        rejectedUpgradeStatus(board.url, websocketOptions(ALLOWED_FRONTEND_ORIGIN, viewerCookie)),
+      ).resolves.toBe(HTTP_NOT_FOUND);
+      const rows = (await database.query(
+        `SELECT b.latest_seq::text AS seq,
+                (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+                (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts
+         FROM boards b WHERE b.id = $1`,
+        [board.id],
+      )) as { seq: string; updates: number; receipts: number }[];
+      expect(rows[0]).toEqual({ seq: '0', updates: 0, receipts: 0 });
+    } finally {
+      await closeWebSocket(editor.socket);
+    }
+  });
+
+  it('rejects an update when archive commits while validation is paused', async () => {
+    const board = await createUpdateBoard();
+    const owner = await joinRoom(board.url, sessionCookie);
+    let release!: () => void;
+    let reached!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const atBarrier = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    try {
+      const { bytes } = makeNodeUpdate(owner.ready.snapshotBase64, 'Losing archive race');
+      application
+        .get(DurableUpdateFailpointController)
+        .arm(DURABLE_UPDATE_FAILPOINTS.AFTER_VALIDATION_BEFORE_TRANSACTION, async () => {
+          reached();
+          await held;
+        });
+      const rejected = waitForEvent(owner.socket, SERVER_EVENT_NAMES.ERROR);
+      owner.socket.send(
+        JSON.stringify({
+          event: 'update',
+          data: {
+            updateId: randomUUID(),
+            updateBase64: Buffer.from(bytes).toString('base64'),
+          },
+        }),
+      );
+      await atBarrier;
+      const changed = waitForEvent(owner.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+      const archive = application
+        .get(BoardService)
+        .archive(ownerId, board.id, { expectedVersion: 1 });
+      for (let attempt = 0; attempt < COMMIT_POLL_ATTEMPTS; attempt += 1) {
+        const rows = (await database.query('SELECT archived_at FROM boards WHERE id = $1', [
+          board.id,
+        ])) as { archived_at: Date | null }[];
+        if (rows[0]?.archived_at !== null) break;
+        await new Promise((resolve) => setTimeout(resolve, COMMIT_POLL_INTERVAL_MS));
+      }
+      const archived = (await database.query('SELECT archived_at FROM boards WHERE id = $1', [
+        board.id,
+      ])) as { archived_at: Date | null }[];
+      expect(archived[0]?.archived_at).not.toBeNull();
+      release();
+      await archive;
+      expect(await changed).toMatchObject({ data: { archived: true } });
+      expect(await rejected).toMatchObject({ data: { code: ERROR_CODES.BOARD_ARCHIVED } });
+      const rows = (await database.query(
+        `SELECT b.latest_seq::text AS seq,
+                (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+                (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts
+         FROM boards b WHERE b.id = $1`,
+        [board.id],
+      )) as { seq: string; updates: number; receipts: number }[];
+      expect(rows[0]).toEqual({ seq: '0', updates: 0, receipts: 0 });
+    } finally {
+      release();
+      await closeWebSocket(owner.socket);
+    }
+  });
+
+  it('commits an update before a waiting archive and rejects the next update', async () => {
+    const board = await createUpdateBoard();
+    const owner = await joinRoom(board.url, sessionCookie);
+    let release!: () => void;
+    let reached!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const atBarrier = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    try {
+      const { bytes } = makeNodeUpdate(owner.ready.snapshotBase64, 'Winning archive race');
+      application
+        .get(DurableUpdateFailpointController)
+        .arm(DURABLE_UPDATE_FAILPOINTS.DATABASE_COMMIT, async () => {
+          reached();
+          await held;
+        });
+      const acknowledged = waitForEvent(owner.socket, SERVER_EVENT_NAMES.ACK);
+      owner.socket.send(
+        JSON.stringify({
+          event: 'update',
+          data: {
+            updateId: randomUUID(),
+            updateBase64: Buffer.from(bytes).toString('base64'),
+          },
+        }),
+      );
+      await atBarrier;
+      const changed = waitForEvent(owner.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+      const archive = application
+        .get(BoardService)
+        .archive(ownerId, board.id, { expectedVersion: 1 });
+      release();
+      expect(await acknowledged).toMatchObject({ data: { seq: '1' } });
+      await archive;
+      expect(await changed).toMatchObject({ data: { archived: true } });
+      const later = makeNodeUpdate(owner.ready.snapshotBase64, 'Post archive write');
+      expect(await sendUpdate(owner.socket, randomUUID(), later.bytes)).toMatchObject({
+        data: { code: ERROR_CODES.BOARD_ARCHIVED },
+      });
+      const rows = (await database.query(
+        `SELECT b.latest_seq::text AS seq,
+                (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+                (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts
+         FROM boards b WHERE b.id = $1`,
+        [board.id],
+      )) as { seq: string; updates: number; receipts: number }[];
+      expect(rows[0]).toEqual({ seq: '1', updates: 1, receipts: 1 });
+    } finally {
+      release();
+      await closeWebSocket(owner.socket);
+    }
+  });
+
+  it('rejects an editor update when removal commits during validation', async () => {
+    const board = await createUpdateBoard(true);
+    await application
+      .get(BoardService)
+      .changeMemberRole(ownerId, board.id, viewerId, { role: 'editor' });
+    const editor = await joinRoom(board.url, viewerCookie);
+    let release!: () => void;
+    let reached!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const atBarrier = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    try {
+      const { bytes } = makeNodeUpdate(editor.ready.snapshotBase64, 'Removed editor write');
+      application
+        .get(DurableUpdateFailpointController)
+        .arm(DURABLE_UPDATE_FAILPOINTS.AFTER_VALIDATION_BEFORE_TRANSACTION, async () => {
+          reached();
+          await held;
+        });
+      const rejected = waitForEvent(editor.socket, SERVER_EVENT_NAMES.ERROR);
+      const changed = waitForEvent(editor.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+      const closed = waitForClose(editor.socket);
+      editor.socket.send(
+        JSON.stringify({
+          event: 'update',
+          data: {
+            updateId: randomUUID(),
+            updateBase64: Buffer.from(bytes).toString('base64'),
+          },
+        }),
+      );
+      await atBarrier;
+      const removal = application.get(BoardService).removeMember(ownerId, board.id, viewerId);
+      for (let attempt = 0; attempt < COMMIT_POLL_ATTEMPTS; attempt += 1) {
+        const rows = (await database.query(
+          'SELECT count(*)::integer AS count FROM board_members WHERE board_id = $1 AND user_id = $2',
+          [board.id, viewerId],
+        )) as { count: number }[];
+        if (rows[0]?.count === 0) break;
+        await new Promise((resolve) => setTimeout(resolve, COMMIT_POLL_INTERVAL_MS));
+      }
+      const members = (await database.query(
+        'SELECT count(*)::integer AS count FROM board_members WHERE board_id = $1 AND user_id = $2',
+        [board.id, viewerId],
+      )) as { count: number }[];
+      expect(members[0]?.count).toBe(0);
+      release();
+      expect(await rejected).toMatchObject({ data: { code: ERROR_CODES.NOT_FOUND } });
+      await removal;
+      expect(await changed).toMatchObject({ data: { role: null } });
+      await expect(closed).resolves.toBe(CLOSE_POLICY_VIOLATION);
+      const rows = (await database.query(
+        `SELECT b.latest_seq::text AS seq,
+                (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+                (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts
+         FROM boards b WHERE b.id = $1`,
+        [board.id],
+      )) as { seq: string; updates: number; receipts: number }[];
+      expect(rows[0]).toEqual({ seq: '0', updates: 0, receipts: 0 });
+    } finally {
+      release();
+      await closeWebSocket(editor.socket);
+    }
+  });
+
+  it('commits an editor update before a waiting removal, then closes the socket', async () => {
+    const board = await createUpdateBoard(true);
+    await application
+      .get(BoardService)
+      .changeMemberRole(ownerId, board.id, viewerId, { role: 'editor' });
+    const editor = await joinRoom(board.url, viewerCookie);
+    let release!: () => void;
+    let reached!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const atBarrier = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    try {
+      const { bytes } = makeNodeUpdate(editor.ready.snapshotBase64, 'Last editor write');
+      application
+        .get(DurableUpdateFailpointController)
+        .arm(DURABLE_UPDATE_FAILPOINTS.DATABASE_COMMIT, async () => {
+          reached();
+          await held;
+        });
+      const acknowledged = waitForEvent(editor.socket, SERVER_EVENT_NAMES.ACK);
+      const changed = waitForEvent(editor.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+      const closed = waitForClose(editor.socket);
+      editor.socket.send(
+        JSON.stringify({
+          event: 'update',
+          data: {
+            updateId: randomUUID(),
+            updateBase64: Buffer.from(bytes).toString('base64'),
+          },
+        }),
+      );
+      await atBarrier;
+      const removal = application.get(BoardService).removeMember(ownerId, board.id, viewerId);
+      release();
+      expect(await acknowledged).toMatchObject({ data: { seq: '1' } });
+      await removal;
+      expect(await changed).toMatchObject({ data: { role: null } });
+      await expect(closed).resolves.toBe(CLOSE_POLICY_VIOLATION);
+      const rows = (await database.query(
+        `SELECT b.latest_seq::text AS seq,
+                (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+                (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts
+         FROM boards b WHERE b.id = $1`,
+        [board.id],
+      )) as { seq: string; updates: number; receipts: number }[];
+      expect(rows[0]).toEqual({ seq: '1', updates: 1, receipts: 1 });
+    } finally {
+      release();
+      await closeWebSocket(editor.socket);
     }
   });
 
