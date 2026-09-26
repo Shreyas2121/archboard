@@ -5,6 +5,8 @@ import {
   MAX_ACTIVE_ROOMS,
   MAX_BOARD_CONNECTIONS,
   ROOM_IDLE_EVICTION_MS,
+  SNAPSHOT_COMPACTION_INTERVAL_MS,
+  SNAPSHOT_COMPACTION_UPDATES,
 } from '@archboard/contracts';
 import { createGraphDocument } from '@archboard/document-model';
 
@@ -13,7 +15,7 @@ import { CollaborationRoomRegistry, type LoadedRoom, type RoomLoader } from './r
 const TWO_RESERVATIONS = 2;
 
 function loaded(): LoadedRoom {
-  return { document: createGraphDocument(), latestSeq: '0' };
+  return { document: createGraphDocument(), latestSeq: '0', compactedSeq: '0' };
 }
 
 describe('bounded collaboration room registry', () => {
@@ -78,6 +80,19 @@ describe('bounded collaboration room registry', () => {
     for (const reservation of [...reservations, ...others]) reservation.release();
   });
 
+  it('evicts eligible idle rooms before applying the active-room admission cap', async () => {
+    let now = 0;
+    const registry = new CollaborationRoomRegistry({ load: async () => loaded() }, () => now);
+    const reservations = await Promise.all(
+      Array.from({ length: MAX_ACTIVE_ROOMS }, () => registry.reserve(randomUUID())),
+    );
+    for (const reservation of reservations) reservation.release();
+    now = ROOM_IDLE_EVICTION_MS;
+    const next = await registry.reserve(randomUUID());
+    expect(registry.activeRoomCount).toBe(1);
+    next.release();
+  });
+
   it('serializes work and evicts only fully durable, idle rooms with no queued work', async () => {
     let now = 0;
     const registry = new CollaborationRoomRegistry({ load: async () => loaded() }, () => now);
@@ -129,6 +144,30 @@ describe('bounded collaboration room registry', () => {
       room.publishCommittedUpdate({ seq: '2', updateBase64: 'Ag==' });
     });
     expect(delivered).toEqual(['ready:0', '1', '2']);
+    release();
+  });
+
+  it('compacts after the update threshold or dirty interval and retries a failed transaction', async () => {
+    let now = 0;
+    const registry = new CollaborationRoomRegistry({ load: async () => loaded() }, () => now);
+    const { room, release } = await registry.reserve(randomUUID());
+    const sequences: string[] = [];
+    const compactor = {
+      compact: async (_boardId: string, sequence: string) => {
+        sequences.push(sequence);
+        if (sequences.length === 1) throw new Error('Database unavailable.');
+      },
+    };
+    room.installCommittedCandidate(createGraphDocument(), '1');
+    expect(await registry.compactDue(compactor)).toBe(0);
+    now = SNAPSHOT_COMPACTION_INTERVAL_MS;
+    await expect(registry.compactDue(compactor)).rejects.toThrow('Database unavailable.');
+    expect(await registry.compactDue(compactor)).toBe(1);
+    expect(sequences).toEqual(['1', '1']);
+    expect(await registry.compactDue(compactor)).toBe(0);
+    room.installCommittedCandidate(createGraphDocument(), String(SNAPSHOT_COMPACTION_UPDATES + 1));
+    expect(await registry.compactDue(compactor)).toBe(1);
+    expect(sequences).toEqual(['1', '1', String(SNAPSHOT_COMPACTION_UPDATES + 1)]);
     release();
   });
 });

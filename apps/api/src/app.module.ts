@@ -13,9 +13,14 @@ import { InviteService } from './modules/boards/application/invite-service.js';
 import { InvitesController } from './modules/boards/invites.controller.js';
 import { PostgresInvitePersistence } from './modules/boards/infrastructure/postgres-invite-persistence.js';
 import { CollaborationRoomRegistry } from './modules/collaboration/application/room-registry.js';
+import { RoomMaintenanceService } from './modules/collaboration/application/room-maintenance.service.js';
 import { CollaborationUpdateService } from './modules/collaboration/application/collaboration-update-service.js';
 import { DurableUpdateFailpointController } from './modules/collaboration/application/durable-update.js';
 import { PostgresRoomLoader } from './modules/collaboration/infrastructure/room/postgres-room-loader.js';
+import {
+  CompactionFailpointController,
+  PostgresRoomCompactor,
+} from './modules/collaboration/infrastructure/room/postgres-room-compactor.js';
 import { ValidationWorkerPool } from './modules/collaboration/infrastructure/validation-worker/index.js';
 import {
   WEBSOCKET_API_CONFIG,
@@ -49,6 +54,9 @@ export class AppModule {
         CollaborationGateway,
         CollaborationUpgradeService,
         PostgresRoomLoader,
+        CompactionFailpointController,
+        PostgresRoomCompactor,
+        RoomMaintenanceService,
         DurableUpdateFailpointController,
         { provide: ValidationWorkerPool, useFactory: () => new ValidationWorkerPool() },
         {

@@ -132,7 +132,7 @@ export class PostgresRoomLoader implements RoomLoader {
       if (error instanceof RoomLoadError) throw error;
       throw new RoomLoadError(ERROR_CODES.DOCUMENT_INVALID);
     }
-    return { document, latestSeq };
+    return { document, latestSeq, compactedSeq: throughSeq };
   }
 
   private sequence(value: unknown): ServerSequence {

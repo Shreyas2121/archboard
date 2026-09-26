@@ -8,6 +8,7 @@ import { DataSource } from 'typeorm';
 import { BoardEntity } from '../../modules/boards/infrastructure/entities/board.entity.js';
 import { BoardSnapshotEntity } from '../../modules/collaboration/infrastructure/entities/board-snapshot.entity.js';
 import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
+import { RetainCompactedUpdateReceipts1790426800000 } from '../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
 import { loadApiConfig } from '../config/index.js';
 import {
   CollaborationWriterLockService,
@@ -46,7 +47,10 @@ function integrationDataSource(schemaName: string): DataSource {
     url: config.databaseDirectUrl,
     schema: schemaName,
     entities: [...DATABASE_ENTITIES],
-    migrations: [InitialDatabaseFoundation1789300000000],
+    migrations: [
+      InitialDatabaseFoundation1789300000000,
+      RetainCompactedUpdateReceipts1790426800000,
+    ],
     synchronize: false,
     migrationsRun: false,
     extra: { max: config.typeormPoolMax, options: `-c search_path=${schemaName}` },

@@ -3,10 +3,12 @@ import {
   MAX_ACTIVE_ROOMS,
   MAX_BOARD_CONNECTIONS,
   ROOM_IDLE_EVICTION_MS,
+  SNAPSHOT_COMPACTION_INTERVAL_MS,
+  SNAPSHOT_COMPACTION_UPDATES,
   type ErrorCode,
   type ServerSequence,
 } from '@archboard/contracts';
-import type * as Y from 'yjs';
+import * as Y from 'yjs';
 
 export interface BufferedRoomUpdate {
   readonly seq: ServerSequence;
@@ -22,10 +24,15 @@ interface RoomSubscriber {
 export interface LoadedRoom {
   readonly document: Y.Doc;
   readonly latestSeq: ServerSequence;
+  readonly compactedSeq: ServerSequence;
 }
 
 export interface RoomLoader {
   load(boardId: string): Promise<LoadedRoom>;
+}
+
+export interface RoomCompactor {
+  compact(boardId: string, throughSeq: ServerSequence, state: Uint8Array): Promise<void>;
 }
 
 export class RoomAdmissionError extends Error {
@@ -44,15 +51,20 @@ export class CollaborationRoom {
   private readonly subscribers = new Set<RoomSubscriber>();
   private currentDocument: Y.Doc;
   private currentSequence: ServerSequence;
+  private compactedSequence: ServerSequence;
+  private lastCompactedAt: number;
 
   public constructor(
     public readonly boardId: string,
     document: Y.Doc,
     latestSeq: ServerSequence,
+    compactedSeq: ServerSequence,
     private readonly now: () => number,
   ) {
     this.currentDocument = document;
     this.currentSequence = latestSeq;
+    this.compactedSequence = compactedSeq;
+    this.lastCompactedAt = now();
     this.lastActivityAt = now();
   }
 
@@ -110,6 +122,26 @@ export class CollaborationRoom {
     this.durable = durable;
   }
 
+  public compactionDue(now: number): boolean {
+    const pending = BigInt(this.currentSequence) - BigInt(this.compactedSequence);
+    return (
+      pending > BigInt(0) &&
+      (pending >= BigInt(SNAPSHOT_COMPACTION_UPDATES) ||
+        now - this.lastCompactedAt >= SNAPSHOT_COMPACTION_INTERVAL_MS)
+    );
+  }
+
+  /** Called under the room queue after the snapshot transaction commits. */
+  public markCompacted(sequence: ServerSequence): void {
+    this.compactedSequence = sequence;
+    this.lastCompactedAt = this.now();
+  }
+
+  public destroy(): void {
+    this.currentDocument.destroy();
+    this.subscribers.clear();
+  }
+
   /** Register before sending ready; activate only after ready is handed to the socket. */
   public subscribe(deliver: (update: BufferedRoomUpdate) => void): {
     activate(): void;
@@ -160,6 +192,7 @@ export interface RoomReservation {
 export class CollaborationRoomRegistry {
   private readonly rooms = new Map<string, CollaborationRoom>();
   private readonly opening = new Map<string, Promise<CollaborationRoom>>();
+  private readonly compacting = new Set<CollaborationRoom>();
 
   public constructor(
     private readonly loader: RoomLoader,
@@ -185,13 +218,20 @@ export class CollaborationRoomRegistry {
     if (room === undefined) {
       let pending = this.opening.get(boardId);
       if (pending === undefined) {
+        this.evictIdle();
         if (this.rooms.size + this.opening.size >= MAX_ACTIVE_ROOMS) {
           throw new RoomAdmissionError(ERROR_CODES.SERVER_BUSY);
         }
         pending = this.loader
           .load(boardId)
-          .then(({ document, latestSeq }) => {
-            const opened = new CollaborationRoom(boardId, document, latestSeq, this.now);
+          .then(({ document, latestSeq, compactedSeq }) => {
+            const opened = new CollaborationRoom(
+              boardId,
+              document,
+              latestSeq,
+              compactedSeq,
+              this.now,
+            );
             this.rooms.set(boardId, opened);
             return opened;
           })
@@ -220,8 +260,31 @@ export class CollaborationRoomRegistry {
     for (const [boardId, room] of this.rooms) {
       if (!room.isIdle(now)) continue;
       this.rooms.delete(boardId);
+      room.destroy();
       evicted += 1;
     }
     return evicted;
+  }
+
+  public async compactDue(compactor: RoomCompactor): Promise<number> {
+    const now = this.now();
+    const tasks: Promise<void>[] = [];
+    for (const room of this.rooms.values()) {
+      if (!room.compactionDue(now) || this.compacting.has(room)) continue;
+      this.compacting.add(room);
+      tasks.push(
+        room
+          .run(async () => {
+            const sequence = room.latestSeq;
+            await compactor.compact(room.boardId, sequence, Y.encodeStateAsUpdate(room.document));
+            room.markCompacted(sequence);
+          })
+          .finally(() => this.compacting.delete(room)),
+      );
+    }
+    const results = await Promise.allSettled(tasks);
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+    return tasks.length;
   }
 }

@@ -26,11 +26,15 @@ import * as Y from 'yjs';
 
 import { AppModule } from '../../app.module.js';
 import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
+import { RetainCompactedUpdateReceipts1790426800000 } from '../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
 import { BoardEntity } from '../boards/infrastructure/entities/board.entity.js';
 import { BoardService } from '../boards/application/board-service.js';
 import { createEmptyBoardSnapshot } from '../boards/infrastructure/empty-board-snapshot.js';
 import { BoardSnapshotEntity } from '../collaboration/infrastructure/entities/board-snapshot.entity.js';
+import { BoardUpdateEntity } from '../collaboration/infrastructure/entities/board-update.entity.js';
 import { CollaborationRoomRegistry } from '../collaboration/application/room-registry.js';
+import { PostgresRoomCompactor } from '../collaboration/infrastructure/room/postgres-room-compactor.js';
+import { PostgresRoomLoader } from '../collaboration/infrastructure/room/postgres-room-loader.js';
 import {
   DURABLE_UPDATE_FAILPOINTS,
   DurableUpdateFailpointController,
@@ -255,7 +259,10 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
       url,
       schema: SCHEMA,
       entities: [...DATABASE_ENTITIES],
-      migrations: [InitialDatabaseFoundation1789300000000],
+      migrations: [
+        InitialDatabaseFoundation1789300000000,
+        RetainCompactedUpdateReceipts1790426800000,
+      ],
       synchronize: false,
       migrationsRun: false,
       extra: { options: `-c search_path=${SCHEMA}` },
@@ -699,6 +706,54 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
       expect(counts[0]).toEqual({ updates: 1, receipts: 1, seq: '1' });
     } finally {
       await Promise.all([closeWebSocket(owner.socket), closeWebSocket(peer.socket)]);
+    }
+  });
+
+  it('returns a delayed duplicate receipt after compaction deleted the update row', async () => {
+    const board = await createUpdateBoard();
+    const owner = await joinRoom(board.url, sessionCookie);
+    try {
+      const updateId = randomUUID();
+      const { bytes, nodeId } = makeNodeUpdate(owner.ready.snapshotBase64, 'Compacted node');
+      expect(await sendUpdate(owner.socket, updateId, bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+        data: { seq: '1' },
+      });
+      const reservation = await application.get(CollaborationRoomRegistry).reserve(board.id);
+      try {
+        await reservation.room.run(async () => {
+          const sequence = reservation.room.latestSeq;
+          await application
+            .get(PostgresRoomCompactor)
+            .compact(board.id, sequence, Y.encodeStateAsUpdate(reservation.room.document));
+          reservation.room.markCompacted(sequence);
+        });
+      } finally {
+        reservation.release();
+      }
+      const counts = (await database.query(
+        `SELECT s.through_seq::text AS snapshot_seq,
+                (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+                (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts
+         FROM board_snapshots s WHERE s.board_id = $1`,
+        [board.id],
+      )) as { snapshot_seq: string; updates: number; receipts: number }[];
+      expect(counts[0]).toEqual({ snapshot_seq: '1', updates: 0, receipts: 1 });
+      const restarted = await new PostgresRoomLoader(database).load(board.id);
+      expect(restarted.latestSeq).toBe('1');
+      expect(projectGraphDocument(restarted.document).nodes.map((node) => node.id)).toContain(
+        nodeId,
+      );
+      restarted.document.destroy();
+      expect(await sendUpdate(owner.socket, updateId, bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+        data: { updateId, seq: '1' },
+      });
+      expect(await database.getRepository(BoardUpdateEntity).countBy({ boardId: board.id })).toBe(
+        0,
+      );
+    } finally {
+      await closeWebSocket(owner.socket);
     }
   });
 

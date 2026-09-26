@@ -15,12 +15,20 @@ import { DataSource } from 'typeorm';
 import * as Y from 'yjs';
 
 import { InitialDatabaseFoundation1789300000000 } from '../../../../migrations/1789300000000-InitialDatabaseFoundation.js';
+import { RetainCompactedUpdateReceipts1790426800000 } from '../../../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
 import { loadApiConfig } from '../../../../platform/config/index.js';
 import { DATABASE_ENTITIES } from '../../../../platform/database/database-entities.js';
 import { BoardEntity } from '../../../boards/infrastructure/entities/board.entity.js';
+import { CheckpointEntity } from '../../../boards/infrastructure/entities/checkpoint.entity.js';
 import { createEmptyBoardSnapshot } from '../../../boards/infrastructure/empty-board-snapshot.js';
 import { BoardSnapshotEntity } from '../entities/board-snapshot.entity.js';
 import { BoardUpdateEntity } from '../entities/board-update.entity.js';
+import { UpdateReceiptEntity } from '../entities/update-receipt.entity.js';
+import {
+  COMPACTION_FAILPOINTS,
+  CompactionFailpointController,
+  PostgresRoomCompactor,
+} from './postgres-room-compactor.js';
 import { PostgresRoomLoader } from './postgres-room-loader.js';
 
 const SCHEMA = `archboard_p402_${process.pid}`;
@@ -30,6 +38,7 @@ const NODE_WIDTH = 240;
 const NODE_HEIGHT = 140;
 const NEXT_SEQUENCE = '1';
 const GAP_SEQUENCE = '2';
+const SHA256_BYTES = 32;
 
 jest.setTimeout(TEST_TIMEOUT_MS);
 
@@ -83,7 +92,10 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
       url: settings.databaseDirectUrl,
       schema: SCHEMA,
       entities: [...DATABASE_ENTITIES],
-      migrations: [InitialDatabaseFoundation1789300000000],
+      migrations: [
+        InitialDatabaseFoundation1789300000000,
+        RetainCompactedUpdateReceipts1790426800000,
+      ],
       synchronize: false,
       migrationsRun: false,
       extra: { options: `-c search_path=${SCHEMA}` },
@@ -226,5 +238,114 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
     await expect(new PostgresRoomLoader(dataSource).load(boardId)).rejects.toMatchObject({
       code: ERROR_CODES.DOCUMENT_INVALID,
     });
+  });
+
+  it('atomically advances the snapshot and deletes covered updates while retaining receipts and checkpoints', async () => {
+    const update = await dataSource.getRepository(BoardUpdateEntity).findOneByOrFail({ boardId });
+    await dataSource.getRepository(UpdateReceiptEntity).insert({
+      boardId,
+      updateId: update.updateId,
+      actorUserId: OWNER,
+      payloadHash: Buffer.alloc(SHA256_BYTES),
+      sequence: NEXT_SEQUENCE,
+    });
+    await dataSource.getRepository(CheckpointEntity).insert({
+      boardId,
+      name: 'Before compaction',
+      createdBy: OWNER,
+      throughSeq: NEXT_SEQUENCE,
+      schemaVersion: GRAPH_SCHEMA_VERSION,
+      updateBytes: Buffer.from(Y.encodeStateAsUpdate(expected)),
+    });
+    const before = await new PostgresRoomLoader(dataSource).load(boardId);
+    const compactor = new PostgresRoomCompactor(dataSource, new CompactionFailpointController());
+    await compactor.compact(boardId, NEXT_SEQUENCE, Y.encodeStateAsUpdate(before.document));
+    const snapshot = await dataSource
+      .getRepository(BoardSnapshotEntity)
+      .findOneByOrFail({ boardId });
+    expect(snapshot.throughSeq).toBe(NEXT_SEQUENCE);
+    expect(snapshot.byteLength).toBe(snapshot.updateBytes.byteLength);
+    expect(await dataSource.getRepository(BoardUpdateEntity).countBy({ boardId })).toBe(0);
+    expect(await dataSource.getRepository(UpdateReceiptEntity).countBy({ boardId })).toBe(1);
+    expect(await dataSource.getRepository(CheckpointEntity).countBy({ boardId })).toBe(1);
+    const restarted = await new PostgresRoomLoader(dataSource).load(boardId);
+    expect(restarted.compactedSeq).toBe(NEXT_SEQUENCE);
+    expect(Y.encodeStateAsUpdate(restarted.document)).toEqual(
+      Y.encodeStateAsUpdate(before.document),
+    );
+    before.document.destroy();
+    restarted.document.destroy();
+  });
+
+  it.each([COMPACTION_FAILPOINTS.AFTER_SNAPSHOT_WRITE, COMPACTION_FAILPOINTS.AFTER_UPDATE_DELETE])(
+    'reconstructs the old snapshot/log pair after rollback at %s',
+    async (stage) => {
+      const failpoints = new CompactionFailpointController();
+      failpoints.arm(stage, async () => {
+        throw new Error('Injected compaction stop.');
+      });
+      const compactor = new PostgresRoomCompactor(dataSource, failpoints);
+      await expect(
+        compactor.compact(boardId, NEXT_SEQUENCE, Y.encodeStateAsUpdate(expected)),
+      ).rejects.toThrow('Injected compaction stop.');
+      const snapshot = await dataSource
+        .getRepository(BoardSnapshotEntity)
+        .findOneByOrFail({ boardId });
+      expect(snapshot.throughSeq).toBe('0');
+      expect(await dataSource.getRepository(BoardUpdateEntity).countBy({ boardId })).toBe(1);
+      const restarted = await new PostgresRoomLoader(dataSource).load(boardId);
+      expect(restarted.compactedSeq).toBe('0');
+      expect(Y.encodeStateAsUpdate(restarted.document)).toEqual(Y.encodeStateAsUpdate(expected));
+      restarted.document.destroy();
+    },
+  );
+
+  it('reconstructs the new pair after a stop immediately after compaction commit', async () => {
+    const failpoints = new CompactionFailpointController();
+    failpoints.arm(COMPACTION_FAILPOINTS.AFTER_COMMIT, async () => {
+      throw new Error('Injected post-commit stop.');
+    });
+    const compactor = new PostgresRoomCompactor(dataSource, failpoints);
+    await expect(
+      compactor.compact(boardId, NEXT_SEQUENCE, Y.encodeStateAsUpdate(expected)),
+    ).rejects.toThrow('Injected post-commit stop.');
+    const snapshot = await dataSource
+      .getRepository(BoardSnapshotEntity)
+      .findOneByOrFail({ boardId });
+    expect(snapshot.throughSeq).toBe(NEXT_SEQUENCE);
+    expect(await dataSource.getRepository(BoardUpdateEntity).countBy({ boardId })).toBe(0);
+    const restarted = await new PostgresRoomLoader(dataSource).load(boardId);
+    expect(Y.encodeStateAsUpdate(restarted.document)).toEqual(Y.encodeStateAsUpdate(expected));
+    restarted.document.destroy();
+  });
+
+  it('rolls back compaction if an unmigrated receipt cascade would delete receipts', async () => {
+    const update = await dataSource.getRepository(BoardUpdateEntity).findOneByOrFail({ boardId });
+    await dataSource.getRepository(UpdateReceiptEntity).insert({
+      boardId,
+      updateId: update.updateId,
+      actorUserId: OWNER,
+      payloadHash: Buffer.alloc(SHA256_BYTES),
+      sequence: NEXT_SEQUENCE,
+    });
+    const runner = dataSource.createQueryRunner();
+    await runner.connect();
+    const migration = new RetainCompactedUpdateReceipts1790426800000();
+    try {
+      await migration.down(runner);
+      const compactor = new PostgresRoomCompactor(dataSource, new CompactionFailpointController());
+      await expect(
+        compactor.compact(boardId, NEXT_SEQUENCE, Y.encodeStateAsUpdate(expected)),
+      ).rejects.toThrow('Compaction would remove durable update receipts.');
+      expect(
+        (await dataSource.getRepository(BoardSnapshotEntity).findOneByOrFail({ boardId }))
+          .throughSeq,
+      ).toBe('0');
+      expect(await dataSource.getRepository(BoardUpdateEntity).countBy({ boardId })).toBe(1);
+      expect(await dataSource.getRepository(UpdateReceiptEntity).countBy({ boardId })).toBe(1);
+    } finally {
+      await migration.up(runner);
+      await runner.release();
+    }
   });
 });
