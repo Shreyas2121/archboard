@@ -1,11 +1,15 @@
 export const SYNC_DATABASE_NAME = 'archboard-sync-client' as const;
-export const SYNC_DATABASE_VERSION = 1 as const;
+// IndexedDB schema version advances when durable sync stores are added.
+// eslint-disable-next-line @typescript-eslint/no-magic-numbers
+export const SYNC_DATABASE_VERSION = 2 as const;
 export const LOCAL_DEMO_USER_KEY = 'local-demo' as const;
 
 export const SYNC_STORE_NAMES = {
   LOCAL_SNAPSHOTS: 'localSnapshots',
   LOCAL_UPDATES: 'localUpdates',
   OUTBOX: 'outbox',
+  OUTBOX_RECEIPTS: 'outboxReceipts',
+  RECEIVED_STATE: 'receivedState',
   BOARD_CACHE: 'boardCache',
 } as const;
 

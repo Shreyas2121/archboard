@@ -20,16 +20,19 @@ import {
   projectGraphDocument,
 } from '@archboard/document-model';
 import { afterEach, describe, expect, it } from 'vitest';
-import { deleteDB } from 'idb';
+import { deleteDB, openDB } from 'idb';
 import * as Y from 'yjs';
 
 import {
   SYNC_DATABASE_NAME,
   SYNC_DATABASE_VERSION,
+  SYNC_INDEX_NAMES,
   SYNC_STORE_NAMES,
   UPDATE_HASH_ALGORITHM,
   LOCAL_SNAPSHOT_BYTE_THRESHOLD,
   LOCAL_SNAPSHOT_UPDATE_THRESHOLD,
+  LOCAL_UPDATE_DIRECTIONS,
+  OUTBOX_STATUSES,
 } from '../config/index.js';
 import { openSyncClientDatabase } from './database.js';
 import { INDEXEDDB_FAILPOINTS, IndexedDbFailpointController } from './failpoints.js';
@@ -58,6 +61,7 @@ const SECOND_SERVER_SEQUENCE = '2';
 const TWO_LOG_RECORDS = 2;
 const EXPECTED_NAMESPACE_KEY_COUNT = 5;
 const ONE_BELOW_SNAPSHOT_THRESHOLD = LOCAL_SNAPSHOT_UPDATE_THRESHOLD - 1;
+const LEGACY_SYNC_DATABASE_VERSION = 1;
 
 const openAdapters: LocalPersistenceAdapter[] = [];
 
@@ -137,13 +141,78 @@ afterEach(async () => {
 });
 
 describe('IndexedDB persistence and outbox units in a real browser', () => {
-  it('creates exactly the four named stores at the versioned database boundary', async () => {
+  it('creates the named stores at the versioned database boundary', async () => {
     const database = await openSyncClientDatabase();
     const storeNames = [...database.objectStoreNames].sort();
     database.close();
 
-    expect(SYNC_DATABASE_VERSION).toBe(1);
+    expect(SYNC_DATABASE_VERSION).toBe(LEGACY_SYNC_DATABASE_VERSION + 1);
     expect(storeNames).toEqual(Object.values(SYNC_STORE_NAMES).sort());
+  });
+
+  it('upgrades the existing database without deleting its local snapshot', async () => {
+    const storageNamespace = namespace();
+    const key = boardStorageNamespaceKey(storageNamespace);
+    const base = createGraphDocument();
+    const bytes = Y.encodeStateAsUpdate(base);
+    const pendingNode = node('Legacy pending edit');
+    const pendingBytes = updateAddingNode(base, pendingNode);
+    const updateId = crypto.randomUUID();
+    const legacy = await openDB(SYNC_DATABASE_NAME, LEGACY_SYNC_DATABASE_VERSION, {
+      upgrade(database) {
+        database.createObjectStore(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS, { keyPath: 'namespace' });
+        const updates = database.createObjectStore(SYNC_STORE_NAMES.LOCAL_UPDATES, {
+          keyPath: ['namespace', 'localSequence'],
+        });
+        updates.createIndex(SYNC_INDEX_NAMES.BY_NAMESPACE, 'namespace');
+        const outbox = database.createObjectStore(SYNC_STORE_NAMES.OUTBOX, {
+          keyPath: ['namespace', 'updateId'],
+        });
+        outbox.createIndex(SYNC_INDEX_NAMES.BY_NAMESPACE, 'namespace');
+        outbox.createIndex(SYNC_INDEX_NAMES.BY_NAMESPACE_AND_SEQUENCE, [
+          'namespace',
+          'localSequence',
+        ]);
+        database.createObjectStore(SYNC_STORE_NAMES.BOARD_CACHE, { keyPath: 'namespace' });
+      },
+    });
+    await legacy.put(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS, {
+      namespace: key,
+      throughLocalSequence: 0,
+      updateBytes: bytes,
+      updatedAt: FIXED_TIME.toISOString(),
+    });
+    await legacy.put(SYNC_STORE_NAMES.LOCAL_UPDATES, {
+      namespace: key,
+      localSequence: 1,
+      updateId,
+      updateBytes: pendingBytes,
+      direction: LOCAL_UPDATE_DIRECTIONS.LOCAL,
+      createdAt: FIXED_TIME.toISOString(),
+    });
+    await legacy.put(SYNC_STORE_NAMES.OUTBOX, {
+      namespace: key,
+      updateId,
+      localSequence: 1,
+      updateBytes: pendingBytes,
+      payloadHash: await sha256(pendingBytes),
+      createdAt: FIXED_TIME.toISOString(),
+      status: OUTBOX_STATUSES.PENDING,
+    });
+    legacy.close();
+    const upgraded = await openSyncClientDatabase();
+    expect([...upgraded.objectStoreNames].sort()).toEqual(Object.values(SYNC_STORE_NAMES).sort());
+    expect((await upgraded.get(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS, key))?.updateBytes).toEqual(bytes);
+    upgraded.close();
+    const reopenedDocument = createGraphDocument();
+    const adapter = await openAdapter(reopenedDocument, storageNamespace);
+    expect(projectGraphDocument(reopenedDocument).nodes.map(({ id }) => id)).toContain(
+      pendingNode.id,
+    );
+    expect((await adapter.listTransportEligibleUpdates())[0]).toMatchObject({
+      updateId,
+      updateBytes: pendingBytes,
+    });
   });
 
   it('namespaces records by deployment, user, board, and graph schema version', async () => {
@@ -180,7 +249,8 @@ describe('IndexedDB persistence and outbox units in a real browser', () => {
 
   it('stores the exact local Yjs bytes in the log and outbox before transport eligibility', async () => {
     const document = createGraphDocument();
-    const adapter = await openAdapter(document, namespace());
+    const storageNamespace = namespace();
+    const adapter = await openAdapter(document, storageNamespace);
     let emittedUpdate: Uint8Array | undefined;
     document.on('update', (updateBytes, origin) => {
       if (origin === COMMAND_ORIGINS.LOCAL_STRUCTURAL) {
@@ -208,6 +278,7 @@ describe('IndexedDB persistence and outbox units in a real browser', () => {
     expect(outbox[0]!.updateBytes).toEqual(emittedUpdate);
     expect(outbox[0]!.payloadHash).toEqual(await sha256(emittedUpdate!));
     expect(outbox[0]!.localSequence).toBe(localUpdates[0]!.localSequence);
+    expect(outbox[0]!.updateId).toBe(localUpdates[0]!.updateId);
     expect(adapter.persistenceStatus()).toEqual({
       phase: LOCAL_PERSISTENCE_PHASES.SAVED,
       savedOnDevice: true,
@@ -216,12 +287,38 @@ describe('IndexedDB persistence and outbox units in a real browser', () => {
       errorCode: null,
       diagnostic: null,
     });
+    await adapter.close();
+    const resumed = await openAdapter(createGraphDocument(), storageNamespace);
+    expect(await resumed.listTransportEligibleUpdates()).toEqual(outbox);
+  });
+
+  it('keeps the first pending payload when an update ID is generated twice', async () => {
+    const document = createGraphDocument();
+    const updateId = crypto.randomUUID();
+    const adapter = await LocalPersistenceAdapter.open({
+      namespace: namespace(),
+      document,
+      createUpdateId: () => updateId,
+    });
+    openAdapters.push(adapter);
+    createNode(document, node('First ID use'));
+    await adapter.whenIdle();
+    const first = await adapter.listTransportEligibleUpdates();
+    createNode(document, node('Duplicate ID use'));
+    await adapter.whenIdle();
+    expect(adapter.getSnapshot()).toMatchObject({
+      phase: LOCAL_PERSISTENCE_PHASES.STORAGE_ERROR,
+      savedOnDevice: false,
+    });
+    expect(await adapter.listLocalUpdates()).toHaveLength(1);
+    expect(await adapter.listTransportEligibleUpdates()).toEqual(first);
   });
 
   it('persists ACK state and removes its outbox item atomically', async () => {
     const document = createGraphDocument();
     const failpoints = new IndexedDbFailpointController();
-    const adapter = await openAdapter(document, namespace(), failpoints);
+    const storageNamespace = namespace();
+    const adapter = await openAdapter(document, storageNamespace, failpoints);
     createNode(document, node('Acknowledged update'));
     await adapter.whenIdle();
     const firstOutbox = (await adapter.listTransportEligibleUpdates())[0]!;
@@ -231,6 +328,16 @@ describe('IndexedDB persistence and outbox units in a real browser', () => {
     expect(acknowledged.acknowledgedServerSequence).toBe(FIRST_SERVER_SEQUENCE);
     expect(acknowledged.acknowledgedAt).toBe(FIXED_TIME.toISOString());
     expect(await adapter.listTransportEligibleUpdates()).toHaveLength(0);
+    expect(await adapter.listAcknowledgedUpdates()).toEqual([
+      {
+        namespace: boardStorageNamespaceKey(storageNamespace),
+        updateId: firstOutbox.updateId,
+        localSequence: firstOutbox.localSequence,
+        serverSequence: FIRST_SERVER_SEQUENCE,
+        acknowledgedAt: FIXED_TIME.toISOString(),
+      },
+    ]);
+    expect(await adapter.lastReceivedServerSequence()).toBe(FIRST_SERVER_SEQUENCE);
 
     createNode(document, node('ACK transaction must abort'));
     await adapter.whenIdle();
@@ -244,6 +351,54 @@ describe('IndexedDB persistence and outbox units in a real browser', () => {
     expect(recordsAfterAbort).toHaveLength(TWO_LOG_RECORDS);
     expect(recordsAfterAbort[1]!.acknowledgedServerSequence).toBeUndefined();
     expect(await adapter.listTransportEligibleUpdates()).toEqual([secondOutbox]);
+    expect(await adapter.listAcknowledgedUpdates()).toHaveLength(1);
+    expect(await adapter.lastReceivedServerSequence()).toBe(FIRST_SERVER_SEQUENCE);
+  });
+
+  it('ACKs a pending entry after its log row was compacted and preserves the receipt through reload', async () => {
+    const storageNamespace = namespace();
+    const document = createGraphDocument();
+    const first = await openAdapter(document, storageNamespace);
+    for (let index = 0; index < LOCAL_SNAPSHOT_UPDATE_THRESHOLD; index += 1) {
+      createNode(document, node(`Compacted pending ${index}`));
+    }
+    await first.whenIdle();
+    const pending = await first.listTransportEligibleUpdates();
+    expect(pending).toHaveLength(LOCAL_SNAPSHOT_UPDATE_THRESHOLD);
+    expect(await first.listLocalUpdates()).toHaveLength(0);
+    await first.close();
+
+    const reopened = await openAdapter(createGraphDocument(), storageNamespace);
+    await reopened.acknowledgeUpdate(pending[0]!.updateId, FIRST_SERVER_SEQUENCE);
+    expect(await reopened.listTransportEligibleUpdates()).toHaveLength(
+      ONE_BELOW_SNAPSHOT_THRESHOLD,
+    );
+    expect(await reopened.listAcknowledgedUpdates()).toMatchObject([
+      { updateId: pending[0]!.updateId, serverSequence: FIRST_SERVER_SEQUENCE },
+    ]);
+    expect(await reopened.lastReceivedServerSequence()).toBe(FIRST_SERVER_SEQUENCE);
+    await reopened.acknowledgeUpdate(pending[0]!.updateId, FIRST_SERVER_SEQUENCE);
+    await expect(
+      reopened.acknowledgeUpdate(pending[0]!.updateId, SECOND_SERVER_SEQUENCE),
+    ).rejects.toBeInstanceOf(LocalPersistenceError);
+    expect(await reopened.lastReceivedServerSequence()).toBe(FIRST_SERVER_SEQUENCE);
+    expect(await reopened.listTransportEligibleUpdates()).toHaveLength(
+      ONE_BELOW_SNAPSHOT_THRESHOLD,
+    );
+  });
+
+  it('keeps the received server sequence monotonic when receipts arrive out of order', async () => {
+    const document = createGraphDocument();
+    const adapter = await openAdapter(document, namespace());
+    createNode(document, node('First local update'));
+    createNode(document, node('Second local update'));
+    await adapter.whenIdle();
+    const pending = await adapter.listTransportEligibleUpdates();
+    await adapter.acknowledgeUpdate(pending[1]!.updateId, SECOND_SERVER_SEQUENCE);
+    await adapter.acknowledgeUpdate(pending[0]!.updateId, FIRST_SERVER_SEQUENCE);
+    expect(await adapter.lastReceivedServerSequence()).toBe(SECOND_SERVER_SEQUENCE);
+    expect(await adapter.listAcknowledgedUpdates()).toHaveLength(TWO_LOG_RECORDS);
+    expect(await adapter.listTransportEligibleUpdates()).toHaveLength(0);
   });
 
   it('keeps hydration, remote application, and local-command origins distinct', async () => {
@@ -269,6 +424,27 @@ describe('IndexedDB persistence and outbox units in a real browser', () => {
     expect(origins).toContain(COMMAND_ORIGINS.LOCAL_STRUCTURAL);
     expect(records.map(({ direction }) => direction)).toEqual(['remote', 'local']);
     expect(await adapter.listTransportEligibleUpdates()).toHaveLength(1);
+    expect(await adapter.lastReceivedServerSequence()).toBe(FIRST_SERVER_SEQUENCE);
+  });
+
+  it('rolls back a failed inbound transaction without applying the remote update', async () => {
+    const document = createGraphDocument();
+    const failpoints = new IndexedDbFailpointController();
+    const adapter = await openAdapter(document, namespace(), failpoints);
+    const remoteBytes = updateAddingNode(document, node('Remote transaction failure'));
+    failpoints.arm(INDEXEDDB_FAILPOINTS.AFTER_REMOTE_UPDATE_WRITE);
+    await expect(
+      adapter.applyRemoteAndPersist(remoteBytes, FIRST_SERVER_SEQUENCE),
+    ).rejects.toBeInstanceOf(LocalPersistenceError);
+    expect(projectGraphDocument(document).nodes).toHaveLength(0);
+    expect(await adapter.listLocalUpdates()).toHaveLength(0);
+    expect(await adapter.listTransportEligibleUpdates()).toHaveLength(0);
+    expect(await adapter.lastReceivedServerSequence()).toBe('0');
+    expect(adapter.getSnapshot()).toMatchObject({
+      phase: LOCAL_PERSISTENCE_PHASES.STORAGE_ERROR,
+      savedOnDevice: false,
+      editingPaused: true,
+    });
   });
 
   it('proves A22 when the local update/outbox transaction fails', async () => {
@@ -297,6 +473,27 @@ describe('IndexedDB persistence and outbox units in a real browser', () => {
     expect(adapter.exportInMemoryProjection().nodes).toContainEqual(inMemoryNode);
     expect(observedPhases).toContain(LOCAL_PERSISTENCE_PHASES.SAVING);
     expect(observedPhases).not.toContain(LOCAL_PERSISTENCE_PHASES.SAVED);
+  });
+
+  it('keeps an earlier pending entry when a later local transaction aborts', async () => {
+    const storageNamespace = namespace();
+    const document = createGraphDocument();
+    const failpoints = new IndexedDbFailpointController();
+    const adapter = await openAdapter(document, storageNamespace, failpoints);
+    createNode(document, node('Already durable'));
+    await adapter.whenIdle();
+    const durableOutbox = await adapter.listTransportEligibleUpdates();
+    failpoints.arm(INDEXEDDB_FAILPOINTS.AFTER_LOCAL_UPDATE_WRITE);
+    createNode(document, node('Failed later edit'));
+    await adapter.whenIdle();
+    expect(adapter.getSnapshot()).toMatchObject({
+      phase: LOCAL_PERSISTENCE_PHASES.STORAGE_ERROR,
+      savedOnDevice: false,
+    });
+    expect(await adapter.listTransportEligibleUpdates()).toEqual(durableOutbox);
+    await adapter.close();
+    const resumed = await openAdapter(createGraphDocument(), storageNamespace);
+    expect(await resumed.listTransportEligibleUpdates()).toEqual(durableOutbox);
   });
 });
 
@@ -547,6 +744,10 @@ describe('productized IndexedDB hydration, snapshot, outbox, and failure lifecyc
       const adapter = await openAdapter(document, storageNamespace);
       createNode(document, node(`Namespace ${index}`));
       await adapter.whenIdle();
+      if (index === 0) {
+        const pending = (await adapter.listTransportEligibleUpdates())[0]!;
+        await adapter.acknowledgeUpdate(pending.updateId, FIRST_SERVER_SEQUENCE);
+      }
     }
     const schemaNeighbor = namespace({
       boardId,
@@ -568,6 +769,8 @@ describe('productized IndexedDB hydration, snapshot, outbox, and failure lifecyc
       snapshot: null,
       localUpdates: [],
       outbox: [],
+      receipts: [],
+      receivedState: null,
       boardCache: null,
     });
     for (const storageNamespace of neighbors) {
