@@ -15,6 +15,7 @@ import { Pool } from 'pg';
 import { DataSource } from 'typeorm';
 
 import { AppModule } from '../../app.module.js';
+import { configureCollaborationWebSockets } from '../collaboration/infrastructure/websocket/index.js';
 import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
 import { loadApiConfig } from '../../platform/config/index.js';
 import { DATABASE_ENTITIES } from '../../platform/database/database-entities.js';
@@ -88,6 +89,7 @@ describe('current user through real Better Auth cookies', () => {
       bodyParser: false,
       logger: false,
     });
+    configureCollaborationWebSockets(application);
     configureAuthHttp(application, application.get(BetterAuthRuntime), config);
     await application.listen(0, '127.0.0.1');
     const address = application.getHttpServer().address() as AddressInfo;

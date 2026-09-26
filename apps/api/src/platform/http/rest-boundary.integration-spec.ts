@@ -20,6 +20,7 @@ import { DataSource } from 'typeorm';
 import { z } from 'zod';
 
 import { AppModule } from '../../app.module.js';
+import { configureCollaborationWebSockets } from '../../modules/collaboration/infrastructure/websocket/index.js';
 import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
 import { BetterAuthRuntime, configureAuthHttp } from '../../modules/auth/index.js';
 import { loadApiConfig } from '../config/index.js';
@@ -91,6 +92,7 @@ describe('Phase 3 REST boundary', () => {
       bodyParser: false,
       logger: false,
     });
+    configureCollaborationWebSockets(application);
     configureAuthHttp(application, application.get(BetterAuthRuntime), config);
     await application.init();
     const signup = await request(application.getHttpServer())

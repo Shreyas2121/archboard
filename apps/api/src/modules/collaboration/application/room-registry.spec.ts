@@ -107,4 +107,28 @@ describe('bounded collaboration room registry', () => {
     now += ROOM_IDLE_EVICTION_MS;
     expect(registry.evictIdle()).toBe(1);
   });
+
+  it('buffers commits after a queued join snapshot until ready has been sent', async () => {
+    const registry = new CollaborationRoomRegistry({ load: async () => loaded() });
+    const { room, release } = await registry.reserve(randomUUID());
+    const delivered: string[] = [];
+    let activate: (() => void) | undefined;
+    const join = room.run(async () => {
+      const subscriber = room.subscribe((update) => delivered.push(update.seq));
+      activate = subscriber.activate;
+      delivered.push(`ready:${room.latestSeq}`);
+    });
+    const laterCommit = room.run(async () => {
+      room.publishCommittedUpdate({ seq: '1', updateBase64: 'AQ==' });
+    });
+    await Promise.all([join, laterCommit]);
+    expect(delivered).toEqual(['ready:0']);
+    activate?.();
+    expect(delivered).toEqual(['ready:0', '1']);
+    await room.run(async () => {
+      room.publishCommittedUpdate({ seq: '2', updateBase64: 'Ag==' });
+    });
+    expect(delivered).toEqual(['ready:0', '1', '2']);
+    release();
+  });
 });

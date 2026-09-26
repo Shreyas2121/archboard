@@ -8,6 +8,17 @@ import {
 } from '@archboard/contracts';
 import type * as Y from 'yjs';
 
+export interface BufferedRoomUpdate {
+  readonly seq: ServerSequence;
+  readonly updateBase64: string;
+}
+
+interface RoomSubscriber {
+  readonly deliver: (update: BufferedRoomUpdate) => void;
+  readonly pending: BufferedRoomUpdate[];
+  active: boolean;
+}
+
 export interface LoadedRoom {
   readonly document: Y.Doc;
   readonly latestSeq: ServerSequence;
@@ -30,6 +41,7 @@ export class CollaborationRoom {
   private connections = 0;
   private durable = true;
   private lastActivityAt: number;
+  private readonly subscribers = new Set<RoomSubscriber>();
 
   public constructor(
     public readonly boardId: string,
@@ -77,6 +89,34 @@ export class CollaborationRoom {
     this.durable = durable;
   }
 
+  /** Register before sending ready; activate only after ready is handed to the socket. */
+  public subscribe(deliver: (update: BufferedRoomUpdate) => void): {
+    activate(): void;
+    unsubscribe(): void;
+  } {
+    const subscriber: RoomSubscriber = { deliver, pending: [], active: false };
+    this.subscribers.add(subscriber);
+    return {
+      activate: () => {
+        if (!this.subscribers.has(subscriber)) return;
+        subscriber.active = true;
+        for (const update of subscriber.pending.splice(0)) subscriber.deliver(update);
+      },
+      unsubscribe: () => {
+        subscriber.pending.length = 0;
+        this.subscribers.delete(subscriber);
+      },
+    };
+  }
+
+  /** Called under the board queue only after a later durable update commits. */
+  public publishCommittedUpdate(update: BufferedRoomUpdate): void {
+    for (const subscriber of this.subscribers) {
+      if (subscriber.active) subscriber.deliver(update);
+      else subscriber.pending.push(update);
+    }
+  }
+
   public isIdle(now: number): boolean {
     return (
       this.connections === 0 &&
@@ -103,6 +143,10 @@ export class CollaborationRoomRegistry {
 
   public get activeRoomCount(): number {
     return this.rooms.size;
+  }
+
+  public connectionCount(boardId: string): number {
+    return this.rooms.get(boardId)?.connectionCount ?? 0;
   }
 
   public async reserve(boardId: string): Promise<RoomReservation> {

@@ -16,7 +16,8 @@ import { CollaborationRoomRegistry } from './modules/collaboration/application/r
 import { PostgresRoomLoader } from './modules/collaboration/infrastructure/room/postgres-room-loader.js';
 import {
   WEBSOCKET_API_CONFIG,
-  WebSocketUpgradeService,
+  CollaborationGateway,
+  CollaborationUpgradeService,
 } from './modules/collaboration/infrastructure/websocket/index.js';
 import type { ApiConfig } from './platform/config/index.js';
 import { DatabaseModule } from './platform/database/index.js';
@@ -42,8 +43,15 @@ export class AppModule {
         { provide: APP_FILTER, useClass: ApiExceptionFilter },
         ReadinessService,
         { provide: WEBSOCKET_API_CONFIG, useValue: config },
-        WebSocketUpgradeService,
+        CollaborationGateway,
+        CollaborationUpgradeService,
         PostgresRoomLoader,
+        {
+          provide: BoardPermissionService,
+          inject: [DataSource],
+          useFactory: (dataSource: DataSource) =>
+            new BoardPermissionService(new PostgresBoardAuthorityReader(dataSource)),
+        },
         {
           provide: CollaborationRoomRegistry,
           inject: [PostgresRoomLoader],
@@ -51,20 +59,17 @@ export class AppModule {
         },
         {
           provide: BoardService,
-          inject: [DataSource],
-          useFactory: (dataSource: DataSource) =>
-            new BoardService(
-              new PostgresBoardPersistence(dataSource),
-              new BoardPermissionService(new PostgresBoardAuthorityReader(dataSource)),
-            ),
+          inject: [DataSource, BoardPermissionService],
+          useFactory: (dataSource: DataSource, permissions: BoardPermissionService) =>
+            new BoardService(new PostgresBoardPersistence(dataSource), permissions),
         },
         {
           provide: InviteService,
-          inject: [DataSource],
-          useFactory: (dataSource: DataSource) =>
+          inject: [DataSource, BoardPermissionService],
+          useFactory: (dataSource: DataSource, permissions: BoardPermissionService) =>
             new InviteService(
               new PostgresInvitePersistence(dataSource, config.allowedWebOrigins[0]!),
-              new BoardPermissionService(new PostgresBoardAuthorityReader(dataSource)),
+              permissions,
             ),
         },
       ],
