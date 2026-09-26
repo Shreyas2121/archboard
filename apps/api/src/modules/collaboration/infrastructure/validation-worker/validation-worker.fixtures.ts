@@ -1,6 +1,16 @@
 import { GRAPH_SCHEMA_VERSION, type GraphProjection, MAX_LIVE_NODES } from '@archboard/contracts';
-import { createGraphDocument, restoreDeletedObjects } from '@archboard/document-model';
-import { buildNode, createLimitGraphFixture, createTypicalGraphFixture } from '@archboard/fixtures';
+import {
+  createGraphDocument,
+  hydrateGraphDocument,
+  restoreDeletedObjects,
+} from '@archboard/document-model';
+import {
+  FIXED_IDS,
+  buildNode,
+  createLimitGraphFixture,
+  createTypicalGraphFixture,
+  minimalGraphFixture,
+} from '@archboard/fixtures';
 import * as Y from 'yjs';
 
 import type { CandidateValidationInput } from './validation-worker-pool.js';
@@ -59,4 +69,45 @@ export function createMalformedValidationFixture(): CandidateValidationInput {
   } finally {
     accepted.destroy();
   }
+}
+
+function mutationFixture(
+  prepare: (document: Y.Doc) => void,
+  mutate: (document: Y.Doc) => void,
+): CandidateValidationInput {
+  const document = hydrateGraphDocument(minimalGraphFixture);
+  try {
+    prepare(document);
+    const acceptedState = Y.encodeStateAsUpdate(document);
+    const acceptedVector = Y.encodeStateVector(document);
+    mutate(document);
+    return { acceptedState, update: Y.encodeStateAsUpdate(document, acceptedVector) };
+  } finally {
+    document.destroy();
+  }
+}
+
+export function createImmutableEndpointValidationFixture(): CandidateValidationInput {
+  return mutationFixture(
+    () => undefined,
+    (document) => {
+      const edge = document.getMap('edges').get(FIXED_IDS.EDGE_A) as Y.Map<unknown>;
+      edge.set('sourceId', FIXED_IDS.NODE_B);
+      edge.set('targetId', FIXED_IDS.NODE_A);
+    },
+  );
+}
+
+export function createRemovedEntityValidationFixture(): CandidateValidationInput {
+  return mutationFixture(
+    () => undefined,
+    (document) => document.getMap('edges').delete(FIXED_IDS.EDGE_A),
+  );
+}
+
+export function createRemovedTombstoneValidationFixture(): CandidateValidationInput {
+  return mutationFixture(
+    (document) => document.getMap('deletedEdges').set(FIXED_IDS.EDGE_A, true),
+    (document) => document.getMap('deletedEdges').delete(FIXED_IDS.EDGE_A),
+  );
 }

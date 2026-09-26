@@ -1,24 +1,32 @@
-import { ERROR_CODES, GRAPH_SCHEMA_VERSION } from '@archboard/contracts';
+import {
+  ERROR_CODES,
+  GRAPH_SCHEMA_VERSION,
+  MAX_CLIENT_UPDATE_BYTES,
+  MAX_ENCODED_YJS_STATE_BYTES,
+  MAX_VALIDATION_QUEUE,
+  MAX_VALIDATION_WORKERS,
+  VALIDATION_TIMEOUT_MS,
+} from '@archboard/contracts';
 import {
   createGraphDocument,
+  hydrateGraphDocument,
   projectGraphDocument,
   validateGraphDocument,
 } from '@archboard/document-model';
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { FIXED_IDS, minimalGraphFixture } from '@archboard/fixtures';
+import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as Y from 'yjs';
 
-import {
-  MAX_VALIDATION_QUEUE_DEPTH,
-  MAX_VALIDATION_WORKERS,
-  VALIDATION_TIMEOUT_MS,
-} from '../../../../platform/config/index.js';
 import { createCausalGapFixtures } from '../yjs-compatibility/causal-gap.fixtures.js';
 import {
   createLimitOverflowValidationFixture,
   createLimitValidationFixture,
   createMalformedValidationFixture,
+  createImmutableEndpointValidationFixture,
+  createRemovedEntityValidationFixture,
+  createRemovedTombstoneValidationFixture,
   createTypicalValidationFixture,
   createValidationFixture,
 } from './validation-worker.fixtures.js';
@@ -37,6 +45,8 @@ const workerUrl = pathToFileURL(
 );
 const pools: ValidationWorkerPool[] = [];
 const FAULT_INJECTION_TIMEOUT_MS = 1_500;
+
+jest.setTimeout(15_000);
 
 function pool(
   options: ConstructorParameters<typeof ValidationWorkerPool>[0] = {},
@@ -59,7 +69,7 @@ describe('validation-worker', () => {
     const created = pool();
     expect(created.timeoutMs).toBe(VALIDATION_TIMEOUT_MS);
     expect(created.maxWorkers).toBe(MAX_VALIDATION_WORKERS);
-    expect(created.maxQueueDepth).toBe(MAX_VALIDATION_QUEUE_DEPTH);
+    expect(created.maxQueueDepth).toBe(MAX_VALIDATION_QUEUE);
   });
 
   it.each([
@@ -98,35 +108,126 @@ describe('validation-worker', () => {
       ERROR_CODES.DOCUMENT_LIMIT,
       VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT,
     ],
+    [
+      'immutable edge endpoint',
+      createImmutableEndpointValidationFixture,
+      ERROR_CODES.DOCUMENT_INVALID,
+      VALIDATION_FAILURE_KINDS.DOCUMENT_INVALID,
+    ],
+    [
+      'accepted entity removal',
+      createRemovedEntityValidationFixture,
+      ERROR_CODES.DOCUMENT_INVALID,
+      VALIDATION_FAILURE_KINDS.DOCUMENT_INVALID,
+    ],
+    [
+      'accepted tombstone removal',
+      createRemovedTombstoneValidationFixture,
+      ERROR_CODES.DOCUMENT_INVALID,
+      VALIDATION_FAILURE_KINDS.DOCUMENT_INVALID,
+    ],
   ])('rejects %s without mutating accepted state', async (_name, fixtureFactory, code, kind) => {
     const input = fixtureFactory();
     const acceptedSnapshot = input.acceptedState.slice();
-    await expect(pool().validate(input)).rejects.toMatchObject({
+    const created = pool();
+    await expect(created.validate(input)).rejects.toMatchObject({
       name: 'ValidationWorkerError',
       code,
       kind,
       retryable: false,
     });
     expectUnchanged(input.acceptedState, acceptedSnapshot);
+    await expect(created.validate(createTypicalValidationFixture())).resolves.toMatchObject({
+      ok: true,
+    });
   });
 
-  it('rejects a causal gap without mutating accepted state', async () => {
-    const fixture = createCausalGapFixtures()[0]!;
-    const input = createValidationFixture({
-      schemaVersion: GRAPH_SCHEMA_VERSION,
-      nodes: [],
-      edges: [],
-      boundaries: [],
-      steps: [],
+  it.each(createCausalGapFixtures())(
+    'rejects $name without mutating accepted state',
+    async (fixture) => {
+      const input = createValidationFixture({
+        schemaVersion: GRAPH_SCHEMA_VERSION,
+        nodes: [],
+        edges: [],
+        boundaries: [],
+        steps: [],
+      });
+      const acceptedSnapshot = input.acceptedState.slice();
+      await expect(
+        pool().validate({ ...input, update: fixture.dependentUpdate }),
+      ).rejects.toMatchObject({
+        code: ERROR_CODES.CAUSAL_GAP,
+        kind: VALIDATION_FAILURE_KINDS.CAUSAL_GAP,
+      });
+      expectUnchanged(input.acceptedState, acceptedSnapshot);
+    },
+  );
+
+  it('rejects oversized input before worker admission and accepts the next valid candidate', async () => {
+    const input = createTypicalValidationFixture();
+    const created = pool();
+    for (const oversized of [
+      { ...input, update: new Uint8Array(MAX_CLIENT_UPDATE_BYTES + 1) },
+      { ...input, acceptedState: new Uint8Array(MAX_ENCODED_YJS_STATE_BYTES + 1) },
+    ]) {
+      await expect(created.validate(oversized)).rejects.toMatchObject({
+        code: ERROR_CODES.DOCUMENT_LIMIT,
+        kind: VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT,
+        retryable: false,
+      });
+      expect(created.activeWorkerCount).toBe(0);
+      expect(created.queueDepth).toBe(0);
+    }
+    await expect(created.validate(input)).resolves.toMatchObject({ ok: true });
+  });
+
+  it('preserves a queued update snapshot if its caller changes the buffer', async () => {
+    const input = createTypicalValidationFixture();
+    const created = pool({
+      maxWorkers: 1,
+      maxQueueDepth: 1,
+      timeoutMs: FAULT_INJECTION_TIMEOUT_MS,
     });
-    const acceptedSnapshot = input.acceptedState.slice();
-    await expect(
-      pool().validate({ ...input, update: fixture.dependentUpdate }),
-    ).rejects.toMatchObject({
-      code: ERROR_CODES.CAUSAL_GAP,
-      kind: VALIDATION_FAILURE_KINDS.CAUSAL_GAP,
-    });
-    expectUnchanged(input.acceptedState, acceptedSnapshot);
+    created.injectNextWorkerDirective(VALIDATION_WORKER_DIRECTIVES.HANG);
+    const hanging = created.validate(input);
+    const queuedInput = createTypicalValidationFixture();
+    const queued = created.validate(queuedInput);
+    queuedInput.update.fill(0);
+    await expect(hanging).rejects.toMatchObject({ kind: VALIDATION_FAILURE_KINDS.TIMEOUT });
+    await expect(queued).resolves.toMatchObject({ ok: true });
+  });
+
+  it('accepts a causally complete concurrent move after an independent title edit', async () => {
+    const base = hydrateGraphDocument(minimalGraphFixture);
+    const accepted = createGraphDocument();
+    const remote = createGraphDocument();
+    const candidate = createGraphDocument();
+    try {
+      const baseState = Y.encodeStateAsUpdate(base);
+      const baseVector = Y.encodeStateVector(base);
+      Y.applyUpdate(accepted, baseState);
+      Y.applyUpdate(remote, baseState);
+      const acceptedNode = accepted.getMap('nodes').get(FIXED_IDS.NODE_A) as Y.Map<unknown>;
+      const title = acceptedNode.get('title') as Y.Text;
+      title.delete(0, title.length);
+      title.insert(0, 'Independent title');
+      const remoteNode = remote.getMap('nodes').get(FIXED_IDS.NODE_A) as Y.Map<unknown>;
+      remoteNode.set('position', { x: 80, y: 40 });
+      const result = await pool().validate({
+        acceptedState: Y.encodeStateAsUpdate(accepted),
+        update: Y.encodeStateAsUpdate(remote, baseVector),
+      });
+      Y.applyUpdate(candidate, result.candidateState);
+      const node = projectGraphDocument(candidate).nodes.find(
+        (item) => item.id === FIXED_IDS.NODE_A,
+      );
+      expect(node).toMatchObject({ title: 'Independent title', position: { x: 80, y: 40 } });
+    } finally {
+      base.destroy();
+      accepted.destroy();
+      remote.destroy();
+      candidate.destroy();
+    }
   });
 
   it.each([
@@ -150,6 +251,9 @@ describe('validation-worker', () => {
     });
     expect(created.activeWorkerCount).toBe(0);
     expectUnchanged(input.acceptedState, acceptedSnapshot);
+    await expect(created.validate(createTypicalValidationFixture())).resolves.toMatchObject({
+      ok: true,
+    });
   });
 
   it('rejects explicitly when the bounded queue is full', async () => {

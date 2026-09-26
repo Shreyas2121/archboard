@@ -1,11 +1,14 @@
-import { ERROR_CODES, type ErrorCode } from '@archboard/contracts';
-import { Worker } from 'node:worker_threads';
-
 import {
-  MAX_VALIDATION_QUEUE_DEPTH,
+  ERROR_CODES,
+  MAX_CLIENT_UPDATE_BYTES,
+  MAX_ENCODED_YJS_STATE_BYTES,
+  MAX_VALIDATION_QUEUE,
   MAX_VALIDATION_WORKERS,
   VALIDATION_TIMEOUT_MS,
-} from '../../../../platform/config/index.js';
+  type ErrorCode,
+} from '@archboard/contracts';
+import { Worker } from 'node:worker_threads';
+
 import {
   VALIDATION_FAILURE_KINDS,
   VALIDATION_WORKER_DIRECTIVES,
@@ -69,7 +72,7 @@ export class ValidationWorkerPool {
   public constructor(options: ValidationWorkerPoolOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? VALIDATION_TIMEOUT_MS;
     this.maxWorkers = options.maxWorkers ?? MAX_VALIDATION_WORKERS;
-    this.maxQueueDepth = options.maxQueueDepth ?? MAX_VALIDATION_QUEUE_DEPTH;
+    this.maxQueueDepth = options.maxQueueDepth ?? MAX_VALIDATION_QUEUE;
     this.workerUrl = options.workerUrl ?? new URL('./validation-worker.entry.js', import.meta.url);
     requirePositiveInteger('timeoutMs', this.timeoutMs);
     requirePositiveInteger('maxWorkers', this.maxWorkers);
@@ -93,6 +96,21 @@ export class ValidationWorkerPool {
     if (this.closed) {
       return Promise.reject(this.workerFailure('The validation worker pool is closed.'));
     }
+    if (
+      !(input.acceptedState instanceof Uint8Array) ||
+      !(input.update instanceof Uint8Array) ||
+      input.acceptedState.byteLength > MAX_ENCODED_YJS_STATE_BYTES ||
+      input.update.byteLength > MAX_CLIENT_UPDATE_BYTES
+    ) {
+      return Promise.reject(
+        new ValidationWorkerError(
+          ERROR_CODES.DOCUMENT_LIMIT,
+          VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT,
+          'The update or accepted state exceeds its byte limit.',
+          false,
+        ),
+      );
+    }
     if (this.workers.size >= this.maxWorkers && this.queue.length >= this.maxQueueDepth) {
       return Promise.reject(
         new ValidationWorkerError(
@@ -107,7 +125,13 @@ export class ValidationWorkerPool {
     const directive = this.nextDirective;
     this.nextDirective = VALIDATION_WORKER_DIRECTIVES.VALIDATE;
     return new Promise((resolve, reject) => {
-      const job: ValidationJob = { input, directive, resolve, reject };
+      // Snapshot caller-owned buffers at admission, including jobs waiting in the queue.
+      const job: ValidationJob = {
+        input: { acceptedState: input.acceptedState.slice(), update: input.update.slice() },
+        directive,
+        resolve,
+        reject,
+      };
       if (this.workers.size < this.maxWorkers) this.start(job);
       else this.queue.push(job);
     });
@@ -122,8 +146,8 @@ export class ValidationWorkerPool {
 
   private start(job: ValidationJob): void {
     const request: ValidationWorkerRequest = {
-      acceptedState: job.input.acceptedState.slice(),
-      update: job.input.update.slice(),
+      acceptedState: job.input.acceptedState,
+      update: job.input.update,
       directive: job.directive,
     };
     const worker = new Worker(this.workerUrl, { workerData: request });
