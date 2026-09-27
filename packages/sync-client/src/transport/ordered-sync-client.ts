@@ -14,6 +14,7 @@ import {
 } from '@archboard/contracts';
 
 import { LOCAL_PERSISTENCE_PHASES, type LocalPersistenceAdapter } from '../persistence/index.js';
+import { TransientPresence } from './transient-presence.js';
 
 const INITIAL_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
@@ -75,6 +76,12 @@ function isWritableRole(role: BoardRole | null): boolean {
 }
 
 export class OrderedSyncClient {
+  public readonly presence = new TransientPresence((message) => {
+    if (!this.handshakeComplete || this.socket?.readyState !== WebSocket.OPEN || this.stopped)
+      return false;
+    this.socket.send(JSON.stringify(message));
+    return true;
+  });
   private readonly options: OrderedSyncClientOptions;
   private readonly listeners = new Set<() => void>();
   private readonly createWebSocket: (url: string) => WebSocket;
@@ -146,6 +153,7 @@ export class OrderedSyncClient {
   }
 
   public stop(): void {
+    this.presence.clear();
     this.stopped = true;
     this.unsubscribePersistence?.();
     this.unsubscribePersistence = null;
@@ -217,6 +225,7 @@ export class OrderedSyncClient {
     };
     socket.onclose = () => {
       if (this.socket !== socket) return;
+      this.presence.clear();
       this.socket = null;
       this.handshakeComplete = false;
       this.inFlightId = null;
@@ -266,6 +275,7 @@ export class OrderedSyncClient {
       this.serverSequence = BigInt(message.data.latestSeq);
       this.role = message.data.role;
       this.handshakeComplete = true;
+      this.presence.connect(message.data.connectionId);
       this.retryDelay = INITIAL_RETRY_MS;
       await this.refresh();
       await this.options.beforeDrain?.();
@@ -275,6 +285,10 @@ export class OrderedSyncClient {
     if (!this.handshakeComplete) {
       if (message.event === SERVER_EVENT_NAMES.ERROR) this.handleError(message.data);
       else this.reconnectForProtocolError();
+      return;
+    }
+    if (message.event === SERVER_EVENT_NAMES.PRESENCE) {
+      this.presence.receive(message.data);
       return;
     }
     if (message.event === SERVER_EVENT_NAMES.UPDATE) {
@@ -412,6 +426,7 @@ export class OrderedSyncClient {
   }
 
   private reconnectForProtocolError(): void {
+    this.presence.clear();
     this.handshakeComplete = false;
     this.inFlightId = null;
     this.socket?.close();

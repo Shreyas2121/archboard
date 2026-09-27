@@ -9,6 +9,9 @@ import {
   COLOR_TOKENS,
   COMPONENT_CATEGORIES,
   MAX_BOARD_CONNECTIONS,
+  MAX_PRESENCE_SELECTED_IDS,
+  MAX_DRAG_PREVIEW_POSITIONS,
+  PRESENCE_UPDATES_PER_SECOND,
   MAX_WS_FRAME_BYTES,
   PROTOCOL_VERSION,
   SERVER_EVENT_NAMES,
@@ -32,6 +35,7 @@ import { BoardService } from '../boards/application/board-service.js';
 import { createEmptyBoardSnapshot } from '../boards/infrastructure/empty-board-snapshot.js';
 import { BoardSnapshotEntity } from '../collaboration/infrastructure/entities/board-snapshot.entity.js';
 import { BoardUpdateEntity } from '../collaboration/infrastructure/entities/board-update.entity.js';
+import { UpdateReceiptEntity } from '../collaboration/infrastructure/entities/update-receipt.entity.js';
 import { CollaborationRoomRegistry } from '../collaboration/application/room-registry.js';
 import { PostgresRoomCompactor } from '../collaboration/infrastructure/room/postgres-room-compactor.js';
 import { PostgresRoomLoader } from '../collaboration/infrastructure/room/postgres-room-loader.js';
@@ -56,6 +60,7 @@ const ARCHIVED_BOARD_VERSION = 2;
 const CLOSE_POLICY_VIOLATION = 1008;
 const CLOSE_MESSAGE_TOO_BIG = 1009;
 const CLOSE_ABNORMAL = 1006;
+const PRESENCE_BURST_MULTIPLIER = 2;
 const HTTP_OK = 200;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
@@ -411,6 +416,108 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
     }
     return { id, url: websocketUrl.replace(boardId, id) };
   }
+
+  it('bounds session-derived presence, isolates rooms, drops excess traffic, and never writes graph data', async () => {
+    const board = await createUpdateBoard(true);
+    const other = await createUpdateBoard();
+    const owner = await joinRoom(board.url, sessionCookie);
+    const viewer = await joinRoom(board.url, viewerCookie);
+    const outsider = await joinRoom(other.url, sessionCookie);
+    const before = await database.getRepository(BoardEntity).findOneByOrFail({ id: board.id });
+    const presence = {
+      cursor: { x: 120, y: -50 },
+      selectedIds: Array.from({ length: MAX_PRESENCE_SELECTED_IDS }, () => randomUUID()),
+      dragPreview: {
+        positions: Array.from({ length: MAX_DRAG_PREVIEW_POSITIONS }, () => ({
+          id: randomUUID(),
+          position: { x: 5, y: 10 },
+        })),
+      },
+    };
+    const received: unknown[] = [];
+    const otherMessages: unknown[] = [];
+    viewer.socket.on('message', (raw) => received.push(JSON.parse(raw.toString())));
+    outsider.socket.on('message', (raw) => otherMessages.push(JSON.parse(raw.toString())));
+    try {
+      const broadcast = waitForEvent(viewer.socket, SERVER_EVENT_NAMES.PRESENCE);
+      owner.socket.send(JSON.stringify({ event: 'presence', data: presence }));
+      const message = await broadcast;
+      expect(message).toMatchObject({
+        event: 'presence',
+        data: {
+          connectionId: owner.ready.connectionId,
+          user: { id: ownerId },
+          presence,
+        },
+      });
+      if (message.event !== SERVER_EVENT_NAMES.PRESENCE) throw new Error('Presence expected.');
+      expect(message.data.user.name.length).toBeGreaterThan(0);
+      expect(Date.parse(message.data.expiresAt)).toBeGreaterThan(Date.now());
+      for (
+        let index = 0;
+        index < PRESENCE_UPDATES_PER_SECOND * PRESENCE_BURST_MULTIPLIER;
+        index += 1
+      ) {
+        owner.socket.send(JSON.stringify({ event: 'presence', data: presence }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, NO_EARLY_MESSAGE_WINDOW_MS));
+      expect(received).toHaveLength(PRESENCE_UPDATES_PER_SECOND);
+      expect(otherMessages).toEqual([]);
+      const after = await database.getRepository(BoardEntity).findOneByOrFail({ id: board.id });
+      expect(after.latestSeq).toBe(before.latestSeq);
+      expect(after.contentUpdatedAt).toEqual(before.contentUpdatedAt);
+      expect(await database.getRepository(BoardUpdateEntity).countBy({ boardId: board.id })).toBe(
+        0,
+      );
+      expect(await database.getRepository(UpdateReceiptEntity).countBy({ boardId: board.id })).toBe(
+        0,
+      );
+      const reservation = await application.get(CollaborationRoomRegistry).reserve(board.id);
+      expect(projectGraphDocument(reservation.room.document).nodes).toHaveLength(0);
+      reservation.release();
+      const removal = waitForEvent(viewer.socket, SERVER_EVENT_NAMES.PRESENCE);
+      await closeWebSocket(owner.socket);
+      const expired = await removal;
+      expect(expired).toMatchObject({
+        event: 'presence',
+        data: {
+          connectionId: owner.ready.connectionId,
+          presence: { cursor: null, selectedIds: [], dragPreview: null },
+        },
+      });
+      if (expired.event === SERVER_EVENT_NAMES.PRESENCE) {
+        expect(Date.parse(expired.data.expiresAt)).toBeLessThanOrEqual(Date.now());
+      }
+    } finally {
+      await Promise.all([owner.socket, viewer.socket, outsider.socket].map(closeWebSocket));
+    }
+  });
+
+  it('rejects spoofed presence identity and oversized selections before broadcast', async () => {
+    const board = await createUpdateBoard();
+    const peer = await joinRoom(board.url, sessionCookie);
+    const messages: unknown[] = [];
+    peer.socket.on('message', (raw) => messages.push(JSON.parse(raw.toString())));
+    try {
+      for (const data of [
+        { cursor: null, selectedIds: [], dragPreview: null, user: { id: 'spoofed' } },
+        {
+          cursor: null,
+          selectedIds: Array.from({ length: MAX_PRESENCE_SELECTED_IDS + 1 }, () => randomUUID()),
+          dragPreview: null,
+        },
+        { cursor: { x: Infinity, y: 0 }, selectedIds: [], dragPreview: null },
+      ]) {
+        const sender = await joinRoom(board.url, sessionCookie);
+        const closed = waitForClose(sender.socket);
+        sender.socket.send(JSON.stringify({ event: 'presence', data }));
+        expect(await closed).toBe(CLOSE_POLICY_VIOLATION);
+      }
+      expect(messages).toEqual([]);
+    } finally {
+      await closeWebSocket(peer.socket);
+    }
+  });
 
   async function changeArchiveOverHttp(
     boardId: string,

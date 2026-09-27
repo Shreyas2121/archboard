@@ -4,6 +4,12 @@ import type { Duplex } from 'node:stream';
 
 import {
   CLIENT_EVENT_NAMES,
+  COLOR_TOKENS,
+  PRESENCE_EXPIRY_MS,
+  PRESENCE_UPDATES_PER_SECOND,
+  MAX_PRESENCE_USER_NAME_CHARACTERS,
+  type PresenceState,
+  type ServerPresenceMessage,
   CONTENT_UPDATE_BURST,
   CONTENT_UPDATES_PER_SECOND,
   ERROR_CODES,
@@ -64,6 +70,7 @@ const READY_LIMITS = {
 export interface AuthorizedBoardSocket {
   readonly boardId: string;
   readonly userId: string;
+  readonly userName: string;
 }
 
 interface ConnectionState extends AuthorizedBoardSocket {
@@ -72,6 +79,9 @@ interface ConnectionState extends AuthorizedBoardSocket {
   readonly liveness: NodeJS.Timeout;
   readonly sessionHeaders: Headers;
   lastPongAt: number;
+  presenceTimes: number[];
+  presence?: ServerPresenceMessage;
+  presenceExpiry?: NodeJS.Timeout;
   joining: boolean;
   ready: boolean;
   closed: boolean;
@@ -134,6 +144,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         }
       }, WS_PING_INTERVAL_MS),
       lastPongAt: Date.now(),
+      presenceTimes: [],
       joining: false,
       ready: false,
       closed: false,
@@ -156,6 +167,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
   public handleDisconnect(websocket: WebSocket): void {
     const state = this.connections.get(websocket);
     if (state === undefined) return;
+    this.removePresence(state);
     state.closed = true;
     clearTimeout(state.helloDeadline);
     clearInterval(state.liveness);
@@ -230,6 +242,10 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       websocket.close(CLOSE_POLICY_VIOLATION, 'Hello already received');
       return;
     }
+    if (message.event === CLIENT_EVENT_NAMES.PRESENCE) {
+      this.acceptPresence(state, message.data);
+      return;
+    }
     if (message.event === CLIENT_EVENT_NAMES.UPDATE) {
       if (!this.consumeUpdateBudget(state)) {
         this.sendError(websocket, ERROR_CODES.RATE_LIMITED, true, message.data.updateId);
@@ -244,6 +260,65 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       return;
     }
     this.sendError(websocket, ERROR_CODES.SERVER_BUSY, true);
+  }
+
+  private acceptPresence(state: ConnectionState, presence: PresenceState): void {
+    if (state.closed) return;
+    const now = Date.now();
+    state.presenceTimes = state.presenceTimes.filter(
+      (time) => now - time < MILLISECONDS_PER_SECOND,
+    );
+    // Drop excess ephemeral traffic without disturbing the independent durable stream.
+    if (state.presenceTimes.length >= PRESENCE_UPDATES_PER_SECOND) return;
+    state.presenceTimes.push(now);
+    const colors = Object.values(COLOR_TOKENS);
+    const colorIndex = [...state.userId].reduce(
+      (sum, character) => sum + character.charCodeAt(0),
+      0,
+    );
+    const message: ServerPresenceMessage = {
+      event: SERVER_EVENT_NAMES.PRESENCE,
+      data: {
+        connectionId: state.connectionId,
+        user: {
+          id: state.userId,
+          name: state.userName.slice(0, MAX_PRESENCE_USER_NAME_CHARACTERS),
+          color: colors[colorIndex % colors.length] ?? COLOR_TOKENS.BLUE,
+        },
+        // The shared parser has already bounded coordinates, unique IDs, and size.
+        presence,
+        expiresAt: new Date(now + PRESENCE_EXPIRY_MS).toISOString(),
+      },
+    };
+    state.presence = message;
+    clearTimeout(state.presenceExpiry);
+    state.presenceExpiry = setTimeout(() => this.removePresence(state), PRESENCE_EXPIRY_MS);
+    state.presenceExpiry.unref();
+    this.broadcastPresence(state, message);
+  }
+
+  private broadcastPresence(source: ConnectionState, message: ServerPresenceMessage): void {
+    for (const [socket, peer] of this.connections) {
+      if (peer !== source && peer.ready && !peer.closed && peer.boardId === source.boardId) {
+        this.send(socket, message);
+      }
+    }
+  }
+
+  private removePresence(state: ConnectionState): void {
+    clearTimeout(state.presenceExpiry);
+    const message = state.presence;
+    delete state.presence;
+    if (message === undefined) return;
+    // An expired empty presence is the v1 removal signal.
+    this.broadcastPresence(state, {
+      ...message,
+      data: {
+        ...message.data,
+        presence: { cursor: null, selectedIds: [], dragPreview: null },
+        expiresAt: new Date().toISOString(),
+      },
+    });
   }
 
   private consumeUpdateBudget(state: ConnectionState): boolean {
@@ -306,6 +381,16 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
           }
           state.ready = true;
           subscription.activate();
+          for (const peer of this.connections.values()) {
+            if (
+              peer !== state &&
+              peer.boardId === state.boardId &&
+              peer.presence !== undefined &&
+              Date.parse(peer.presence.data.expiresAt) > Date.now()
+            ) {
+              this.send(websocket, peer.presence);
+            }
+          }
           if (decision.board.archivedAt !== null) {
             this.send(websocket, {
               event: SERVER_EVENT_NAMES.ACCESS_CHANGED,

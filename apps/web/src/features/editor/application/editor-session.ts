@@ -162,6 +162,10 @@ export class EditorSession {
 
   public getSnapshot = (): EditorSessionSnapshot => this.snapshot;
 
+  public get presence() {
+    return this.syncClient?.presence ?? null;
+  }
+
   public subscribe = (listener: SessionListener): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

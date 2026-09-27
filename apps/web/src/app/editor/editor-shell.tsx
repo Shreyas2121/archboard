@@ -671,6 +671,7 @@ export function EditorShell({
           >
             {projection !== null && (
               <GraphCanvas
+                presence={session?.presence ?? null}
                 editable={viewState.editable}
                 gridSnapEnabled={gridSnapEnabled}
                 minimapVisible={minimapVisible}

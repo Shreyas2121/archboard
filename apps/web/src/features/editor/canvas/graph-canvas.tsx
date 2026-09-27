@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GraphProjection, Rect } from '@archboard/contracts';
+import type { GraphProjection, Rect, PresenceState } from '@archboard/contracts';
+import type { TransientPresence } from '@archboard/sync-client';
 import type { GeometryBatch } from '@archboard/document-model';
 import {
   applyNodeChanges,
@@ -11,9 +12,11 @@ import {
   type Connection,
   type NodeChange,
   type Viewport,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
+import { PresenceOverlay } from '@/features/collaboration/presence-overlay';
 import {
   SELECTION_KINDS,
   type SelectionReference,
@@ -37,6 +40,7 @@ const SNAP_GRID: [number, number] = [CANVAS_GRID_SIZE, CANVAS_GRID_SIZE];
 type EditorCanvasNode = CanvasNode | BoundaryCanvasNode;
 
 interface GraphCanvasProps {
+  readonly presence?: TransientPresence | null;
   readonly projection: GraphProjection;
   readonly minimapVisible: boolean;
   readonly gridSnapEnabled: boolean;
@@ -48,6 +52,7 @@ interface GraphCanvasProps {
 }
 
 export function GraphCanvas({
+  presence = null,
   projection,
   minimapVisible,
   gridSnapEnabled,
@@ -60,6 +65,21 @@ export function GraphCanvas({
   const adapter = useRef(new CanvasProjectionAdapter());
   const canvasProjection = useMemo(() => adapter.current.adapt(projection), [projection]);
   const selection = useEditorSelection();
+  const flow = useRef<ReactFlowInstance<EditorCanvasNode, CanvasEdge> | null>(null);
+  const localPresence = useRef<PresenceState>({ cursor: null, selectedIds: [], dragPreview: null });
+  const publishPresence = useCallback(
+    (patch: Partial<PresenceState>) => {
+      localPresence.current = { ...localPresence.current, ...patch };
+      presence?.publish(localPresence.current);
+    },
+    [presence],
+  );
+  useEffect(() => {
+    publishPresence({ selectedIds: selection.map(({ id }) => id) });
+  }, [selection, publishPresence]);
+  useEffect(() => {
+    if (!editable) publishPresence({ dragPreview: null });
+  }, [editable, publishPresence]);
   const actions = useEditorUiActions();
   const altPressed = useRef(false);
   const [altBypass, setAltBypass] = useState(false);
@@ -256,9 +276,10 @@ export function GraphCanvas({
           ),
       };
       onGeometryCommit(batch);
+      publishPresence({ dragPreview: null });
       gestureActive.current = false;
     },
-    [gridSnapEnabled, onGeometryCommit],
+    [gridSnapEnabled, onGeometryCommit, publishPresence],
   );
 
   return (
@@ -277,6 +298,14 @@ export function GraphCanvas({
       nodesDraggable={editable}
       nodeTypes={NODE_TYPES}
       onConnect={onConnect}
+      onInit={(instance) => {
+        flow.current = instance;
+      }}
+      onMouseMove={(event) => {
+        const cursor = flow.current?.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        if (cursor !== undefined) publishPresence({ cursor });
+      }}
+      onMouseLeave={() => publishPresence({ cursor: null })}
       onPaneClick={actions.clearSelection}
       onNodeClick={(event, node) =>
         selectObject(
@@ -294,6 +323,14 @@ export function GraphCanvas({
         gestureActive.current = true;
       }}
       onNodeDragStop={finishDrag}
+      onNodeDrag={(_event, _node, draggedNodes) => {
+        if (editable)
+          publishPresence({
+            dragPreview: {
+              positions: draggedNodes.map(({ id, position }) => ({ id, position })),
+            },
+          });
+      }}
       onNodesChange={handleNodesChange}
       onReconnect={(edge, connection) => onReconnect(edge.id, connection)}
       onSelectionEnd={() =>
@@ -318,6 +355,7 @@ export function GraphCanvas({
       zoomOnPinch
       zoomOnScroll={false}
     >
+      {presence !== null && <PresenceOverlay presence={presence} projection={projection} />}
       <Background
         color="var(--canvas-dot)"
         gap={CANVAS_GRID_SIZE}

@@ -115,7 +115,11 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
       this.rejectUpgrade(socket, HTTP_NOT_FOUND);
       return;
     }
-    this.gateway.acceptUpgrade(request, socket, head, { boardId, userId: session.userId });
+    this.gateway.acceptUpgrade(request, socket, head, {
+      boardId,
+      userId: session.userId,
+      userName: session.user.name,
+    });
   }
 
   private async sessionWithinDeadline(request: IncomingMessage) {

@@ -11,6 +11,7 @@ import {
   MAX_LIVE_PRESENTATION_STEPS,
   MAX_PRESENCE_SELECTED_IDS,
   MAX_WS_FRAME_BYTES,
+  PRESENCE_EXPIRY_MS,
 } from '@archboard/contracts';
 import { createGraphDocument, createNode, projectGraphDocument } from '@archboard/document-model';
 import { deleteDB } from 'idb';
@@ -68,6 +69,37 @@ class FakeSocket {
 
 const adapters: LocalPersistenceAdapter[] = [];
 const clients: OrderedSyncClient[] = [];
+
+it('transports presence without touching the Y.Doc, local log, outbox, receipts, or save state', async () => {
+  const { client, sockets, adapter, document } = await setup();
+  const socket = sockets[0]!;
+  socket.open();
+  socket.deliver(ready(document));
+  await vi.waitFor(() => expect(client.getSnapshot().ready).toBe(true));
+  const before = Y.encodeStateAsUpdate(document);
+  const localBefore = adapter.getSnapshot();
+  const status = client.getSnapshot();
+  const presence = { cursor: { x: 30, y: 40 }, selectedIds: [], dragPreview: null };
+  client.presence.publish(presence);
+  await waitForSent(socket, TWO);
+  socket.deliver({
+    event: 'presence',
+    data: {
+      connectionId: crypto.randomUUID(),
+      user: { id: 'peer', name: 'Peer', color: 'blue' },
+      presence,
+      expiresAt: new Date(Date.now() + PRESENCE_EXPIRY_MS).toISOString(),
+    },
+  });
+  await vi.waitFor(() => expect(client.presence.getSnapshot()).toHaveLength(1));
+  expect(Y.encodeStateAsUpdate(document)).toEqual(before);
+  expect(adapter.getSnapshot()).toEqual(localBefore);
+  expect(await adapter.listTransportEligibleUpdates()).toEqual([]);
+  expect(await adapter.listAcknowledgedUpdates()).toEqual([]);
+  expect(client.getSnapshot()).toEqual(status);
+  socket.close();
+  expect(client.presence.getSnapshot()).toEqual([]);
+});
 
 async function setup(failpoints?: IndexedDbFailpointController) {
   const boardId = crypto.randomUUID();
