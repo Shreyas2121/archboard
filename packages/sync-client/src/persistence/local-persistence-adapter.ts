@@ -6,6 +6,7 @@ import {
   type ErrorCode,
   type GraphProjection,
   type ServerSequence,
+  type BoardRole,
 } from '@archboard/contracts';
 import {
   COMMAND_ORIGINS,
@@ -35,6 +36,7 @@ import {
   type LocalSnapshotRecord,
   type LocalUpdateRecord,
   type OutboxRecord,
+  type OutboxReceiptRecord,
   type SyncClientDatabase,
   type SyncClientDatabaseConnection,
 } from './database.js';
@@ -71,6 +73,11 @@ export interface LocalPersistenceAdapterOptions {
   readonly now?: () => Date;
 }
 
+export interface CachedBoardAccess {
+  readonly role: BoardRole;
+  readonly archived: boolean;
+}
+
 export class EditingPausedForStorageError extends Error {
   public constructor() {
     super('Editing is paused because local persistence is not writable.');
@@ -89,7 +96,11 @@ export class LocalPersistenceError extends Error {
 
 type LocalWriteTransaction = IDBPTransaction<
   SyncClientDatabase,
-  [typeof SYNC_STORE_NAMES.LOCAL_UPDATES, typeof SYNC_STORE_NAMES.OUTBOX],
+  [
+    typeof SYNC_STORE_NAMES.LOCAL_UPDATES,
+    typeof SYNC_STORE_NAMES.OUTBOX,
+    typeof SYNC_STORE_NAMES.OUTBOX_RECEIPTS,
+  ],
   'readwrite'
 >;
 
@@ -233,8 +244,74 @@ export class LocalPersistenceAdapter {
     return record === undefined ? null : copyLocalSnapshot(record);
   }
 
+  public async listAcknowledgedUpdates(): Promise<readonly OutboxReceiptRecord[]> {
+    await this.initialize();
+    const records = await this.requireDatabase().getAllFromIndex(
+      SYNC_STORE_NAMES.OUTBOX_RECEIPTS,
+      SYNC_INDEX_NAMES.BY_NAMESPACE,
+      this.namespace,
+    );
+    return records.sort((a, b) => a.localSequence - b.localSequence);
+  }
+
+  public async hasQueuedInitialState(): Promise<boolean> {
+    await this.initialize();
+    const transaction = this.requireDatabase().transaction(
+      [SYNC_STORE_NAMES.OUTBOX, SYNC_STORE_NAMES.OUTBOX_RECEIPTS],
+      'readonly',
+    );
+    const [pending, acknowledged] = await Promise.all([
+      transaction
+        .objectStore(SYNC_STORE_NAMES.OUTBOX)
+        .index(SYNC_INDEX_NAMES.BY_NAMESPACE)
+        .getAll(this.namespace),
+      transaction
+        .objectStore(SYNC_STORE_NAMES.OUTBOX_RECEIPTS)
+        .index(SYNC_INDEX_NAMES.BY_NAMESPACE)
+        .getAll(this.namespace),
+    ]);
+    await transaction.done;
+    return (
+      pending.some((record) => record.initialState === true) ||
+      acknowledged.some((record) => record.initialState === true)
+    );
+  }
+
+  public async lastReceivedServerSequence(): Promise<ServerSequence> {
+    await this.initialize();
+    const state = await this.requireDatabase().get(SYNC_STORE_NAMES.RECEIVED_STATE, this.namespace);
+    return state?.lastServerSequence ?? '0';
+  }
+
+  public async readCachedBoardAccess(): Promise<CachedBoardAccess | null> {
+    await this.initialize();
+    const record = await this.requireDatabase().get(SYNC_STORE_NAMES.BOARD_CACHE, this.namespace);
+    if (record === undefined) return null;
+    return { role: record.role, archived: record.metadata.archived === true };
+  }
+
+  public async cacheBoardAccess(access: CachedBoardAccess): Promise<void> {
+    await this.whenIdle();
+    if (this.readOnly) return;
+    await this.requireDatabase().put(SYNC_STORE_NAMES.BOARD_CACHE, {
+      namespace: this.namespace,
+      role: access.role,
+      metadata: { archived: access.archived },
+      cachedAt: this.now().toISOString(),
+      lastServerSequence: await this.lastReceivedServerSequence(),
+    });
+  }
+
   public hydrate(updateBytes: Uint8Array): void {
     applyHydrationUpdate(this.document, updateBytes);
+  }
+
+  public async enqueueInitialDocumentState(updateBytes: Uint8Array): Promise<void> {
+    this.assertEditingAllowed();
+    await this.whenIdle();
+    this.queueLocalBytes(updateBytes, true);
+    await this.whenIdle();
+    this.assertEditingAllowed();
   }
 
   public async applyRemoteAndPersist(
@@ -261,7 +338,33 @@ export class LocalPersistenceAdapter {
     let failed = false;
     this.writeTail = this.writeTail
       .then(async () => {
-        await this.requireDatabase().put(SYNC_STORE_NAMES.LOCAL_UPDATES, record);
+        const transaction = this.requireDatabase().transaction(
+          [SYNC_STORE_NAMES.LOCAL_UPDATES, SYNC_STORE_NAMES.RECEIVED_STATE],
+          'readwrite',
+        );
+        try {
+          await transaction.objectStore(SYNC_STORE_NAMES.LOCAL_UPDATES).put(record);
+          if (this.failpoints.consume(INDEXEDDB_FAILPOINTS.AFTER_REMOTE_UPDATE_WRITE)) {
+            transaction.abort();
+            await transaction.done.catch(() => undefined);
+            throw new LocalPersistenceError('Inbound persistence transaction aborted.');
+          }
+          const receivedStore = transaction.objectStore(SYNC_STORE_NAMES.RECEIVED_STATE);
+          const previous = await receivedStore.get(this.namespace);
+          if (
+            previous === undefined ||
+            BigInt(serverSequence) > BigInt(previous.lastServerSequence)
+          ) {
+            await receivedStore.put({
+              namespace: this.namespace,
+              lastServerSequence: serverSequence,
+            });
+          }
+          await transaction.done;
+        } catch (error) {
+          await transaction.done.catch(() => undefined);
+          throw error;
+        }
         applyRemoteUpdate(this.document, exactBytes);
         this.pendingLocalWrites = Math.max(0, this.pendingLocalWrites - 1);
         this.publishSaving(this.pendingLocalWrites);
@@ -283,26 +386,57 @@ export class LocalPersistenceAdapter {
     serverSequenceSchema.parse(serverSequence);
     await this.whenIdle();
     const transaction = this.requireDatabase().transaction(
-      [SYNC_STORE_NAMES.LOCAL_UPDATES, SYNC_STORE_NAMES.OUTBOX],
+      [
+        SYNC_STORE_NAMES.LOCAL_UPDATES,
+        SYNC_STORE_NAMES.OUTBOX,
+        SYNC_STORE_NAMES.OUTBOX_RECEIPTS,
+        SYNC_STORE_NAMES.RECEIVED_STATE,
+      ],
       'readwrite',
     );
     try {
       const outbox = await transaction
         .objectStore(SYNC_STORE_NAMES.OUTBOX)
         .get([this.namespace, updateId]);
+      const receiptStore = transaction.objectStore(SYNC_STORE_NAMES.OUTBOX_RECEIPTS);
+      const previousReceipt = await receiptStore.get([this.namespace, updateId]);
       if (outbox === undefined) {
+        if (previousReceipt !== undefined && previousReceipt.serverSequence !== serverSequence) {
+          await transaction.done;
+          throw new LocalPersistenceError(
+            'Duplicate ACK sequence differs from the durable receipt.',
+          );
+        }
         await transaction.done;
         return;
       }
+      if (previousReceipt !== undefined && previousReceipt.serverSequence !== serverSequence) {
+        await transaction.done;
+        throw new LocalPersistenceError('ACK sequence differs from the durable receipt.');
+      }
       const localStore = transaction.objectStore(SYNC_STORE_NAMES.LOCAL_UPDATES);
       const localRecord = await localStore.get([this.namespace, outbox.localSequence]);
-      if (localRecord === undefined)
-        throw new LocalPersistenceError('Outbox update has no local log.');
-      await localStore.put({
-        ...localRecord,
-        acknowledgedServerSequence: serverSequence,
-        acknowledgedAt: this.now().toISOString(),
+      const acknowledgedAt = this.now().toISOString();
+      if (localRecord !== undefined) {
+        await localStore.put({
+          ...localRecord,
+          acknowledgedServerSequence: serverSequence,
+          acknowledgedAt,
+        });
+      }
+      await receiptStore.put({
+        namespace: this.namespace,
+        updateId,
+        localSequence: outbox.localSequence,
+        serverSequence,
+        acknowledgedAt,
+        ...(outbox.initialState === true ? { initialState: true as const } : {}),
       });
+      const receivedStore = transaction.objectStore(SYNC_STORE_NAMES.RECEIVED_STATE);
+      const previous = await receivedStore.get(this.namespace);
+      if (previous === undefined || BigInt(serverSequence) > BigInt(previous.lastServerSequence)) {
+        await receivedStore.put({ namespace: this.namespace, lastServerSequence: serverSequence });
+      }
       if (this.failpoints.consume(INDEXEDDB_FAILPOINTS.AFTER_ACK_WRITE)) {
         transaction.abort();
         await transaction.done;
@@ -310,6 +444,7 @@ export class LocalPersistenceAdapter {
       await transaction.objectStore(SYNC_STORE_NAMES.OUTBOX).delete([this.namespace, updateId]);
       await transaction.done;
     } catch (error) {
+      await transaction.done.catch(() => undefined);
       if (error instanceof LocalPersistenceError) throw error;
       this.recordStorageFailure();
       throw new LocalPersistenceError();
@@ -434,6 +569,10 @@ export class LocalPersistenceAdapter {
 
   private readonly handleDocumentUpdate = (updateBytes: Uint8Array, origin: unknown): void => {
     if (!isPersistableLocalOrigin(origin) || this.status.editingPaused || this.closed) return;
+    this.queueLocalBytes(updateBytes);
+  };
+
+  private queueLocalBytes(updateBytes: Uint8Array, initialState = false): void {
     const exactBytes = Uint8Array.from(updateBytes);
     let updateId: string;
     try {
@@ -447,7 +586,7 @@ export class LocalPersistenceAdapter {
     this.publishSaving(this.pendingLocalWrites);
     this.writeTail = this.writeTail.then(async () => {
       if (this.status.editingPaused) return;
-      await this.persistLocalUpdate(updateId, localSequence, exactBytes);
+      await this.persistLocalUpdate(updateId, localSequence, exactBytes, initialState);
       this.pendingLocalWrites = Math.max(0, this.pendingLocalWrites - 1);
       this.publishSaving(this.pendingLocalWrites);
       if (this.pendingLocalWrites === 0) {
@@ -456,7 +595,7 @@ export class LocalPersistenceAdapter {
       }
     });
     this.writeTail = this.writeTail.catch(() => this.recordStorageFailure());
-  };
+  }
 
   private reserveLocalSequence(): number {
     this.nextLocalSequence += 1;
@@ -467,37 +606,52 @@ export class LocalPersistenceAdapter {
     updateId: string,
     localSequence: number,
     updateBytes: Uint8Array,
+    initialState: boolean,
   ): Promise<void> {
     const createdAt = this.now().toISOString();
     const payloadHash = new Uint8Array(
       await crypto.subtle.digest(UPDATE_HASH_ALGORITHM, bytesAsArrayBuffer(updateBytes)),
     );
     const transaction = this.requireDatabase().transaction(
-      [SYNC_STORE_NAMES.LOCAL_UPDATES, SYNC_STORE_NAMES.OUTBOX],
+      [SYNC_STORE_NAMES.LOCAL_UPDATES, SYNC_STORE_NAMES.OUTBOX, SYNC_STORE_NAMES.OUTBOX_RECEIPTS],
       'readwrite',
     );
-    await this.writeLocalLog(transaction, {
-      namespace: this.namespace,
-      localSequence,
-      updateId,
-      updateBytes,
-      direction: LOCAL_UPDATE_DIRECTIONS.LOCAL,
-      createdAt,
-    });
-    if (this.failpoints.consume(INDEXEDDB_FAILPOINTS.AFTER_LOCAL_UPDATE_WRITE)) {
-      transaction.abort();
+    try {
+      if (
+        (await transaction
+          .objectStore(SYNC_STORE_NAMES.OUTBOX_RECEIPTS)
+          .get([this.namespace, updateId])) !== undefined
+      ) {
+        await transaction.done;
+        throw new LocalPersistenceError('Update ID already has a durable receipt.');
+      }
+      await this.writeLocalLog(transaction, {
+        namespace: this.namespace,
+        localSequence,
+        updateId,
+        updateBytes,
+        direction: LOCAL_UPDATE_DIRECTIONS.LOCAL,
+        createdAt,
+      });
+      if (this.failpoints.consume(INDEXEDDB_FAILPOINTS.AFTER_LOCAL_UPDATE_WRITE)) {
+        transaction.abort();
+        await transaction.done;
+      }
+      await transaction.objectStore(SYNC_STORE_NAMES.OUTBOX).add({
+        namespace: this.namespace,
+        updateId,
+        localSequence,
+        updateBytes,
+        payloadHash,
+        createdAt,
+        status: OUTBOX_STATUSES.PENDING,
+        ...(initialState ? { initialState: true as const } : {}),
+      });
       await transaction.done;
+    } catch (error) {
+      await transaction.done.catch(() => undefined);
+      throw error;
     }
-    await transaction.objectStore(SYNC_STORE_NAMES.OUTBOX).put({
-      namespace: this.namespace,
-      updateId,
-      localSequence,
-      updateBytes,
-      payloadHash,
-      createdAt,
-      status: OUTBOX_STATUSES.PENDING,
-    });
-    await transaction.done;
   }
 
   private async writeLocalLog(

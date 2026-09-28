@@ -1,6 +1,7 @@
 export const INDEXEDDB_FAILPOINTS = {
   AFTER_LOCAL_UPDATE_WRITE: 'after-local-update-write',
   AFTER_ACK_WRITE: 'after-ack-write',
+  AFTER_REMOTE_UPDATE_WRITE: 'after-remote-update-write',
   AFTER_SNAPSHOT_WRITE: 'after-snapshot-write',
 } as const;
 

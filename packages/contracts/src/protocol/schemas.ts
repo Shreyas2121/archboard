@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { errorCodeSchema } from '../errors/index.js';
+import { userIdSchema } from '../auth/index.js';
 import {
   applicationIdSchema,
   colorTokenSchema,
@@ -16,6 +17,10 @@ import {
   MAX_LIVE_NODES,
   MAX_LIVE_PRESENTATION_STEPS,
   MAX_PRESENCE_SELECTED_IDS,
+  MAX_PRESENCE_SELECTION_COUNT,
+  MAX_PRESENCE_USER_ID_CHARACTERS,
+  MAX_PRESENCE_USER_NAME_CHARACTERS,
+  MAX_WS_ERROR_MESSAGE_CHARACTERS,
   MAX_WS_FRAME_BYTES,
 } from '../limits/index.js';
 
@@ -38,6 +43,14 @@ export const SERVER_EVENT_NAMES = {
   INVALIDATE: 'invalidate',
 } as const;
 
+// These event names are reserved for later phases. They are not accepted as Phase 4 client messages.
+export const RESERVED_CLIENT_EVENT_NAMES = {
+  PRESENTER_ACQUIRE: 'presenter.acquire',
+  PRESENTER_STEP: 'presenter.step',
+  PRESENTER_RELEASE: 'presenter.release',
+} as const;
+export const RESERVED_SERVER_EVENT_NAMES = { PRESENTER: 'presenter' } as const;
+
 export const BOARD_ROLES = {
   OWNER: 'owner',
   EDITOR: 'editor',
@@ -52,6 +65,7 @@ export const INVALIDATION_RESOURCES = {
 } as const;
 
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+const POSTGRES_BIGINT_MAX_DIGITS = 19;
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const BASE64_BLOCK_CHARACTERS = 4;
 const BYTES_PER_BASE64_BLOCK = 3;
@@ -65,6 +79,7 @@ const SERVER_SEQUENCE_PATTERN = /^(?:0|[1-9]\d*)$/;
 
 export const serverSequenceSchema = z
   .string()
+  .max(POSTGRES_BIGINT_MAX_DIGITS)
   .regex(
     SERVER_SEQUENCE_PATTERN,
     'A server sequence must be a canonical non-negative decimal string.',
@@ -138,28 +153,34 @@ function canonicalBase64Schema(maxDecodedBytes: number) {
   const maxEncodedCharacters =
     Math.ceil(maxDecodedBytes / BYTES_PER_BASE64_BLOCK) * BASE64_BLOCK_CHARACTERS;
 
-  return z.string().superRefine((value, context) => {
-    if (value.length > maxEncodedCharacters || decodedBase64ByteLength(value) > maxDecodedBytes) {
-      context.addIssue({
-        code: 'custom',
-        message: `Decoded Yjs bytes must not exceed ${maxDecodedBytes} bytes.`,
-      });
-      return;
-    }
+  return z
+    .string()
+    .min(1)
+    .superRefine((value, context) => {
+      if (value.length > maxEncodedCharacters || decodedBase64ByteLength(value) > maxDecodedBytes) {
+        context.addIssue({
+          code: 'custom',
+          message: `Decoded Yjs bytes must not exceed ${maxDecodedBytes} bytes.`,
+        });
+        return;
+      }
 
-    if (!hasCanonicalBase64Shape(value)) {
-      context.addIssue({ code: 'custom', message: 'Yjs bytes must use canonical padded base64.' });
-      return;
-    }
+      if (!hasCanonicalBase64Shape(value)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Yjs bytes must use canonical padded base64.',
+        });
+        return;
+      }
 
-    if (!hasCanonicalBase64Padding(value)) {
-      context.addIssue({
-        code: 'custom',
-        message: 'Yjs bytes must use canonical base64 padding bits.',
-      });
-      return;
-    }
-  });
+      if (!hasCanonicalBase64Padding(value)) {
+        context.addIssue({
+          code: 'custom',
+          message: 'Yjs bytes must use canonical base64 padding bits.',
+        });
+        return;
+      }
+    });
 }
 
 export const clientUpdateBase64Schema = canonicalBase64Schema(MAX_CLIENT_UPDATE_BYTES);
@@ -176,7 +197,7 @@ const uniqueApplicationIdListSchema = z
     'Presence selections must not contain duplicate IDs.',
   );
 
-const dragPreviewSchema = z.strictObject({
+export const dragPreviewSchema = z.strictObject({
   positions: z
     .array(z.strictObject({ id: applicationIdSchema, position: pointSchema }))
     .max(MAX_DRAG_PREVIEW_POSITIONS)
@@ -186,13 +207,19 @@ const dragPreviewSchema = z.strictObject({
     ),
 });
 
-const presenceStateSchema = z.strictObject({
-  cursor: pointSchema.nullable(),
-  selectedIds: uniqueApplicationIdListSchema,
-  dragPreview: dragPreviewSchema.nullable(),
-});
+export const presenceStateSchema = z
+  .strictObject({
+    cursor: pointSchema.nullable(),
+    selectedIds: uniqueApplicationIdListSchema,
+    selectedCount: z.number().int().nonnegative().max(MAX_PRESENCE_SELECTION_COUNT).optional(),
+    dragPreview: dragPreviewSchema.nullable(),
+  })
+  .refine(
+    (value) => value.selectedCount === undefined || value.selectedCount >= value.selectedIds.length,
+    'Presence selection count cannot be smaller than the included IDs.',
+  );
 
-const readyLimitsSchema = z.strictObject({
+export const readyLimitsSchema = z.strictObject({
   maxClientUpdateBytes: z.literal(MAX_CLIENT_UPDATE_BYTES),
   maxEncodedYjsStateBytes: z.literal(MAX_ENCODED_YJS_STATE_BYTES),
   maxWebSocketFrameBytes: z.literal(MAX_WS_FRAME_BYTES),
@@ -203,7 +230,7 @@ const readyLimitsSchema = z.strictObject({
   maxPresenceSelectedIds: z.literal(MAX_PRESENCE_SELECTED_IDS),
 });
 
-const helloMessageSchema = z.strictObject({
+export const helloMessageSchema = z.strictObject({
   event: z.literal(CLIENT_EVENT_NAMES.HELLO),
   data: z.strictObject({
     protocolVersion: z.literal(PROTOCOL_VERSION),
@@ -212,7 +239,7 @@ const helloMessageSchema = z.strictObject({
   }),
 });
 
-const clientUpdateMessageSchema = z.strictObject({
+export const clientUpdateMessageSchema = z.strictObject({
   event: z.literal(CLIENT_EVENT_NAMES.UPDATE),
   data: z.strictObject({
     updateId: applicationIdSchema,
@@ -220,7 +247,7 @@ const clientUpdateMessageSchema = z.strictObject({
   }),
 });
 
-const clientPresenceMessageSchema = z.strictObject({
+export const clientPresenceMessageSchema = z.strictObject({
   event: z.literal(CLIENT_EVENT_NAMES.PRESENCE),
   data: presenceStateSchema,
 });
@@ -231,7 +258,7 @@ export const clientMessageSchema = z.discriminatedUnion('event', [
   clientPresenceMessageSchema,
 ]);
 
-const readyMessageSchema = z.strictObject({
+export const readyMessageSchema = z.strictObject({
   event: z.literal(SERVER_EVENT_NAMES.READY),
   data: z.strictObject({
     role: boardRoleSchema,
@@ -242,7 +269,7 @@ const readyMessageSchema = z.strictObject({
   }),
 });
 
-const acknowledgementMessageSchema = z.strictObject({
+export const acknowledgementMessageSchema = z.strictObject({
   event: z.literal(SERVER_EVENT_NAMES.ACK),
   data: z.strictObject({
     updateId: applicationIdSchema,
@@ -250,7 +277,7 @@ const acknowledgementMessageSchema = z.strictObject({
   }),
 });
 
-const serverUpdateMessageSchema = z.strictObject({
+export const serverUpdateMessageSchema = z.strictObject({
   event: z.literal(SERVER_EVENT_NAMES.UPDATE),
   data: z.strictObject({
     updateBase64: clientUpdateBase64Schema,
@@ -258,13 +285,13 @@ const serverUpdateMessageSchema = z.strictObject({
   }),
 });
 
-const serverPresenceMessageSchema = z.strictObject({
+export const serverPresenceMessageSchema = z.strictObject({
   event: z.literal(SERVER_EVENT_NAMES.PRESENCE),
   data: z.strictObject({
     connectionId: applicationIdSchema,
     user: z.strictObject({
-      id: z.string().min(1),
-      name: z.string(),
+      id: userIdSchema.max(MAX_PRESENCE_USER_ID_CHARACTERS),
+      name: z.string().max(MAX_PRESENCE_USER_NAME_CHARACTERS),
       color: colorTokenSchema,
     }),
     presence: presenceStateSchema,
@@ -272,17 +299,17 @@ const serverPresenceMessageSchema = z.strictObject({
   }),
 });
 
-const errorMessageSchema = z.strictObject({
+export const errorMessageSchema = z.strictObject({
   event: z.literal(SERVER_EVENT_NAMES.ERROR),
   data: z.strictObject({
     code: errorCodeSchema,
-    message: z.string(),
+    message: z.string().min(1).max(MAX_WS_ERROR_MESSAGE_CHARACTERS),
     retryable: z.boolean(),
     updateId: applicationIdSchema.optional(),
   }),
 });
 
-const accessChangedMessageSchema = z.strictObject({
+export const accessChangedMessageSchema = z.strictObject({
   event: z.literal(SERVER_EVENT_NAMES.ACCESS_CHANGED),
   data: z.strictObject({
     role: boardRoleSchema.nullable(),
@@ -290,7 +317,8 @@ const accessChangedMessageSchema = z.strictObject({
   }),
 });
 
-const invalidateMessageSchema = z.strictObject({
+// Reserved for later REST resources; parsing the shape does not implement invalidation.
+export const invalidateMessageSchema = z.strictObject({
   event: z.literal(SERVER_EVENT_NAMES.INVALIDATE),
   data: z.strictObject({
     resource: invalidationResourceSchema,
@@ -309,5 +337,16 @@ export const serverMessageSchema = z.discriminatedUnion('event', [
 
 export type ServerSequence = z.infer<typeof serverSequenceSchema>;
 export type BoardRole = z.infer<typeof boardRoleSchema>;
+export type PresenceState = z.infer<typeof presenceStateSchema>;
+export type HelloMessage = z.infer<typeof helloMessageSchema>;
+export type ClientUpdateMessage = z.infer<typeof clientUpdateMessageSchema>;
+export type ClientPresenceMessage = z.infer<typeof clientPresenceMessageSchema>;
+export type ReadyMessage = z.infer<typeof readyMessageSchema>;
+export type AcknowledgementMessage = z.infer<typeof acknowledgementMessageSchema>;
+export type ServerUpdateMessage = z.infer<typeof serverUpdateMessageSchema>;
+export type ServerPresenceMessage = z.infer<typeof serverPresenceMessageSchema>;
+export type ErrorMessage = z.infer<typeof errorMessageSchema>;
+export type AccessChangedMessage = z.infer<typeof accessChangedMessageSchema>;
+export type InvalidateMessage = z.infer<typeof invalidateMessageSchema>;
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 export type ServerMessage = z.infer<typeof serverMessageSchema>;

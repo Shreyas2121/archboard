@@ -2,6 +2,7 @@ import { createRootRoute, createRoute, createRouter } from '@tanstack/react-rout
 
 import { DemoRoute } from './routes/demo-route';
 import { BoardsEntryRoute } from './routes/boards-entry-route';
+import { BoardEditorRoute } from './routes/board-editor-route';
 import { HomeRoute } from './routes/home-route';
 import { NotFoundRoute } from './routes/not-found-route';
 import { RootLayout } from './routes/root-layout';
@@ -30,13 +31,19 @@ const boardsRoute = createRoute({
   component: BoardsEntryRoute,
 });
 
+const boardEditorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/boards/$boardId',
+  component: BoardEditorRoute,
+});
+
 const demoRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/demo',
   component: DemoRoute,
 });
 
-const routeTree = rootRoute.addChildren([homeRoute, boardsRoute, demoRoute]);
+const routeTree = rootRoute.addChildren([homeRoute, boardsRoute, boardEditorRoute, demoRoute]);
 
 export const router = createRouter({
   routeTree,

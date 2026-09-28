@@ -12,9 +12,20 @@ import { BoardPermissionService } from './modules/boards/application/index.js';
 import { InviteService } from './modules/boards/application/invite-service.js';
 import { InvitesController } from './modules/boards/invites.controller.js';
 import { PostgresInvitePersistence } from './modules/boards/infrastructure/postgres-invite-persistence.js';
+import { CollaborationRoomRegistry } from './modules/collaboration/application/room-registry.js';
+import { RoomMaintenanceService } from './modules/collaboration/application/room-maintenance.service.js';
+import { CollaborationUpdateService } from './modules/collaboration/application/collaboration-update-service.js';
+import { DurableUpdateFailpointController } from './modules/collaboration/application/durable-update.js';
+import { PostgresRoomLoader } from './modules/collaboration/infrastructure/room/postgres-room-loader.js';
+import {
+  CompactionFailpointController,
+  PostgresRoomCompactor,
+} from './modules/collaboration/infrastructure/room/postgres-room-compactor.js';
+import { ValidationWorkerPool } from './modules/collaboration/infrastructure/validation-worker/index.js';
 import {
   WEBSOCKET_API_CONFIG,
-  WebSocketUpgradeService,
+  CollaborationGateway,
+  CollaborationUpgradeService,
 } from './modules/collaboration/infrastructure/websocket/index.js';
 import type { ApiConfig } from './platform/config/index.js';
 import { DatabaseModule } from './platform/database/index.js';
@@ -40,23 +51,61 @@ export class AppModule {
         { provide: APP_FILTER, useClass: ApiExceptionFilter },
         ReadinessService,
         { provide: WEBSOCKET_API_CONFIG, useValue: config },
-        WebSocketUpgradeService,
+        CollaborationGateway,
+        CollaborationUpgradeService,
+        PostgresRoomLoader,
+        CompactionFailpointController,
+        PostgresRoomCompactor,
+        RoomMaintenanceService,
+        DurableUpdateFailpointController,
+        { provide: ValidationWorkerPool, useFactory: () => new ValidationWorkerPool() },
         {
-          provide: BoardService,
+          provide: BoardPermissionService,
           inject: [DataSource],
           useFactory: (dataSource: DataSource) =>
+            new BoardPermissionService(new PostgresBoardAuthorityReader(dataSource)),
+        },
+        {
+          provide: CollaborationRoomRegistry,
+          inject: [PostgresRoomLoader],
+          useFactory: (loader: PostgresRoomLoader) => new CollaborationRoomRegistry(loader),
+        },
+        {
+          provide: CollaborationUpdateService,
+          inject: [
+            DataSource,
+            BoardPermissionService,
+            ValidationWorkerPool,
+            DurableUpdateFailpointController,
+          ],
+          useFactory: (
+            dataSource: DataSource,
+            permissions: BoardPermissionService,
+            validator: ValidationWorkerPool,
+            failpoints: DurableUpdateFailpointController,
+          ) => new CollaborationUpdateService(dataSource, permissions, validator, failpoints),
+        },
+        {
+          provide: BoardService,
+          inject: [DataSource, BoardPermissionService, CollaborationGateway],
+          useFactory: (
+            dataSource: DataSource,
+            permissions: BoardPermissionService,
+            gateway: CollaborationGateway,
+          ) =>
             new BoardService(
               new PostgresBoardPersistence(dataSource),
-              new BoardPermissionService(new PostgresBoardAuthorityReader(dataSource)),
+              permissions,
+              (boardId, userId) => gateway.accessChanged(boardId, userId),
             ),
         },
         {
           provide: InviteService,
-          inject: [DataSource],
-          useFactory: (dataSource: DataSource) =>
+          inject: [DataSource, BoardPermissionService],
+          useFactory: (dataSource: DataSource, permissions: BoardPermissionService) =>
             new InviteService(
               new PostgresInvitePersistence(dataSource, config.allowedWebOrigins[0]!),
-              new BoardPermissionService(new PostgresBoardAuthorityReader(dataSource)),
+              permissions,
             ),
         },
       ],

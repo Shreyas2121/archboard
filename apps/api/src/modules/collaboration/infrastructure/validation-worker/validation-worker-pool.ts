@@ -1,11 +1,16 @@
-import { ERROR_CODES, type ErrorCode } from '@archboard/contracts';
-import { Worker } from 'node:worker_threads';
-
 import {
-  MAX_VALIDATION_QUEUE_DEPTH,
+  ERROR_CODES,
+  MAX_CLIENT_UPDATE_BYTES,
+  MAX_ENCODED_YJS_STATE_BYTES,
+  MAX_VALIDATION_QUEUE,
   MAX_VALIDATION_WORKERS,
   VALIDATION_TIMEOUT_MS,
-} from '../../../../platform/config/index.js';
+  type ErrorCode,
+} from '@archboard/contracts';
+import { Worker } from 'node:worker_threads';
+import { existsSync } from 'node:fs';
+import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
+
 import {
   VALIDATION_FAILURE_KINDS,
   VALIDATION_WORKER_DIRECTIVES,
@@ -55,6 +60,16 @@ function requireNonNegativeInteger(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${name} cannot be negative.`);
 }
 
+function defaultWorkerUrl(): URL {
+  const adjacent = new URL('./validation-worker.entry.js', import.meta.url);
+  if (existsSync(adjacent)) return adjacent;
+  // Source-mode Nest tests run against compiled worker assets in dist.
+  return new URL(
+    '../../../../../dist/modules/collaboration/infrastructure/validation-worker/validation-worker.entry.js',
+    import.meta.url,
+  );
+}
+
 export class ValidationWorkerPool {
   readonly timeoutMs: number;
   readonly maxWorkers: number;
@@ -69,8 +84,8 @@ export class ValidationWorkerPool {
   public constructor(options: ValidationWorkerPoolOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? VALIDATION_TIMEOUT_MS;
     this.maxWorkers = options.maxWorkers ?? MAX_VALIDATION_WORKERS;
-    this.maxQueueDepth = options.maxQueueDepth ?? MAX_VALIDATION_QUEUE_DEPTH;
-    this.workerUrl = options.workerUrl ?? new URL('./validation-worker.entry.js', import.meta.url);
+    this.maxQueueDepth = options.maxQueueDepth ?? MAX_VALIDATION_QUEUE;
+    this.workerUrl = options.workerUrl ?? defaultWorkerUrl();
     requirePositiveInteger('timeoutMs', this.timeoutMs);
     requirePositiveInteger('maxWorkers', this.maxWorkers);
     requireNonNegativeInteger('maxQueueDepth', this.maxQueueDepth);
@@ -93,7 +108,26 @@ export class ValidationWorkerPool {
     if (this.closed) {
       return Promise.reject(this.workerFailure('The validation worker pool is closed.'));
     }
+    if (
+      !(input.acceptedState instanceof Uint8Array) ||
+      !(input.update instanceof Uint8Array) ||
+      input.acceptedState.byteLength > MAX_ENCODED_YJS_STATE_BYTES ||
+      input.update.byteLength > MAX_CLIENT_UPDATE_BYTES
+    ) {
+      return Promise.reject(
+        new ValidationWorkerError(
+          ERROR_CODES.DOCUMENT_LIMIT,
+          VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT,
+          'The update or accepted state exceeds its byte limit.',
+          false,
+        ),
+      );
+    }
     if (this.workers.size >= this.maxWorkers && this.queue.length >= this.maxQueueDepth) {
+      reportCollaborationMetric('collaboration.validation_reject', {
+        kind: VALIDATION_FAILURE_KINDS.OVERLOADED,
+        count: 1,
+      });
       return Promise.reject(
         new ValidationWorkerError(
           ERROR_CODES.SERVER_BUSY,
@@ -107,7 +141,13 @@ export class ValidationWorkerPool {
     const directive = this.nextDirective;
     this.nextDirective = VALIDATION_WORKER_DIRECTIVES.VALIDATE;
     return new Promise((resolve, reject) => {
-      const job: ValidationJob = { input, directive, resolve, reject };
+      // Snapshot caller-owned buffers at admission, including jobs waiting in the queue.
+      const job: ValidationJob = {
+        input: { acceptedState: input.acceptedState.slice(), update: input.update.slice() },
+        directive,
+        resolve,
+        reject,
+      };
       if (this.workers.size < this.maxWorkers) this.start(job);
       else this.queue.push(job);
     });
@@ -122,8 +162,8 @@ export class ValidationWorkerPool {
 
   private start(job: ValidationJob): void {
     const request: ValidationWorkerRequest = {
-      acceptedState: job.input.acceptedState.slice(),
-      update: job.input.update.slice(),
+      acceptedState: job.input.acceptedState,
+      update: job.input.update,
       directive: job.directive,
     };
     const worker = new Worker(this.workerUrl, { workerData: request });
@@ -142,6 +182,10 @@ export class ValidationWorkerPool {
     };
 
     const timer = setTimeout(() => {
+      reportCollaborationMetric('collaboration.validation_reject', {
+        kind: VALIDATION_FAILURE_KINDS.TIMEOUT,
+        count: 1,
+      });
       finish(() =>
         job.reject(
           new ValidationWorkerError(
@@ -159,6 +203,10 @@ export class ValidationWorkerPool {
       finish(() => {
         if (response.ok) job.resolve(response);
         else {
+          reportCollaborationMetric('collaboration.validation_reject', {
+            kind: response.kind,
+            count: 1,
+          });
           job.reject(
             new ValidationWorkerError(response.code, response.kind, response.message, false),
           );

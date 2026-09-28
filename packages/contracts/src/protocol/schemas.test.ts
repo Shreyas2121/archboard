@@ -10,6 +10,9 @@ import {
   MAX_LIVE_NODES,
   MAX_LIVE_PRESENTATION_STEPS,
   MAX_PRESENCE_SELECTED_IDS,
+  MAX_DRAG_PREVIEW_POSITIONS,
+  MAX_PRESENCE_SELECTION_COUNT,
+  MAX_WS_ERROR_MESSAGE_CHARACTERS,
   MAX_WS_FRAME_BYTES,
 } from '../limits/index.js';
 import {
@@ -167,6 +170,11 @@ describe('WebSocket protocol contracts', () => {
     const oversizedUpdate = Buffer.alloc(MAX_CLIENT_UPDATE_BYTES + 1).toString('base64');
 
     expect(clientUpdateBase64Schema.safeParse(oversizedUpdate).success).toBe(false);
+    expect(
+      clientUpdateBase64Schema.safeParse(Buffer.alloc(MAX_CLIENT_UPDATE_BYTES).toString('base64'))
+        .success,
+    ).toBe(true);
+    expect(clientUpdateBase64Schema.safeParse('').success).toBe(false);
   });
 
   it('rejects an oversized snapshot without running unbounded lexical validation', () => {
@@ -201,5 +209,67 @@ describe('WebSocket protocol contracts', () => {
     };
 
     expect(clientMessageSchema.safeParse(message).success).toBe(false);
+  });
+
+  it('accepts a bounded selection count for truncated presence and rejects bad counts', () => {
+    const valid = {
+      event: CLIENT_EVENT_NAMES.PRESENCE,
+      data: { ...presence, selectedCount: MAX_PRESENCE_SELECTION_COUNT },
+    };
+    expect(clientMessageSchema.safeParse(valid).success).toBe(true);
+    const fractionalCount = Number.parseFloat('1.5');
+    for (const selectedCount of [-1, 0, fractionalCount, MAX_PRESENCE_SELECTION_COUNT + 1]) {
+      expect(
+        clientMessageSchema.safeParse({ ...valid, data: { ...valid.data, selectedCount } }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('rejects excessive or repeated drag preview positions', () => {
+    const positions = Array.from({ length: MAX_DRAG_PREVIEW_POSITIONS + 1 }, (_unused, index) => ({
+      id: testUuid(index + 1),
+      position: { x: 0, y: 0 },
+    }));
+    const message = {
+      event: CLIENT_EVENT_NAMES.PRESENCE,
+      data: { ...presence, dragPreview: { positions } },
+    };
+    expect(clientMessageSchema.safeParse(message).success).toBe(false);
+    expect(
+      clientMessageSchema.safeParse({
+        ...message,
+        data: { ...message.data, dragPreview: { positions: [positions[0], positions[0]] } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects unknown server fields, invalid roles and oversized safe errors', () => {
+    const error = {
+      event: SERVER_EVENT_NAMES.ERROR,
+      data: {
+        code: ERROR_CODES.DOCUMENT_INVALID,
+        message: 'Invalid update.',
+        retryable: false,
+      },
+    };
+    expect(
+      serverMessageSchema.safeParse({ ...error, data: { ...error.data, detail: 'private' } })
+        .success,
+    ).toBe(false);
+    expect(
+      serverMessageSchema.safeParse({
+        ...error,
+        data: { ...error.data, message: 'x'.repeat(MAX_WS_ERROR_MESSAGE_CHARACTERS + 1) },
+      }).success,
+    ).toBe(false);
+    expect(
+      serverMessageSchema.safeParse({
+        event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
+        data: {
+          role: 'administrator',
+          archived: false,
+        },
+      }).success,
+    ).toBe(false);
   });
 });

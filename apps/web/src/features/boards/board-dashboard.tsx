@@ -257,6 +257,11 @@ function BoardCard({
         {new Date(board.contentUpdatedAt).toLocaleDateString()}
       </p>
       <div className="mt-5 flex flex-wrap gap-2 border-t pt-4">
+        <Button asChild size="sm">
+          <Link to="/boards/$boardId" params={{ boardId: board.id }}>
+            Open board
+          </Link>
+        </Button>
         {canEdit ? (
           <Button type="button" size="sm" variant="outline" onClick={() => onAction('edit', board)}>
             <Pencil /> Edit details

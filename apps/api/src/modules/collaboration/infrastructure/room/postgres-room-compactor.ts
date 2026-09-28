@@ -1,0 +1,108 @@
+import { MAX_ENCODED_YJS_STATE_BYTES, type ServerSequence } from '@archboard/contracts';
+import { Injectable } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
+import type { DataSource } from 'typeorm';
+
+import { BoardTransaction } from '../../../boards/infrastructure/board-transaction.js';
+import { BoardEntity } from '../../../boards/infrastructure/entities/board.entity.js';
+import { BoardSnapshotEntity } from '../entities/board-snapshot.entity.js';
+import { BoardUpdateEntity } from '../entities/board-update.entity.js';
+import { UpdateReceiptEntity } from '../entities/update-receipt.entity.js';
+import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
+
+export const COMPACTION_FAILPOINTS = {
+  AFTER_SNAPSHOT_WRITE: 'afterSnapshotWrite',
+  AFTER_UPDATE_DELETE: 'afterUpdateDelete',
+  AFTER_COMMIT: 'afterCommit',
+} as const;
+
+export type CompactionFailpoint =
+  (typeof COMPACTION_FAILPOINTS)[keyof typeof COMPACTION_FAILPOINTS];
+
+@Injectable()
+export class CompactionFailpointController {
+  private armed: { stage: CompactionFailpoint; handler: () => Promise<void> } | undefined;
+
+  public arm(stage: CompactionFailpoint, handler: () => Promise<void>): void {
+    this.armed = { stage, handler };
+  }
+
+  public async reach(stage: CompactionFailpoint): Promise<void> {
+    if (this.armed?.stage !== stage) return;
+    const { handler } = this.armed;
+    this.armed = undefined;
+    await handler();
+  }
+}
+
+@Injectable()
+export class PostgresRoomCompactor {
+  private readonly transactions: BoardTransaction;
+
+  public constructor(
+    @InjectDataSource() dataSource: DataSource,
+    private readonly failpoints: CompactionFailpointController,
+  ) {
+    this.transactions = new BoardTransaction(dataSource);
+  }
+
+  public async compact(
+    boardId: string,
+    throughSeq: ServerSequence,
+    state: Uint8Array,
+  ): Promise<void> {
+    const started = performance.now();
+    const updateBytes = Buffer.from(state);
+    if (updateBytes.byteLength === 0 || updateBytes.byteLength > MAX_ENCODED_YJS_STATE_BYTES) {
+      throw new Error('Room snapshot exceeds the encoded state limit.');
+    }
+    await this.transactions.run(async (runner) => {
+      const board = await runner.manager
+        .getRepository(BoardEntity)
+        .createQueryBuilder('board')
+        .where('board.id = :boardId', { boardId })
+        .setLock('pessimistic_write')
+        .getOne();
+      if (board?.latestSeq !== throughSeq)
+        throw new Error('Room sequence changed before compaction.');
+      const snapshot = await runner.manager
+        .getRepository(BoardSnapshotEntity)
+        .findOneBy({ boardId });
+      if (!snapshot || BigInt(snapshot.throughSeq) > BigInt(throughSeq)) {
+        throw new Error('Room snapshot is missing or ahead of the room.');
+      }
+      const receiptsBefore = await runner.manager
+        .getRepository(UpdateReceiptEntity)
+        .countBy({ boardId });
+      await runner.manager.getRepository(BoardSnapshotEntity).update(
+        { boardId },
+        {
+          throughSeq,
+          updateBytes,
+          byteLength: updateBytes.byteLength,
+          updatedAt: () => 'CURRENT_TIMESTAMP',
+        },
+      );
+      await this.failpoints.reach(COMPACTION_FAILPOINTS.AFTER_SNAPSHOT_WRITE);
+      await runner.manager
+        .getRepository(BoardUpdateEntity)
+        .createQueryBuilder()
+        .delete()
+        .where('board_id = :boardId', { boardId })
+        .andWhere('seq <= CAST(:throughSeq AS bigint)', { throughSeq })
+        .execute();
+      const receiptsAfter = await runner.manager
+        .getRepository(UpdateReceiptEntity)
+        .countBy({ boardId });
+      if (receiptsAfter !== receiptsBefore) {
+        throw new Error('Compaction would remove durable update receipts.');
+      }
+      await this.failpoints.reach(COMPACTION_FAILPOINTS.AFTER_UPDATE_DELETE);
+    });
+    await this.failpoints.reach(COMPACTION_FAILPOINTS.AFTER_COMMIT);
+    reportCollaborationMetric('collaboration.compaction', {
+      durationMs: Math.round(performance.now() - started),
+      snapshotBytes: updateBytes.byteLength,
+    });
+  }
+}

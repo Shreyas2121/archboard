@@ -31,6 +31,21 @@ export interface OutboxRecord {
   readonly payloadHash: Uint8Array;
   readonly createdAt: string;
   readonly status: (typeof OUTBOX_STATUSES)['PENDING'];
+  readonly initialState?: true;
+}
+
+export interface OutboxReceiptRecord {
+  readonly namespace: string;
+  readonly updateId: string;
+  readonly localSequence: number;
+  readonly serverSequence: ServerSequence;
+  readonly acknowledgedAt: string;
+  readonly initialState?: true;
+}
+
+export interface ReceivedStateRecord {
+  readonly namespace: string;
+  readonly lastServerSequence: ServerSequence;
 }
 
 export interface LocalSnapshotRecord {
@@ -65,6 +80,15 @@ export interface SyncClientDatabase extends DBSchema {
       byNamespace: string;
       byNamespaceAndSequence: [string, number];
     };
+  };
+  outboxReceipts: {
+    key: [string, string];
+    value: OutboxReceiptRecord;
+    indexes: { byNamespace: string };
+  };
+  receivedState: {
+    key: string;
+    value: ReceivedStateRecord;
   };
   boardCache: {
     key: string;
@@ -102,6 +126,15 @@ export async function openSyncClientDatabase(): Promise<SyncClientDatabaseConnec
         database.createObjectStore(SYNC_STORE_NAMES.BOARD_CACHE, {
           keyPath: 'namespace',
         });
+      }
+      if (!database.objectStoreNames.contains(SYNC_STORE_NAMES.OUTBOX_RECEIPTS)) {
+        const store = database.createObjectStore(SYNC_STORE_NAMES.OUTBOX_RECEIPTS, {
+          keyPath: ['namespace', 'updateId'],
+        });
+        store.createIndex(SYNC_INDEX_NAMES.BY_NAMESPACE, 'namespace');
+      }
+      if (!database.objectStoreNames.contains(SYNC_STORE_NAMES.RECEIVED_STATE)) {
+        database.createObjectStore(SYNC_STORE_NAMES.RECEIVED_STATE, { keyPath: 'namespace' });
       }
     },
   });

@@ -1,4 +1,9 @@
-import { ERROR_CODES, type ErrorCode } from '@archboard/contracts';
+import {
+  ERROR_CODES,
+  MAX_CLIENT_UPDATE_BYTES,
+  MAX_ENCODED_YJS_STATE_BYTES,
+  type ErrorCode,
+} from '@archboard/contracts';
 import { DocumentValidationError, validateGraphDocument } from '@archboard/document-model';
 import { parentPort, workerData } from 'node:worker_threads';
 import * as Y from 'yjs';
@@ -38,7 +43,13 @@ function mapFailure(error: unknown): ValidationWorkerResponse {
       error.code === ERROR_CODES.DOCUMENT_LIMIT
         ? VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT
         : VALIDATION_FAILURE_KINDS.DOCUMENT_INVALID;
-    return failure(error.code, kind, error.message);
+    return failure(
+      error.code,
+      kind,
+      kind === VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT
+        ? 'The document exceeds a collaboration limit.'
+        : 'The update violates the graph schema.',
+    );
   }
   return failure(
     ERROR_CODES.DOCUMENT_INVALID,
@@ -49,6 +60,16 @@ function mapFailure(error: unknown): ValidationWorkerResponse {
 
 function validate(request: ValidationWorkerRequest): ValidationWorkerResponse {
   const startedAt = performance.now();
+  if (
+    request.update.byteLength > MAX_CLIENT_UPDATE_BYTES ||
+    request.acceptedState.byteLength > MAX_ENCODED_YJS_STATE_BYTES
+  ) {
+    return failure(
+      ERROR_CODES.DOCUMENT_LIMIT,
+      VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT,
+      'The update or accepted state exceeds its byte limit.',
+    );
+  }
   const accepted = new Y.Doc();
   const candidate = new Y.Doc();
   try {
@@ -61,9 +82,17 @@ function validate(request: ValidationWorkerRequest): ValidationWorkerResponse {
     assertCausallyComplete(candidate);
     validateGraphDocument(candidate, accepted);
 
+    const candidateState = Y.encodeStateAsUpdate(candidate);
+    if (candidateState.byteLength > MAX_ENCODED_YJS_STATE_BYTES) {
+      return failure(
+        ERROR_CODES.DOCUMENT_LIMIT,
+        VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT,
+        'The candidate state exceeds its byte limit.',
+      );
+    }
     return {
       ok: true,
-      candidateState: Y.encodeStateAsUpdate(candidate),
+      candidateState,
       elapsedMs: performance.now() - startedAt,
       heapUsedBytes: process.memoryUsage().heapUsed,
     };

@@ -111,6 +111,10 @@ export class BoardService {
   public constructor(
     private readonly persistence: BoardPersistence,
     private readonly permissions: BoardPermissionService,
+    private readonly accessChanged: (
+      boardId: string,
+      userId?: string,
+    ) => Promise<void> = async () => undefined,
   ) {}
 
   public async create(
@@ -217,7 +221,7 @@ export class BoardService {
     input: BoardVersionRequest,
     archived: boolean,
   ): Promise<BoardDetail> {
-    return this.persistence.run(async (scope) => {
+    const result = await this.persistence.run(async (scope) => {
       const activeOwnedCount = archived ? undefined : await scope.lockOwnerAndCount(actorUserId);
       const decision = await this.permissions.manageLifecycle(
         scope.permissionTransaction,
@@ -241,6 +245,8 @@ export class BoardService {
       if (!changed) throw new Error('Updated board disappeared inside its transaction.');
       return detail(changed, decision.role);
     });
+    await this.accessChanged(boardId);
+    return result;
   }
 
   public async duplicate(
@@ -293,7 +299,7 @@ export class BoardService {
     targetUserId: string,
     input: ChangeMemberRole,
   ): Promise<BoardMember> {
-    return this.persistence.run(async (scope) => {
+    const result = await this.persistence.run(async (scope) => {
       const decision = await this.permissions.manageAccess(
         scope.permissionTransaction,
         boardId,
@@ -311,6 +317,8 @@ export class BoardService {
       if (!changed) throw new Error('Updated member disappeared inside its transaction.');
       return changed;
     });
+    await this.accessChanged(boardId, targetUserId);
+    return result;
   }
 
   public async removeMember(
@@ -329,5 +337,6 @@ export class BoardService {
         throw new BoardServiceError(ERROR_CODES.FORBIDDEN, 'The board owner cannot be removed.');
       await scope.removeMember(boardId, targetUserId);
     });
+    await this.accessChanged(boardId, targetUserId);
   }
 }

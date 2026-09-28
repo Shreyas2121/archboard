@@ -5,7 +5,7 @@ const packageManagerScript = process.env.npm_execpath;
 if (!packageManagerScript) throw new Error('Browser unit tests must be invoked through pnpm.');
 
 const command = ['--filter', '@archboard/sync-client', 'run', 'test'];
-if (patterns.length > 0) command.push('--', ...patterns);
+if (patterns.length > 0) command.push(...patterns);
 const result = spawnSync(process.execPath, [packageManagerScript, ...command], {
   stdio: 'inherit',
 });

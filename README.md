@@ -1,13 +1,17 @@
 # Archboard
 
-Archboard is an offline-capable collaborative architecture editor. This repository is a pnpm
+Archboard is a local-first collaborative architecture editor. This repository is a pnpm
 monorepo containing independently deployable web and API applications plus framework-independent
 shared packages.
 
-The current implementation scope is Phase 3: identity and board lifecycle. Read
-[`phase3.md`](./phase3.md), the commit-by-commit [`guide2.md`](./guide2.md), and the
-[Phase 3 audit](./docs/phase-3-identity-boards.md) before changing this scope. Phase 1 and Phase 2
-evidence remain authoritative inputs.
+The current implementation scope is Phase 4: durable collaboration. Read
+[`phase4.md`](./phase4.md), the commit-by-commit [`guide3.md`](./guide3.md), and the
+[Phase 4 audit](./docs/phase-4-collaboration.md) before changing this scope. Earlier-phase
+evidence remains authoritative input.
+
+The Phase 4 exit gate is **open**. The [Phase 4 evidence index](./docs/evidence/phase4/README.md)
+records completed task commits and the failed or unrun acceptance gates. A local merge into
+`main` integrates the branch history; it does not certify the gate or authorize deployment.
 
 The Phase 3 exit gate is **passed** on the recorded automated checks and subsequent real GitHub
 browser follow-up. The [Phase 3 evidence index](./docs/evidence/phase3/README.md) distinguishes
@@ -49,9 +53,9 @@ starts the API compiler, API process, and Vite development server together. `Ctr
 | `pnpm install --frozen-lockfile` | Reproduce the dependency graph                                  |
 | `pnpm dev`                       | Run the API and web development servers                         |
 | `pnpm format:check`              | Check formatting                                                |
-| `pnpm lint`                      | Run lint and package-boundary rules                             |
+| `pnpm lint`                      | Run ESLint                                                      |
 | `pnpm typecheck`                 | Run strict TypeScript checks                                    |
-| `pnpm test`                      | Run workspace unit tests                                        |
+| `pnpm test`                      | Run workspace units, including native Chrome sync-client tests  |
 | `pnpm test:integration`          | Run API integration tests                                       |
 | `pnpm test:browser`              | Run browser-backed sync-client package units                    |
 | `pnpm boundary:check`            | Check package boundaries and negative fixtures                  |
@@ -64,6 +68,9 @@ starts the API compiler, API process, and Vite development server together. `Ctr
 | `pnpm phase2:measure`            | Measure the cached local editor in Chrome                       |
 | `pnpm phase2:verify`             | Run the complete Phase 2 static/package gate                    |
 | `pnpm phase3:verify`             | Run the Phase 3 automated gate with real PostgreSQL integration |
+| `pnpm phase4:quick`              | Run focused static, unit/browser-package, and build checks      |
+| `pnpm phase4:verify`             | Run the Phase 4 database, socket, browser, and measured gate    |
+| `pnpm phase4:verify:legacy`      | Also replay the older phase verifier scripts for audit          |
 
 The browser-backed sync-client units use Playwright with an installed stable Google Chrome. Package
 installation does not download a second browser binary. The web application does not retain an

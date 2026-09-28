@@ -1,7 +1,8 @@
 import { ERROR_CODES } from '@archboard/contracts';
-import { Controller, Get, Injectable } from '@nestjs/common';
+import { Controller, Get, Inject, Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
+import { CollaborationWriterLockService } from '../database/index.js';
 
 import { fail } from './api-boundary.js';
 
@@ -12,16 +13,23 @@ const REQUIRED_TABLES = [
   'board_members',
   'board_invites',
   'board_snapshots',
+  'board_updates',
+  'update_receipts',
   'api_idempotency',
 ] as const;
 
 @Injectable()
 export class ReadinessService {
-  public constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  public constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @Inject(CollaborationWriterLockService)
+    private readonly writerLock: CollaborationWriterLockService,
+  ) {}
 
   public async ready(): Promise<boolean> {
     if (!this.dataSource.isInitialized) return false;
     try {
+      if (!(await this.writerLock.isReady())) return false;
       if (await this.dataSource.showMigrations()) return false;
       const runner = this.dataSource.createQueryRunner();
       try {

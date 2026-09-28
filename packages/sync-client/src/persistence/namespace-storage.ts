@@ -8,6 +8,8 @@ import {
   type LocalSnapshotRecord,
   type LocalUpdateRecord,
   type OutboxRecord,
+  type OutboxReceiptRecord,
+  type ReceivedStateRecord,
 } from './database.js';
 import { boardStorageNamespaceKey, type BoardStorageNamespace } from './namespace.js';
 
@@ -15,6 +17,8 @@ export interface BoardStorageNamespaceRecords {
   readonly snapshot: LocalSnapshotRecord | null;
   readonly localUpdates: readonly LocalUpdateRecord[];
   readonly outbox: readonly OutboxRecord[];
+  readonly receipts: readonly OutboxReceiptRecord[];
+  readonly receivedState: ReceivedStateRecord | null;
   readonly boardCache: BoardCacheRecord | null;
 }
 
@@ -24,12 +28,24 @@ export async function listBoardStorageNamespaceRecords(
   const key = boardStorageNamespaceKey(namespace);
   const database = await openSyncClientDatabase();
   try {
-    const [snapshot, localUpdates, outbox, boardCache] = await Promise.all([
-      database.get(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS, key),
-      database.getAllFromIndex(SYNC_STORE_NAMES.LOCAL_UPDATES, SYNC_INDEX_NAMES.BY_NAMESPACE, key),
-      database.getAllFromIndex(SYNC_STORE_NAMES.OUTBOX, SYNC_INDEX_NAMES.BY_NAMESPACE, key),
-      database.get(SYNC_STORE_NAMES.BOARD_CACHE, key),
-    ]);
+    const [snapshot, localUpdates, outbox, receipts, receivedState, boardCache] = await Promise.all(
+      [
+        database.get(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS, key),
+        database.getAllFromIndex(
+          SYNC_STORE_NAMES.LOCAL_UPDATES,
+          SYNC_INDEX_NAMES.BY_NAMESPACE,
+          key,
+        ),
+        database.getAllFromIndex(SYNC_STORE_NAMES.OUTBOX, SYNC_INDEX_NAMES.BY_NAMESPACE, key),
+        database.getAllFromIndex(
+          SYNC_STORE_NAMES.OUTBOX_RECEIPTS,
+          SYNC_INDEX_NAMES.BY_NAMESPACE,
+          key,
+        ),
+        database.get(SYNC_STORE_NAMES.RECEIVED_STATE, key),
+        database.get(SYNC_STORE_NAMES.BOARD_CACHE, key),
+      ],
+    );
     return {
       snapshot: snapshot === undefined ? null : copyLocalSnapshot(snapshot),
       localUpdates: localUpdates
@@ -38,6 +54,8 @@ export async function listBoardStorageNamespaceRecords(
       outbox: outbox
         .sort((left, right) => left.localSequence - right.localSequence)
         .map(copyOutboxRecord),
+      receipts: receipts.sort((left, right) => left.localSequence - right.localSequence),
+      receivedState: receivedState ?? null,
       boardCache: boardCache ?? null,
     };
   } finally {
@@ -54,6 +72,8 @@ export async function deleteBoardStorageNamespace(namespace: BoardStorageNamespa
         SYNC_STORE_NAMES.LOCAL_SNAPSHOTS,
         SYNC_STORE_NAMES.LOCAL_UPDATES,
         SYNC_STORE_NAMES.OUTBOX,
+        SYNC_STORE_NAMES.OUTBOX_RECEIPTS,
+        SYNC_STORE_NAMES.RECEIVED_STATE,
         SYNC_STORE_NAMES.BOARD_CACHE,
       ],
       'readwrite',
@@ -66,14 +86,22 @@ export async function deleteBoardStorageNamespace(namespace: BoardStorageNamespa
       .objectStore(SYNC_STORE_NAMES.OUTBOX)
       .index(SYNC_INDEX_NAMES.BY_NAMESPACE)
       .getAllKeys(key);
+    const receiptKeys = await transaction
+      .objectStore(SYNC_STORE_NAMES.OUTBOX_RECEIPTS)
+      .index(SYNC_INDEX_NAMES.BY_NAMESPACE)
+      .getAllKeys(key);
     await Promise.all([
       transaction.objectStore(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS).delete(key),
       transaction.objectStore(SYNC_STORE_NAMES.BOARD_CACHE).delete(key),
+      transaction.objectStore(SYNC_STORE_NAMES.RECEIVED_STATE).delete(key),
       ...localUpdateKeys.map((recordKey) =>
         transaction.objectStore(SYNC_STORE_NAMES.LOCAL_UPDATES).delete(recordKey),
       ),
       ...outboxKeys.map((recordKey) =>
         transaction.objectStore(SYNC_STORE_NAMES.OUTBOX).delete(recordKey),
+      ),
+      ...receiptKeys.map((recordKey) =>
+        transaction.objectStore(SYNC_STORE_NAMES.OUTBOX_RECEIPTS).delete(recordKey),
       ),
     ]);
     await transaction.done;

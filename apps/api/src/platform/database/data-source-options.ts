@@ -1,5 +1,6 @@
 import type { ApiConfig } from '../config/index.js';
 import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
+import { RetainCompactedUpdateReceipts1790426800000 } from '../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
 import { DATABASE_ENTITIES } from './database-entities.js';
 
 export function runtimeDataSourceOptions(config: ApiConfig) {
@@ -7,7 +8,10 @@ export function runtimeDataSourceOptions(config: ApiConfig) {
     type: 'postgres' as const,
     url: config.databaseUrl,
     entities: [...DATABASE_ENTITIES],
-    migrations: [InitialDatabaseFoundation1789300000000],
+    migrations: [
+      InitialDatabaseFoundation1789300000000,
+      RetainCompactedUpdateReceipts1790426800000,
+    ],
     synchronize: false,
     migrationsRun: false,
     extra: {
