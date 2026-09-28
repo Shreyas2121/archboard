@@ -45,6 +45,7 @@ import {
   LOCAL_DEMO_USER_KEY,
   OrderedSyncClient,
   SYNC_PHASES,
+  WRITER_SESSION_PHASES,
   type SyncStatus,
   type WriterSessionSnapshot,
 } from '@archboard/sync-client';
@@ -214,6 +215,23 @@ export class EditorSession {
   public async startSync(): Promise<void> {
     await this.syncClient?.start();
     this.refresh();
+  }
+
+  public canReloadServerVersion(): boolean {
+    return (
+      this.board !== undefined &&
+      this.writerSession.getSnapshot().phase === WRITER_SESSION_PHASES.WRITER &&
+      this.syncClient?.getSnapshot().ready === true &&
+      !this.accessDenied
+    );
+  }
+
+  /** The caller presents the data-loss warning and navigates only after this resolves. */
+  public async clearLocalBoardForServerReload(): Promise<void> {
+    if (!this.canReloadServerVersion()) throw new Error('The server version is unavailable.');
+    this.syncClient?.stop();
+    await this.writerSession.clearOwnedLocalState();
+    await this.close();
   }
 
   private async ensureBootstrap(role: BoardRole | null): Promise<void> {

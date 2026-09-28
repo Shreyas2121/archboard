@@ -98,6 +98,7 @@ export class OrderedSyncClient {
   private inFlightId: string | null = null;
   private causalGapId: string | null = null;
   private retryDelay = INITIAL_RETRY_MS;
+  private reconnectCount = 0;
   private recoveryCode: ErrorCode | null = null;
   private accessDenied = false;
   private pendingCount = 0;
@@ -440,6 +441,8 @@ export class OrderedSyncClient {
       this.retryDelay * (1 + this.random() * RETRY_JITTER_FRACTION),
     );
     this.retryDelay = Math.min(MAX_RETRY_MS, this.retryDelay * RETRY_MULTIPLIER);
+    this.reconnectCount += 1;
+    console.info(JSON.stringify({ event: 'collaboration.reconnect', count: this.reconnectCount }));
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
       this.connect();

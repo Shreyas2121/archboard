@@ -202,4 +202,24 @@ describe('Web Lock and BroadcastChannel writer ownership in independent pages', 
     expect(reopened.getProjection().nodes.map(({ id }) => id)).toEqual([replacement.id]);
     await reopened.close();
   });
+
+  it('clears only the owned namespace after explicit reload, including pending bytes', async () => {
+    const targetNamespace = namespace();
+    const neighborNamespace = { ...targetNamespace, userId: 'another-account' };
+    const target = await BrowserWriterSession.open({ namespace: targetNamespace });
+    const neighbor = await BrowserWriterSession.open({ namespace: neighborNamespace });
+    target.executeMutation((document) => createNode(document, node('Pending target')));
+    neighbor.executeMutation((document) => createNode(document, node('Other account')));
+    await Promise.all([target.whenIdle(), neighbor.whenIdle()]);
+    expect((await listBoardStorageNamespaceRecords(targetNamespace)).outbox).toHaveLength(1);
+    await target.clearOwnedLocalState();
+    expect((await listBoardStorageNamespaceRecords(targetNamespace)).outbox).toEqual([]);
+    expect((await listBoardStorageNamespaceRecords(targetNamespace)).localUpdates).toEqual([]);
+    expect((await listBoardStorageNamespaceRecords(targetNamespace)).snapshot).toBeNull();
+    expect((await listBoardStorageNamespaceRecords(neighborNamespace)).outbox).toHaveLength(1);
+    expect((await navigator.locks.query()).held?.map(({ name }) => name)).toContain(
+      writerLockName(targetNamespace),
+    );
+    await Promise.all([target.close(), neighbor.close()]);
+  });
 });

@@ -17,6 +17,7 @@ import {
   DurableUpdateRejectedError,
 } from './durable-update.js';
 import type { CollaborationRoom } from './room-registry.js';
+import { reportCollaborationMetric } from './collaboration-metrics.js';
 
 const NEXT_SEQUENCE_INCREMENT = 1n;
 
@@ -101,8 +102,9 @@ export class CollaborationUpdateService {
     exactBytes: Buffer,
     payloadHash: Buffer,
   ): Promise<RoomUpdateResult> {
+    const started = performance.now();
     try {
-      return await this.transaction.run(async (runner) => {
+      const result = await this.transaction.run(async (runner) => {
         const decision = await this.permissions.editGraph(runner, boardId, actorUserId);
         if (!decision.allowed)
           throw new DurableUpdateRejectedError(decision.code, 'Board write unavailable.');
@@ -141,6 +143,11 @@ export class CollaborationUpdateService {
         await this.failpoints.reach(DURABLE_UPDATE_FAILPOINTS.DATABASE_COMMIT);
         return { sequence, duplicate: false };
       });
+      reportCollaborationMetric('collaboration.db_write', {
+        durationMs: Math.round(performance.now() - started),
+        duplicate: result.duplicate,
+      });
+      return result;
     } catch (error) {
       if (error instanceof DurableUpdateRejectedError) throw error;
       throw new DurableUpdateRejectedError(

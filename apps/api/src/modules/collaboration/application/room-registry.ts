@@ -254,8 +254,7 @@ export class CollaborationRoomRegistry {
     };
   }
 
-  public evictIdle(): number {
-    const now = this.now();
+  public evictIdle(now = this.now()): number {
     let evicted = 0;
     for (const [boardId, room] of this.rooms) {
       if (!room.isIdle(now)) continue;

@@ -8,6 +8,7 @@ import { BoardEntity } from '../../../boards/infrastructure/entities/board.entit
 import { BoardSnapshotEntity } from '../entities/board-snapshot.entity.js';
 import { BoardUpdateEntity } from '../entities/board-update.entity.js';
 import { UpdateReceiptEntity } from '../entities/update-receipt.entity.js';
+import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
 
 export const COMPACTION_FAILPOINTS = {
   AFTER_SNAPSHOT_WRITE: 'afterSnapshotWrite',
@@ -50,6 +51,7 @@ export class PostgresRoomCompactor {
     throughSeq: ServerSequence,
     state: Uint8Array,
   ): Promise<void> {
+    const started = performance.now();
     const updateBytes = Buffer.from(state);
     if (updateBytes.byteLength === 0 || updateBytes.byteLength > MAX_ENCODED_YJS_STATE_BYTES) {
       throw new Error('Room snapshot exceeds the encoded state limit.');
@@ -98,5 +100,9 @@ export class PostgresRoomCompactor {
       await this.failpoints.reach(COMPACTION_FAILPOINTS.AFTER_UPDATE_DELETE);
     });
     await this.failpoints.reach(COMPACTION_FAILPOINTS.AFTER_COMMIT);
+    reportCollaborationMetric('collaboration.compaction', {
+      durationMs: Math.round(performance.now() - started),
+      snapshotBytes: updateBytes.byteLength,
+    });
   }
 }

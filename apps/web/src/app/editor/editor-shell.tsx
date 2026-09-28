@@ -226,6 +226,9 @@ export function EditorShell({
   const resetButtonRef = useRef<HTMLButtonElement>(null);
   const helpButtonRef = useRef<HTMLButtonElement>(null);
   const [resetError, setResetError] = useState<string | null>(null);
+  const [serverReloadOpen, setServerReloadOpen] = useState(false);
+  const [serverReloadPending, setServerReloadPending] = useState(false);
+  const [serverReloadError, setServerReloadError] = useState<string | null>(null);
   const { preference, cyclePreference } = useTheme();
   const boardMode = boardTitle !== undefined;
   const baseViewState = editorViewState(phaseForSession(sessionSnapshot, narrowScreen, boardMode));
@@ -472,6 +475,20 @@ export function EditorShell({
       setResetPending(false);
     }
   }, [actions, canReset, session]);
+  const confirmServerReload = useCallback(async (): Promise<void> => {
+    if (session === null || !session.canReloadServerVersion()) return;
+    setServerReloadPending(true);
+    setServerReloadError(null);
+    try {
+      await session.clearLocalBoardForServerReload();
+      window.location.reload();
+    } catch {
+      setServerReloadError(
+        'The local board could not be cleared. Your local data was left in place.',
+      );
+      setServerReloadPending(false);
+    }
+  }, [session]);
 
   const ThemeIcon =
     preference === THEME_PREFERENCES.LIGHT
@@ -568,6 +585,21 @@ export function EditorShell({
           >
             <Download />
           </IconButton>
+          {boardMode && (
+            <IconButton
+              className="max-sm:hidden"
+              label={
+                session?.canReloadServerVersion()
+                  ? 'Reload server version'
+                  : 'Reconnect before reloading the server version'
+              }
+              variant="ghost"
+              disabled={!session?.canReloadServerVersion() || serverReloadPending}
+              onClick={() => setServerReloadOpen(true)}
+            >
+              <RotateCcw />
+            </IconButton>
+          )}
           <span className="mx-1 h-5 w-px bg-border max-sm:hidden" aria-hidden="true" />
           <IconButton
             label={`Theme: ${preference}. Switch to ${nextTheme}.`}
@@ -1018,6 +1050,58 @@ export function EditorShell({
               onClick={() => void confirmReset()}
             >
               {resetPending ? 'Resetting…' : 'Reset local demo'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={boardMode && serverReloadOpen}
+        onOpenChange={(open) => {
+          if (!serverReloadPending) {
+            setServerReloadOpen(open);
+            setServerReloadError(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reload the server version?</DialogTitle>
+            <DialogDescription>
+              This deletes this board&apos;s local copy and pending changes for this account on this
+              device. Changes without a server receipt will be lost. Download recovery first if you
+              want to keep them. Other accounts and boards are not cleared.
+            </DialogDescription>
+          </DialogHeader>
+          {serverReloadError !== null && (
+            <p className="text-sm text-destructive" role="alert">
+              {serverReloadError}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={serverReloadPending || projection === null}
+              onClick={downloadRecovery}
+            >
+              <Download /> Download recovery
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={serverReloadPending}
+              onClick={() => setServerReloadOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={serverReloadPending || !session?.canReloadServerVersion()}
+              onClick={() => void confirmServerReload()}
+            >
+              {serverReloadPending ? 'Reloading…' : 'Delete local copy and reload'}
             </Button>
           </DialogFooter>
         </DialogContent>

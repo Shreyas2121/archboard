@@ -7,17 +7,32 @@ import {
   GRAPH_SCHEMA_VERSION,
   ERROR_CODES,
   COLOR_TOKENS,
+  EDGE_DIRECTIONS,
+  EDGE_STYLES,
+  HANDLES,
   COMPONENT_CATEGORIES,
   MAX_BOARD_CONNECTIONS,
   MAX_PRESENCE_SELECTED_IDS,
   MAX_DRAG_PREVIEW_POSITIONS,
   PRESENCE_UPDATES_PER_SECOND,
   MAX_WS_FRAME_BYTES,
+  ROOM_IDLE_EVICTION_MS,
   PROTOCOL_VERSION,
   SERVER_EVENT_NAMES,
   serverMessageSchema,
 } from '@archboard/contracts';
-import { createNode, projectGraphDocument, validateGraphDocument } from '@archboard/document-model';
+import {
+  createEdge,
+  createNode,
+  editGraphText,
+  hydrateGraphDocument,
+  moveNode,
+  projectGraphDocument,
+  setNodeTitle,
+  tombstoneNode,
+  validateGraphDocument,
+} from '@archboard/document-model';
+import { concurrencyScenarios, FIXED_IDS, type FixtureOperation } from '@archboard/fixtures';
 import { jest } from '@jest/globals';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -238,6 +253,63 @@ async function sendUpdate(socket: WebSocket, updateId: string, bytes: Uint8Array
   return serverMessageSchema.parse(JSON.parse((await responsePromise).toString()));
 }
 
+async function sendUpdateAndWaitForAck(socket: WebSocket, bytes: Uint8Array) {
+  const acknowledgement = waitForEvent(socket, SERVER_EVENT_NAMES.ACK);
+  socket.send(
+    JSON.stringify({
+      event: 'update',
+      data: { updateId: randomUUID(), updateBase64: Buffer.from(bytes).toString('base64') },
+    }),
+  );
+  return acknowledgement;
+}
+
+function scenarioUpdate(snapshotBase64: string, operations: readonly FixtureOperation[]) {
+  const document = new Y.Doc();
+  try {
+    Y.applyUpdate(document, Buffer.from(snapshotBase64, 'base64'));
+    const before = Y.encodeStateVector(document);
+    for (const operation of operations) {
+      switch (operation.type) {
+        case 'set-node-title':
+          setNodeTitle(document, operation.nodeId, operation.title);
+          break;
+        case 'move-node':
+          moveNode(document, operation.nodeId, operation.position);
+          break;
+        case 'insert-node-text':
+          editGraphText(
+            document,
+            { entity: 'node', id: operation.nodeId, field: operation.field },
+            { index: operation.index, deleteCount: 0, insert: operation.text },
+          );
+          break;
+        case 'tombstone-node':
+          tombstoneNode(document, operation.nodeId);
+          break;
+        case 'create-edge':
+          createEdge(document, {
+            id: operation.edgeId,
+            sourceId: operation.sourceId,
+            targetId: operation.targetId,
+            sourceHandle: HANDLES.RIGHT,
+            targetHandle: HANDLES.LEFT,
+            label: 'Concurrent edge',
+            protocol: 'HTTPS',
+            direction: EDGE_DIRECTIONS.FORWARD,
+            style: EDGE_STYLES.SOLID,
+          });
+          break;
+        default:
+          throw new Error(`Unsupported socket convergence operation: ${operation.type}`);
+      }
+    }
+    return Y.encodeStateAsUpdate(document, before);
+  } finally {
+    document.destroy();
+  }
+}
+
 describe('authenticated Nest collaboration WebSocket gateway', () => {
   let admin: Pool;
   let database: DataSource;
@@ -416,6 +488,97 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
     }
     return { id, url: websocketUrl.replace(boardId, id) };
   }
+
+  it.each([
+    'concurrent-rename-and-move',
+    'concurrent-text-inserts',
+    'concurrent-moves',
+    'delete-versus-edit',
+    'delete-node-versus-incident-edge',
+  ])('converges authenticated independent replicas over a real socket: %s', async (name) => {
+    const scenario = concurrencyScenarios.find((candidate) => candidate.name === name);
+    if (!scenario) throw new Error(`Missing convergence fixture ${name}.`);
+    const board = await createUpdateBoard();
+    await database.query(
+      'INSERT INTO "board_members" ("board_id", "user_id", "role") VALUES ($1, $2, $3)',
+      [board.id, nonmemberId, 'editor'],
+    );
+    const initial = hydrateGraphDocument(scenario.initialGraph);
+    const baseline = Y.encodeStateAsUpdate(initial);
+    initial.destroy();
+    const seed = await joinRoom(board.url, sessionCookie);
+    try {
+      expect(await sendUpdateAndWaitForAck(seed.socket, baseline)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+      });
+    } finally {
+      await closeWebSocket(seed.socket);
+    }
+
+    const owner = await joinRoom(board.url, sessionCookie);
+    const editor = await joinRoom(board.url, nonmemberCookie);
+    let reopened: Awaited<ReturnType<typeof joinRoom>> | undefined;
+    try {
+      expect(editor.ready.snapshotBase64).toBe(owner.ready.snapshotBase64);
+      const fromOwner = scenarioUpdate(owner.ready.snapshotBase64, scenario.replicaA);
+      const fromEditor = scenarioUpdate(editor.ready.snapshotBase64, scenario.replicaB);
+      expect(await sendUpdateAndWaitForAck(owner.socket, fromOwner)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+      });
+      expect(await sendUpdateAndWaitForAck(editor.socket, fromEditor)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+      });
+      reopened = await joinRoom(board.url, sessionCookie);
+      const fresh = new Y.Doc();
+      const replicaA = new Y.Doc();
+      const replicaB = new Y.Doc();
+      try {
+        Y.applyUpdate(fresh, Buffer.from(reopened.ready.snapshotBase64, 'base64'));
+        for (const replica of [replicaA, replicaB]) {
+          Y.applyUpdate(replica, Buffer.from(owner.ready.snapshotBase64, 'base64'));
+        }
+        Y.applyUpdate(replicaA, fromOwner);
+        Y.applyUpdate(replicaA, fromEditor);
+        Y.applyUpdate(replicaB, fromEditor);
+        Y.applyUpdate(replicaB, fromOwner);
+        const projection = projectGraphDocument(fresh);
+        expect(projectGraphDocument(replicaA)).toEqual(projection);
+        expect(projectGraphDocument(replicaB)).toEqual(projection);
+        const node = projection.nodes.find((candidate) => candidate.id === FIXED_IDS.NODE_A);
+        if (name === 'concurrent-rename-and-move') {
+          expect(node).toMatchObject({ title: 'Renamed by A', position: { x: 80, y: 40 } });
+        } else if (name === 'concurrent-text-inserts') {
+          const text = projection.nodes.find((candidate) => candidate.id === FIXED_IDS.NODE_D);
+          expect(text?.kind).toBe('note');
+          if (text?.kind === 'note') {
+            expect(text.content.body).toContain('A');
+            expect(text.content.body).toContain('B');
+          }
+        } else if (name === 'concurrent-moves') {
+          expect([
+            { x: 100, y: 120 },
+            { x: 300, y: 320 },
+          ]).toContainEqual(node?.position);
+        } else {
+          expect(node).toBeUndefined();
+          expect(
+            projection.edges.some(
+              (edge) => edge.sourceId === FIXED_IDS.NODE_A || edge.targetId === FIXED_IDS.NODE_A,
+            ),
+          ).toBe(false);
+        }
+      } finally {
+        fresh.destroy();
+        replicaA.destroy();
+        replicaB.destroy();
+      }
+    } finally {
+      await closeWebSocket(owner.socket);
+      await closeWebSocket(editor.socket);
+      if (reopened) await closeWebSocket(reopened.socket);
+      application.get(CollaborationRoomRegistry).evictIdle(Date.now() + ROOM_IDLE_EVICTION_MS + 1);
+    }
+  });
 
   it('bounds session-derived presence, isolates rooms, drops excess traffic, and never writes graph data', async () => {
     const board = await createUpdateBoard(true);

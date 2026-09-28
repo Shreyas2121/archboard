@@ -215,6 +215,17 @@ export class BrowserWriterSession {
     this.announceResetComplete();
   }
 
+  /** Call only after an explicit server-reload decision; keep the lock through deletion. */
+  public async clearOwnedLocalState(): Promise<void> {
+    if (!this.ownsLock || this.snapshot.phase !== WRITER_SESSION_PHASES.WRITER) {
+      throw new WriterLockRequiredError();
+    }
+    this.publish(WRITER_SESSION_PHASES.OPENING);
+    await this.closeView();
+    await deleteBoardStorageNamespace(this.options.namespace);
+    this.announceResetComplete();
+  }
+
   public retry(): Promise<void> {
     if (
       this.closeRequested ||

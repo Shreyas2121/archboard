@@ -42,6 +42,7 @@ import * as Y from 'yjs';
 import { BoardPermissionService } from '../../../boards/application/index.js';
 import { AUTH_SESSION_LOOKUP, type AuthSessionLookup } from '../../../auth/application/index.js';
 import { CollaborationUpdateService } from '../../application/collaboration-update-service.js';
+import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
 import {
   DurableUpdateRejectedError,
   InjectedPostCommitCrashError,
@@ -174,6 +175,10 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     state.unsubscribe?.();
     state.reservation?.release();
     this.connections.delete(websocket);
+    reportCollaborationMetric('collaboration.connections', {
+      activeSockets: this.connections.size,
+      activeRooms: this.rooms.activeRoomCount,
+    });
   }
 
   /** Called after a board access transaction commits; the room queue orders socket state with updates. */
@@ -188,6 +193,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
           if (state.closed || !state.ready) continue;
           const decision = await this.permissions.read(boardId, state.userId);
           if (!decision.allowed) {
+            reportCollaborationMetric('collaboration.access_reject', { count: 1 });
             this.send(websocket, {
               event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
               data: { role: null, archived: false },
@@ -380,6 +386,10 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
             return;
           }
           state.ready = true;
+          reportCollaborationMetric('collaboration.connections', {
+            activeSockets: this.connections.size,
+            activeRooms: this.rooms.activeRoomCount,
+          });
           subscription.activate();
           for (const peer of this.connections.values()) {
             if (
@@ -404,6 +414,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         error instanceof RoomAdmissionError || error instanceof RoomLoadError
           ? error.code
           : ERROR_CODES.SERVER_BUSY;
+      reportCollaborationMetric('collaboration.admission_reject', { code, count: 1 });
       this.sendError(
         websocket,
         code,
@@ -419,6 +430,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     updateId: string,
     updateBase64: string,
   ): Promise<void> {
+    const started = performance.now();
     try {
       const room = state.reservation?.room;
       if (room === undefined) throw new Error('Room reservation missing.');
@@ -437,6 +449,10 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
           event: SERVER_EVENT_NAMES.ACK,
           data: { updateId, seq: result.sequence },
         });
+        reportCollaborationMetric('collaboration.ack', {
+          latencyMs: Math.round(performance.now() - started),
+          duplicate: result.duplicate,
+        });
         if (!result.duplicate) {
           room.publishCommittedUpdate({ seq: result.sequence, updateBase64 }, state.deliverUpdate);
         }
@@ -450,6 +466,10 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         error instanceof DurableUpdateRejectedError || error instanceof ValidationWorkerError
           ? error.code
           : ERROR_CODES.PERSISTENCE_FAILED;
+      reportCollaborationMetric('collaboration.update_reject', { code, count: 1 });
+      if (code === ERROR_CODES.FORBIDDEN || code === ERROR_CODES.BOARD_ARCHIVED) {
+        reportCollaborationMetric('collaboration.access_reject', { count: 1 });
+      }
       this.sendError(
         websocket,
         code,

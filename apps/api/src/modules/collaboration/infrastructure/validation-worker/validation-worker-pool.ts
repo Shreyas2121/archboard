@@ -9,6 +9,7 @@ import {
 } from '@archboard/contracts';
 import { Worker } from 'node:worker_threads';
 import { existsSync } from 'node:fs';
+import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
 
 import {
   VALIDATION_FAILURE_KINDS,
@@ -123,6 +124,10 @@ export class ValidationWorkerPool {
       );
     }
     if (this.workers.size >= this.maxWorkers && this.queue.length >= this.maxQueueDepth) {
+      reportCollaborationMetric('collaboration.validation_reject', {
+        kind: VALIDATION_FAILURE_KINDS.OVERLOADED,
+        count: 1,
+      });
       return Promise.reject(
         new ValidationWorkerError(
           ERROR_CODES.SERVER_BUSY,
@@ -177,6 +182,10 @@ export class ValidationWorkerPool {
     };
 
     const timer = setTimeout(() => {
+      reportCollaborationMetric('collaboration.validation_reject', {
+        kind: VALIDATION_FAILURE_KINDS.TIMEOUT,
+        count: 1,
+      });
       finish(() =>
         job.reject(
           new ValidationWorkerError(
@@ -194,6 +203,10 @@ export class ValidationWorkerPool {
       finish(() => {
         if (response.ok) job.resolve(response);
         else {
+          reportCollaborationMetric('collaboration.validation_reject', {
+            kind: response.kind,
+            count: 1,
+          });
           job.reject(
             new ValidationWorkerError(response.code, response.kind, response.message, false),
           );

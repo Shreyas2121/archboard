@@ -22,6 +22,7 @@ import { z } from 'zod';
 import { AppModule } from '../../app.module.js';
 import { configureCollaborationWebSockets } from '../../modules/collaboration/infrastructure/websocket/index.js';
 import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
+import { RetainCompactedUpdateReceipts1790426800000 } from '../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
 import { BetterAuthRuntime, configureAuthHttp } from '../../modules/auth/index.js';
 import { loadApiConfig } from '../config/index.js';
 import { DATABASE_ENTITIES } from '../database/database-entities.js';
@@ -70,7 +71,10 @@ describe('Phase 3 REST boundary', () => {
       url,
       schema: SCHEMA,
       entities: [...DATABASE_ENTITIES],
-      migrations: [InitialDatabaseFoundation1789300000000],
+      migrations: [
+        InitialDatabaseFoundation1789300000000,
+        RetainCompactedUpdateReceipts1790426800000,
+      ],
       synchronize: false,
       migrationsRun: false,
       extra: { max: 4, options: `-c search_path=${SCHEMA}` },
