@@ -12,6 +12,15 @@ import './styles.css';
 loadWebConfig(import.meta.env);
 initializeTheme();
 
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  // Activation stays user-directed; a waiting worker must not replace an active editor.
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker.register('/sw.js').catch(() => {
+      // The online app remains usable when the browser blocks service workers.
+    });
+  });
+}
+
 const rootElement = document.querySelector('#root');
 
 if (!rootElement) {
