@@ -287,6 +287,55 @@ describe('durable PostgreSQL update acceptance', () => {
     await expectPersistedCounts(dataSource, boardId, 1);
   });
 
+  it('merges an offline edit with an independently committed remote edit after a full snapshot', async () => {
+    const offlineNode = node('Offline owner edit');
+    const remoteNode = node('Remote editor edit');
+    const offlineId = randomUUID();
+    const offlineBytes = createUpdate(accepted, offlineNode);
+    const remoteBytes = createUpdate(accepted, remoteNode);
+
+    const remote = await harness.accept({
+      boardId,
+      updateId: randomUUID(),
+      sessionToken: EDITOR_SESSION,
+      updateBytes: remoteBytes,
+    });
+    expect(remote.receipt.sequence).toBe('1');
+
+    const reloadedOfflineDocument = createGraphDocument();
+    Y.applyUpdate(reloadedOfflineDocument, offlineBytes);
+    Y.applyUpdate(reloadedOfflineDocument, harness.acceptedStateAsUpdate());
+    expect(
+      projectGraphDocument(reloadedOfflineDocument)
+        .nodes.map(({ title }) => title)
+        .sort(),
+    ).toEqual([offlineNode.title, remoteNode.title].sort());
+
+    const reconciled = await harness.accept({
+      boardId,
+      updateId: offlineId,
+      sessionToken: OWNER_SESSION,
+      updateBytes: offlineBytes,
+    });
+    expect(reconciled.receipt.sequence).toBe('2');
+    expect(reconciled.acknowledgementEligible).toBe(true);
+    expect(
+      projectGraphDocumentFromHarness(harness)
+        .nodes.map(({ title }) => title)
+        .sort(),
+    ).toEqual([offlineNode.title, remoteNode.title].sort());
+
+    const retry = await harness.accept({
+      boardId,
+      updateId: offlineId,
+      sessionToken: OWNER_SESSION,
+      updateBytes: offlineBytes,
+    });
+    expect(retry.receipt.sequence).toBe(reconciled.receipt.sequence);
+    expect(retry.broadcastEligible).toBe(false);
+    await expectPersistedCounts(dataSource, boardId, TWO_ACCEPTED_UPDATES);
+  });
+
   it('rolls back a forced commit-boundary failure without eligibility or accepted-state mutation', async () => {
     const before = harness.acceptedStateAsUpdate();
     failpoints.arm(DURABLE_UPDATE_FAILPOINTS.DATABASE_COMMIT);

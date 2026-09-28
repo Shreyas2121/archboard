@@ -204,24 +204,29 @@ export class OrderedSyncClient {
     this.publish();
     socket.onopen = () => {
       if (this.socket !== socket || this.stopped) return;
-      socket.send(
-        JSON.stringify(
-          clientMessageSchema.parse({
-            event: CLIENT_EVENT_NAMES.HELLO,
-            data: {
-              protocolVersion: PROTOCOL_VERSION,
-              schemaVersion: GRAPH_SCHEMA_VERSION,
-              tabId: this.options.tabId,
-            },
-          }),
-        ),
-      );
+      try {
+        socket.send(
+          JSON.stringify(
+            clientMessageSchema.parse({
+              event: CLIENT_EVENT_NAMES.HELLO,
+              data: {
+                protocolVersion: PROTOCOL_VERSION,
+                schemaVersion: GRAPH_SCHEMA_VERSION,
+                tabId: this.options.tabId,
+              },
+            }),
+          ),
+        );
+      } catch {
+        this.reconnectForProtocolError();
+        return;
+      }
       this.publish();
     };
     socket.onmessage = (event) => {
       this.enqueue(async () => {
         if (this.socket !== socket || this.stopped) return;
-        await this.receive(event.data);
+        await this.receive(event.data, socket);
       });
     };
     socket.onclose = () => {
@@ -243,7 +248,7 @@ export class OrderedSyncClient {
     socket.onerror = () => undefined;
   }
 
-  private async receive(raw: unknown): Promise<void> {
+  private async receive(raw: unknown, socket: WebSocket): Promise<void> {
     if (typeof raw !== 'string' || new TextEncoder().encode(raw).byteLength > MAX_WS_FRAME_BYTES) {
       this.reconnectForProtocolError();
       return;
@@ -274,12 +279,17 @@ export class OrderedSyncClient {
         message.data.latestSeq,
       );
       this.serverSequence = BigInt(message.data.latestSeq);
+      if (this.socket !== socket || this.stopped) return;
       this.role = message.data.role;
+      this.publish();
+      await this.options.beforeDrain?.();
+      if (this.socket !== socket || this.stopped) return;
+      await this.refresh();
+      if (this.socket !== socket || this.stopped) return;
       this.handshakeComplete = true;
       this.presence.connect(message.data.connectionId);
       this.retryDelay = INITIAL_RETRY_MS;
-      await this.refresh();
-      await this.options.beforeDrain?.();
+      this.publish();
       await this.drain();
       return;
     }
@@ -301,7 +311,7 @@ export class OrderedSyncClient {
         message.data.seq,
       );
       this.serverSequence = sequence;
-      await this.refresh();
+      if (this.socket === socket && !this.stopped) await this.refresh();
     } else if (message.event === SERVER_EVENT_NAMES.ACK) {
       if (message.data.updateId !== this.inFlightId) {
         const receipts = await this.options.persistence.listAcknowledgedUpdates();
@@ -319,6 +329,7 @@ export class OrderedSyncClient {
       if (sequence > this.serverSequence + SEQUENCE_STEP) return this.reconnectForProtocolError();
       await this.options.persistence.acknowledgeUpdate(message.data.updateId, message.data.seq);
       if (sequence > this.serverSequence) this.serverSequence = sequence;
+      if (this.socket !== socket || this.stopped) return;
       this.inFlightId = null;
       this.causalGapId = null;
       await this.refresh();
@@ -367,10 +378,11 @@ export class OrderedSyncClient {
   }
 
   private async drain(): Promise<void> {
+    const socket = this.socket;
     if (
       !this.handshakeComplete ||
       this.inFlightId !== null ||
-      this.socket?.readyState !== WebSocket.OPEN ||
+      socket?.readyState !== WebSocket.OPEN ||
       !isWritableRole(this.role) ||
       this.options.canSend?.() === false ||
       this.accessDenied ||
@@ -380,6 +392,17 @@ export class OrderedSyncClient {
     await this.options.persistence.whenIdle();
     if (this.localFailure()) return;
     const pending = await this.options.persistence.listTransportEligibleUpdates();
+    if (
+      this.socket !== socket ||
+      !this.handshakeComplete ||
+      socket.readyState !== WebSocket.OPEN ||
+      this.inFlightId !== null ||
+      !isWritableRole(this.role) ||
+      this.options.canSend?.() === false ||
+      this.accessDenied ||
+      this.recoveryCode !== null
+    )
+      return;
     this.pendingCount = pending.length;
     const first = pending[0];
     if (first === undefined) return this.publish();
@@ -388,7 +411,12 @@ export class OrderedSyncClient {
       data: { updateId: first.updateId, updateBase64: encodeBase64(first.updateBytes) },
     });
     this.inFlightId = first.updateId;
-    this.socket.send(JSON.stringify(envelope));
+    try {
+      socket.send(JSON.stringify(envelope));
+    } catch {
+      this.reconnectForProtocolError();
+      return;
+    }
     this.publish();
   }
 
