@@ -28,6 +28,16 @@ on the implementation and add its own evidence. It must not present an inherited
 Phase 4 proof as passed, and its final audit must report those dependencies explicitly. The Phase
 2 pan-performance and human/browser audit gaps also remain open unless separately resolved.
 
+### Temporary verification pause
+
+The user has deferred browser-running checks during current implementation. From P5-05 onward,
+do not run Playwright, native browser package suites, served production-preview flows, or
+aggregate commands that launch them (`pnpm test`, `pnpm test:browser`, `pnpm phase4:quick`,
+and full phase verifiers). Run focused non-browser checks and build the owned changes. New
+evidence records browser cases as **UNRUN (deferred by user)**. Browser acceptance, Phase 5
+exit, and version 1 release criteria remain unchanged and OPEN until those checks resume.
+This pause does not rewrite historical P5-01 through P5-04 evidence.
+
 ## 2. Phase outcome
 
 A signed-in editor who has opened a board online can lose connectivity, reload its direct editor
@@ -329,6 +339,10 @@ Phase 5 may reveal Phase 4 defects. Fix them at the owning boundary with focused
 rerun affected Phase 4 checks. Do not move a collaboration failure into the service worker or
 weaken the earlier acceptance test merely to make an offline demonstration pass.
 
+During the temporary browser pause, the browser-specific completion evidence in this table is
+deferred. Implementation commits may land with those checks recorded UNRUN; this does not make
+the task's acceptance proof or the Phase 5 gate PASS.
+
 ## 14. Verification requirements
 
 ### 14.1 Static, cache, and build checks
@@ -345,6 +359,9 @@ weaken the earlier acceptance test merely to make an offline demonstration pass.
   path is introduced. `/demo` remains isolated.
 
 ### 14.2 Acceptance evidence
+
+The browser assertions in this section are deferred by user direction during implementation.
+Keep them in the acceptance matrix as UNRUN until browser verification resumes.
 
 Phase 5 completes these `plan.md` acceptance cases in service-worker-enabled production preview:
 
@@ -405,34 +422,43 @@ separate Phase 2 audit status honest as well.
 The repository should expose an aggregate `pnpm phase5:verify` with documented focused browser
 and fault commands. Names below are intended interfaces; this document does not claim they exist
 yet. The final audit records actual commands, child results, counts, durations, and environment.
+During the temporary pause, run only the non-browser commands in the first block, as relevant
+to the changed code. Avoid aggregate commands with hidden Chrome children.
 
 ```text
 pnpm install --frozen-lockfile
 pnpm format:check
 pnpm lint
 pnpm typecheck
-pnpm test
-pnpm test:browser
+pnpm --filter @archboard/api test
 pnpm test:integration
 pnpm auth:schema:check
 pnpm db:migration:show
-pnpm --filter @archboard/sync-client test
 pnpm --filter @archboard/api test:integration
 pnpm --filter @archboard/web build
 pnpm --filter @archboard/api build
 pnpm build
 pnpm boundary:check
+```
+
+Browser-running commands are **UNRUN (deferred by user)** until verification resumes:
+
+```text
+pnpm test
+pnpm test:browser
+pnpm --filter @archboard/sync-client test
 pnpm phase1:verify
 pnpm phase2:verify
 pnpm phase3:verify
 pnpm phase4:verify
-pnpm phase5:verify
+pnpm phase5:verify  # full browser mode
+served production-preview browser and cache scripts
 ```
 
-The Phase 5 aggregate must propagate failures, run a served production-build browser with active
-service worker, exercise isolated real-database boundaries where needed, and perform cache
-inspection. It does not replace a detailed report of its children. Prior-phase verifier results
-do not erase open manual or performance findings in their audits.
+The later full Phase 5 aggregate must propagate failures, run a served production-build browser
+with active service worker, exercise isolated real-database boundaries where needed, and perform
+cache inspection. Its non-browser mode may run during the pause but cannot pass the full gate.
+Prior-phase verifier results do not erase open manual or performance findings in their audits.
 
 ## 16. Deliverables
 

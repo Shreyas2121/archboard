@@ -152,6 +152,15 @@ each inherited blocker.
 
 ### 2.8 Coding, dependencies, and evidence policy
 
+**Temporary browser-check pause (user direction, effective from P5-05):** Do not run native
+browser tests, Playwright, served-browser scripts, or aggregate commands that launch Chrome.
+This includes `pnpm test`, `pnpm test:browser`, `pnpm phase4:quick`, and full prior-phase
+verifiers. Run focused non-browser unit/integration checks, format, lint, types, and builds.
+Implement browser harnesses when a task owns them, but leave execution **UNRUN (deferred by
+user)**. Do not rerun P5-01 through P5-04 browser regressions during this pause. This
+paragraph overrides browser-running instructions in the task checks and command tables below
+until the user resumes them. Acceptance criteria remain open, not waived.
+
 Follow `apps/web/AGENTS.md` for Tailwind/shadcn reuse, route composition, accessibility, and
 editor ownership. Follow `apps/api/AGENTS.md` when touching API code for a Phase 4 dependency
 fix. Reuse existing auth, sync-client, IndexedDB, Web Lock, and recovery modules before creating
@@ -222,24 +231,25 @@ the base changes, record the integration and rerun affected checks.
 Preserve existing scripts and add stable Phase 5 interfaces by P5-10. These are commands to use
 or introduce, not a claim that the proposed Phase 5 command exists now.
 
-| Command                                             | Purpose                                           |
-| --------------------------------------------------- | ------------------------------------------------- |
-| `pnpm install --frozen-lockfile`                    | Reproduce exact dependency graph                  |
-| `pnpm format:check`                                 | Verify formatting                                 |
-| `pnpm lint` / `pnpm typecheck`                      | Code and strict TypeScript checks                 |
-| `pnpm test` / `pnpm test:browser`                   | Units and native-browser package behavior         |
-| `pnpm test:integration`                             | Real PostgreSQL/API integration tests             |
-| `pnpm auth:schema:check` / `pnpm db:migration:show` | Auth/migration compatibility                      |
-| `pnpm --filter @archboard/sync-client test`         | Native IndexedDB, Web Lock, outbox, account state |
-| `pnpm --filter @archboard/api test:integration`     | Server authority and durable-denial proofs        |
-| `pnpm --filter @archboard/web build`                | Typecheck/build the versioned production shell    |
-| `pnpm --filter @archboard/api build` / `pnpm build` | API and workspace builds                          |
-| `pnpm boundary:check`                               | Enforce shared-package/application boundaries     |
-| `pnpm phase1:verify` through `pnpm phase4:verify`   | Earlier regressions and inherited open gate       |
-| `pnpm phase5:verify`                                | Final Phase 5 aggregate, introduced by P5-10      |
+| Command                                             | Purpose                                            |
+| --------------------------------------------------- | -------------------------------------------------- |
+| `pnpm install --frozen-lockfile`                    | Reproduce exact dependency graph                   |
+| `pnpm format:check`                                 | Verify formatting                                  |
+| `pnpm lint` / `pnpm typecheck`                      | Code and strict TypeScript checks                  |
+| `pnpm test` / `pnpm test:browser`                   | Browser-running; temporarily skip                  |
+| `pnpm test:integration`                             | Real PostgreSQL/API integration tests              |
+| `pnpm auth:schema:check` / `pnpm db:migration:show` | Auth/migration compatibility                       |
+| `pnpm --filter @archboard/sync-client test`         | Native browser suite; temporarily skip             |
+| `pnpm --filter @archboard/api test:integration`     | Server authority and durable-denial proofs         |
+| `pnpm --filter @archboard/web build`                | Typecheck/build the versioned production shell     |
+| `pnpm --filter @archboard/api build` / `pnpm build` | API and workspace builds                           |
+| `pnpm boundary:check`                               | Enforce shared-package/application boundaries      |
+| `pnpm phase1:verify` through `pnpm phase4:verify`   | Browser-running aggregates; temporarily skip       |
+| `pnpm phase5:verify`                                | Final aggregate; defer execution if it runs Chrome |
 
-Run focused scripts for direct-route offline refresh, cache inspection, revocation, account
-switching, worker update, and storage failure. Document their actual names and child results.
+Prepare focused scripts for direct-route offline refresh, cache inspection, revocation, account
+switching, worker update, and storage failure, but do not run them during the temporary pause.
+Document their names and mark their results UNRUN (deferred by user).
 Use a served production build with an active service worker, independent browser contexts, and
 isolated migrated PostgreSQL schemas where a server commit/denial is asserted. Stop browser/API
 helpers deterministically and do not print credentials.
@@ -415,12 +425,14 @@ Required work:
   only after durable server ACKs.
 - Handle connection loss, auth-network uncertainty, gaps, and retry without reporting server
   save early or overwriting local work.
-- Verify two independent authenticated browser contexts and the committed PostgreSQL result.
+- Prepare the two-context authenticated browser proof, but defer its execution. Verify the
+  committed PostgreSQL result with non-browser integration where feasible.
 
 Non-goals: no revocation dialog, service-worker background sync, or alternate CRDT transport.
 
-Required checks: sync-client browser tests, real socket/database integration, served A07 flow,
-web/API builds, lint, types.
+Checks during browser pause: real socket/database integration that does not launch a browser,
+web/API builds, lint, and types. Mark sync-client browser tests and the served A07 flow
+**UNRUN (deferred by user)**.
 
 Completion evidence: both users' independent edits survive, pending count reaches zero after
 server commit, and no remote update echoes into the local outbox.
@@ -451,12 +463,14 @@ Required work:
   and unsupported newer schema. Preserve export and clear next actions for each.
 - Keep “Reload server version” an explicit exact-namespace warning/decision; cancellation and
   export failure preserve the queue. Do not auto-copy to another board/user.
-- Finish the combined served-browser, socket, and database A10 proof missing from Phase 4.
+- Prepare the combined served-browser, socket, and database A10 proof missing from Phase 4;
+  execute non-browser socket/database portions now and leave the browser portion UNRUN.
 
 Non-goals: no general import, finished sharing UX, or offline role administration.
 
-Required checks: real access/archive integration, served A10 browser flow, recovery browser
-tests, web/API builds, lint, types, relevant Phase 4 regression.
+Checks during browser pause: real access/archive integration that does not launch a browser,
+web/API builds, lint, types, and non-browser Phase 4 regressions. Mark served A10 and recovery
+browser checks **UNRUN (deferred by user)**.
 
 Completion evidence: unchanged server seq/update/receipt after rejected upload; exportable
 local graph/outbox; correct archived/session/schema states.
@@ -488,13 +502,14 @@ Required work:
   the pending sign-out is resolved when connectivity returns.
 - Broadcast local sign-out/account-change notices to other tabs without graph messages;
   coordinate writer-lock release and exact-namespace clearing safely.
-- Sign in as a different user and prove no access to the first user's retained board cache;
-  `/demo` remains unaffected.
+- Preserve second-account cache isolation and `/demo` independence in implementation and
+  non-browser checks; defer the authenticated browser sign-in proof.
 
 Non-goals: no new identity provider, global cache wipe, or automatic account-to-account import.
 
-Required checks: auth/sync-client browser tests, real online sign-out, offline/online A24
-served-browser flow, web build, lint, types.
+Checks during browser pause: non-browser auth checks, web build, lint, and types. Mark
+auth/sync-client browser tests, browser-backed online sign-out, and the offline/online A24
+served flow **UNRUN (deferred by user)**.
 
 Completion evidence: preservation choice is usable; server invalidation status is truthful;
 second account cannot enumerate or open old cached content.
@@ -523,14 +538,15 @@ Required work:
   preserve/export decision if pending work cannot transparently survive.
 - Keep the compatible old shell running when offline. For unsupported new graph schema,
   freeze writes, retain outbox, and show update/export state.
-- Prove cancel preserves the old editor and data; accepting a safe update preserves the exact
-  account/board namespace and pending work through reopening.
+- Implement cancel and safe update preservation for the exact account/board namespace and
+  pending work; defer the production-preview browser proof through reopening.
 - Ensure new static asset cache activation never sweeps account-scoped IndexedDB data.
 
 Non-goals: no automatic schema migration, forced `skipWaiting`, or release deployment.
 
-Required checks: two-build production-preview worker update test, sync-client browser tests,
-web build, lint, types.
+Checks during browser pause: web build, lint, types, and non-browser update-state checks. Mark
+the two-build production-preview worker update test and sync-client browser tests **UNRUN
+(deferred by user)**.
 
 Completion evidence: update prompt and old-client paths preserve pending bytes; no forced
 reload, namespace clear, or false compatibility claim occurs.
@@ -555,8 +571,9 @@ Required work:
 
 - Show local board availability, cache time, pending count, and browser-reported usage/quota
   when available, with a clear best-effort-storage explanation.
-- Inject IndexedDB/quota failure during a rendered edit: pause further edits, avoid any saved
-  label, and offer in-memory validated recovery export.
+- Implement IndexedDB/quota failure handling during a rendered edit: pause further edits,
+  avoid any saved label, and offer in-memory validated recovery export. Defer the rendered
+  browser fault injection.
 - Show explicit missing/evicted board cache and unsupported Web Locks read-only/export states.
 - Ensure a browser that cannot load an offline shell is not represented as a successful offline
   board opening; record that limitation honestly.
@@ -564,8 +581,9 @@ Required work:
 
 Non-goals: no browser storage guarantee, database backup, or general portability UI.
 
-Required checks: native sync-client failpoint tests, served A22 storage-error flow,
-missing-cache/eviction/Web Lock browser checks, web build, lint, types.
+Checks during browser pause: non-browser storage-state checks, web build, lint, and types. Mark
+native sync-client failpoint tests, served A22, and missing-cache/eviction/Web Lock browser
+checks **UNRUN (deferred by user)**.
 
 Completion evidence: A22's local write failure retains exportable in-memory content without
 claiming durability; unavailable cases show correct state.
@@ -588,25 +606,26 @@ focused direct fixes exposed before landing, run documentation, and P5-10 eviden
 
 Required work:
 
-- Prove complete A06, A07, A10, A22, A24, and A25 with active service worker and served
-  production build. Use independent authenticated profiles and real PostgreSQL/socket results
-  where authority, commit, or denial is asserted.
-- Test direct `/boards` and `/boards/:boardId` refresh online and offline, first-use and
-  evicted-cache states, account separation, sign-out pending intent, worker update, and no API
-  cache via actual Cache Storage inspection.
+- Prepare the A06, A07, A10, A22, A24, and A25 served-browser harnesses and evidence matrix.
+  Do not execute browser flows during the pause; keep those outcomes UNRUN. Use independent
+  authenticated profiles and real PostgreSQL/socket results when browser verification resumes.
+- Prepare checks for direct `/boards` and `/boards/:boardId` refresh online and offline,
+  first-use and evicted-cache states, account separation, sign-out pending intent, worker
+  update, and Cache Storage inspection; defer their browser execution.
 - Recheck A12 and affected Phase 4 outbox, ACK, archive, causal-gap, and save-label behavior.
 - Review Phase 4's OPEN blockers one by one. Fix inherited defects at their owning layer with
   focused evidence; rerun real proofs. Report any still-failing visibility budget, migration,
   boundary, process-kill/lock-loss, socket A23/A30, combined A10, or storage-error gate as open.
-- Add `phase5:verify` that runs formatting, lint, types, units/browser tests, real integration,
-  auth/migration checks, builds, boundaries, active-SW served browser checks, cache inspection,
-  and required prior regressions; propagate failures.
+- Add `phase5:verify` with a non-browser mode for the current pause and a later full mode that
+  runs browser tests, active-SW checks, and cache inspection. Do not execute full mode until
+  the user resumes browser verification; propagate failures from the checks that do run.
 
 Non-goals: no Phase 6/7 features, release deployment, mock-backed gate substitution, or
 relaxation of governing performance targets.
 
-Required checks: clean frozen install, `pnpm phase5:verify`, focused browser/cache/fault
-scripts, `pnpm phase4:verify`, earlier applicable regression scripts, builds.
+Checks during browser pause: clean frozen install, non-browser `phase5:verify` mode, focused
+non-browser regressions, and builds. Mark focused browser/cache/fault scripts and the full
+`pnpm phase4:verify` **UNRUN (deferred by user)**.
 
 Completion evidence: test matrix links every claim to the actual service worker, browser,
 session/socket, database, and local cache boundary. Missing or failed proofs are labeled
@@ -645,8 +664,9 @@ Required work:
 Non-goals: no functional implementation, dependency changes, test weakening, merge, remote
 push, or version 1 release claim. Functional fixes land before this audit commit.
 
-Required checks: frozen install, `pnpm phase5:verify`, `pnpm phase4:verify`, auth/migration
-state, API/web/workspace builds, and `git status --short`.
+Checks during browser pause: frozen install, non-browser `phase5:verify` mode, auth/migration
+state, API/web/workspace builds, and `git status --short`. Mark full `pnpm phase5:verify`
+and `pnpm phase4:verify` **UNRUN (deferred by user)**; the audit remains OPEN.
 
 Completion evidence: final audit and evidence index match current code/history and distinguish
 measured success from stale, mocked, missing, or failed proof.

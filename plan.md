@@ -773,6 +773,11 @@ Do not claim completion if persistence/authorization is mocked where real behavi
 
 ## 20. Release gate and demonstration
 
+Temporary implementation preference: browser-running verification is deferred at the user's
+request. Record skipped browser checks as **UNRUN (deferred by user)**. This does not change
+the release gate below; browser and production-preview acceptance must still pass before
+version 1 can be called complete.
+
 Version 1 is complete only when:
 
 - All required product capabilities work together against PostgreSQL and authenticated independent browsers.
