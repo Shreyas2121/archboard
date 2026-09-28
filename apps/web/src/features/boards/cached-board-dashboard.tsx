@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from '@tanstack/react-router';
 import { Archive, Copy, Pencil, Plus, RotateCcw, Search } from 'lucide-react';
 import { listSelectedCachedBoards, type CachedBoardEntry } from '@archboard/sync-client';
 import { MAX_BOARD_TITLE_CHARACTERS } from '@archboard/contracts';
@@ -204,11 +205,24 @@ function CachedBoardCard({ entry }: { readonly entry: CachedBoardEntry }) {
       ) : null}
       <div
         className="mt-5 flex flex-wrap gap-2 border-t pt-4"
-        aria-label={`Unavailable actions for ${title}`}
+        aria-label={`Board actions for ${title}`}
       >
-        <Button type="button" size="sm" disabled title="Offline board opening is not available yet">
-          Open board
-        </Button>
+        {entry.locallyAvailable ? (
+          <Button asChild size="sm">
+            <Link to="/boards/$boardId" params={{ boardId: entry.boardId }}>
+              Open board
+            </Link>
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            disabled
+            title="No local document is available for this board"
+          >
+            Open board
+          </Button>
+        )}
         <Button
           type="button"
           size="sm"

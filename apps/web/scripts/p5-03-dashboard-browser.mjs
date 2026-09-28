@@ -153,7 +153,19 @@ try {
     await page.getByRole('button', { name: 'New board' }).isDisabled(),
     'Create remained active offline.',
   );
-  for (const name of ['Open board', 'Edit details', 'Archive', 'Duplicate']) {
+  expect(
+    (await page.getByRole('link', { name: 'Open board' }).count()) === 1,
+    'A locally available board could not be opened.',
+  );
+  expect(
+    await page
+      .getByRole('article')
+      .filter({ hasText: 'Unavailable document' })
+      .getByRole('button', { name: 'Open board' })
+      .isDisabled(),
+    'A board without a local document appeared openable.',
+  );
+  for (const name of ['Edit details', 'Archive', 'Duplicate']) {
     expect(
       await page.getByRole('button', { name }).first().isDisabled(),
       `${name} remained active offline.`,

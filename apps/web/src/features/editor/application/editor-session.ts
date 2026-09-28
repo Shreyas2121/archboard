@@ -100,6 +100,7 @@ export class EditorSession {
   private initialBootstrapBytes: Uint8Array | null = null;
   private bootstrapQueued = false;
   private accessDenied = false;
+  private accessChecked = false;
   private readonly listeners = new Set<SessionListener>();
   private unsubscribeWriter: (() => void) | null = null;
   private undoManager: UndoManager | null = null;
@@ -179,8 +180,10 @@ export class EditorSession {
   public canEdit(): boolean {
     if (!this.writerSession.getSnapshot().writable) return false;
     if (this.board === undefined) return true;
+    if (!this.accessChecked) return false;
     const syncPhase = this.syncClient?.getSnapshot().phase;
     return (
+      (this.hasLocalCopy || this.syncClient?.getSnapshot().ready === true) &&
       (this.boardRole === BOARD_ROLES.OWNER || this.boardRole === BOARD_ROLES.EDITOR) &&
       !this.archived &&
       !this.accessDenied &&
@@ -199,16 +202,29 @@ export class EditorSession {
     this.cachedRole = role;
     this.archived = archived;
     this.accessDenied = false;
+    this.accessChecked = true;
     this.refresh();
     const binding = this.writerSession.getWritableBinding();
     await binding?.persistence.cacheBoardAccess({ role, archived }).catch(() => undefined);
     this.syncClient?.resumeDrain();
   }
 
+  /** Use only after the route confirms a selected-account cache with a local document. */
+  public useCachedBoardAccess(role: BoardRole, archived: boolean): boolean {
+    if (this.board === undefined || !this.hasLocalCopy) return false;
+    this.boardRole = role;
+    this.archived = archived;
+    this.accessDenied = false;
+    this.accessChecked = true;
+    this.refresh();
+    return true;
+  }
+
   public denyBoardAccess(): void {
     if (this.board === undefined) return;
     this.boardRole = null;
     this.accessDenied = true;
+    this.accessChecked = false;
     this.refresh();
   }
 
@@ -393,12 +409,24 @@ export class EditorSession {
   }
 
   private async openInternal(): Promise<void> {
-    this.unsubscribeWriter = this.writerSession.subscribe(this.refresh);
+    this.unsubscribeWriter = this.writerSession.subscribe(() => {
+      this.refresh();
+      if (this.initializing || this.board === undefined || this.syncClient !== null) return;
+      const binding = this.writerSession.getWritableBinding();
+      if (binding !== null) {
+        this.attachSyncClient(binding);
+        void this.startSync().catch(() => undefined);
+      }
+    });
     await this.writerSession.initialize();
     this.hasLocalCopy = this.writerSession.hadStoredStateOnOpen();
     if (this.board !== undefined) {
       const binding = this.writerSession.getWritableBinding();
-      if (binding !== null && !(await binding.persistence.hasQueuedInitialState()))
+      if (
+        binding !== null &&
+        !this.hasLocalCopy &&
+        !(await binding.persistence.hasQueuedInitialState())
+      )
         this.initialBootstrapBytes = Y.encodeStateAsUpdate(binding.document);
       const cached = await binding?.persistence.readCachedBoardAccess();
       if (cached !== undefined && cached !== null) {
@@ -408,34 +436,7 @@ export class EditorSession {
       }
       this.initializing = false;
       this.refresh();
-      if (binding !== null) {
-        this.syncClient = new OrderedSyncClient({
-          boardId: this.board.boardId,
-          tabId: crypto.randomUUID(),
-          webSocketOrigin: this.board.webSocketOrigin,
-          persistence: binding.persistence,
-          canSend: () => !this.archived && !this.accessDenied,
-          beforeDrain: async () => {
-            if (!this.archived && !this.accessDenied)
-              await this.ensureBootstrap(this.syncClient?.getSnapshot().role ?? null);
-          },
-        });
-        this.unsubscribeSync = this.syncClient.subscribe(() => {
-          const sync = this.syncClient?.getSnapshot();
-          if (sync?.ready || sync?.phase === SYNC_PHASES.ACCESS_CHANGED) {
-            this.boardRole = sync.role;
-          }
-          if (sync?.ready) this.hasLocalCopy = true;
-          if (sync?.ready && sync.role !== null && sync.role !== this.cachedRole) {
-            this.cachedRole = sync.role;
-            void binding.persistence
-              .cacheBoardAccess({ role: sync.role, archived: this.archived })
-              .catch(() => undefined);
-          }
-          this.refresh();
-        });
-        this.refresh();
-      }
+      if (binding !== null) this.attachSyncClient(binding);
       return;
     }
     if (this.writerSession.getSnapshot().writable && !this.hasLocalCopy) {
@@ -449,6 +450,38 @@ export class EditorSession {
       this.preparingDemo = false;
     }
     this.initializing = false;
+    this.refresh();
+  }
+
+  private attachSyncClient(
+    binding: NonNullable<ReturnType<BrowserWriterSession['getWritableBinding']>>,
+  ): void {
+    if (this.board === undefined || this.syncClient !== null) return;
+    this.syncClient = new OrderedSyncClient({
+      boardId: this.board.boardId,
+      tabId: crypto.randomUUID(),
+      webSocketOrigin: this.board.webSocketOrigin,
+      persistence: binding.persistence,
+      canSend: () => !this.archived && !this.accessDenied,
+      beforeDrain: async () => {
+        if (!this.archived && !this.accessDenied)
+          await this.ensureBootstrap(this.syncClient?.getSnapshot().role ?? null);
+      },
+    });
+    this.unsubscribeSync = this.syncClient.subscribe(() => {
+      const sync = this.syncClient?.getSnapshot();
+      if (sync?.ready || sync?.phase === SYNC_PHASES.ACCESS_CHANGED) {
+        this.boardRole = sync.role;
+      }
+      if (sync?.ready) this.hasLocalCopy = true;
+      if (sync?.ready && sync.role !== null && sync.role !== this.cachedRole) {
+        this.cachedRole = sync.role;
+        void binding.persistence
+          .cacheBoardAccess({ role: sync.role, archived: this.archived })
+          .catch(() => undefined);
+      }
+      this.refresh();
+    });
     this.refresh();
   }
 
