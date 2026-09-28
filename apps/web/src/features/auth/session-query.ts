@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { QueryClient, useQuery } from '@tanstack/react-query';
 import type { CurrentUser } from '@archboard/contracts';
+import { forgetSelectedLocalAccount, selectLocalAccount } from '@archboard/sync-client';
 
 import { getCurrentUser, setUnauthorizedListener } from '@/platform/api';
 
@@ -17,13 +18,22 @@ export const queryClient = new QueryClient({
 export function useCurrentUser() {
   return useQuery({
     queryKey: CURRENT_USER_QUERY_KEY,
-    queryFn: ({ signal }) => getCurrentUser(signal),
+    queryFn: async ({ signal }) => {
+      const user = await getCurrentUser(signal);
+      if (user !== null) {
+        selectLocalAccount(window.location.origin, { kind: 'authenticated', userId: user.id });
+      } else {
+        forgetSelectedLocalAccount(window.location.origin);
+      }
+      return user;
+    },
     staleTime: SESSION_STALE_MS,
     retry: false,
   });
 }
 
 export function clearAuthenticatedState(): void {
+  forgetSelectedLocalAccount(window.location.origin);
   void queryClient.cancelQueries();
   queryClient.removeQueries({
     predicate: (query) =>

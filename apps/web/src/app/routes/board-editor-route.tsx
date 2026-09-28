@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { applicationIdSchema, type BoardSummary } from '@archboard/contracts';
+import { GRAPH_SCHEMA_VERSION, applicationIdSchema, type BoardSummary } from '@archboard/contracts';
+import { cacheBoardSummary } from '@archboard/sync-client';
 
 import { EditorShell } from '@/app/editor/editor-shell';
 import { useNarrowScreen } from '@/app/hooks/use-narrow-screen';
@@ -49,13 +50,14 @@ export function BoardEditorRoute() {
 
   useEffect(() => {
     if (!currentUser.data || !validBoardId) return;
+    const userId = currentUser.data.id;
     let active = true;
     const current = new EditorSession({
       deploymentOrigin: window.location.origin,
       forceReadOnly: narrowScreen,
       board: {
         boardId,
-        userId: currentUser.data.id,
+        userId,
         webSocketOrigin: loadWebConfig(import.meta.env).webSocketOrigin,
       },
     });
@@ -68,6 +70,15 @@ export function BoardEditorRoute() {
         if (!active) return;
         setBoard(detail);
         await current.setBoardAccess(detail.effectiveRole, detail.archivedAt !== null);
+        await cacheBoardSummary(
+          {
+            deploymentOrigin: window.location.origin,
+            userId,
+            boardId,
+            graphSchemaVersion: GRAPH_SCHEMA_VERSION,
+          },
+          detail,
+        ).catch(() => undefined);
         if (active) await current.startSync();
       } catch (error) {
         if (!active) return;

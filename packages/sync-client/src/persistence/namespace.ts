@@ -7,6 +7,11 @@ export interface BoardStorageNamespace {
   readonly graphSchemaVersion: number;
 }
 
+export interface AccountStorageNamespace {
+  readonly deploymentOrigin: string;
+  readonly userId: string;
+}
+
 function requireNonEmpty(value: string, name: string): void {
   if (value.length === 0 || value.trim() !== value) {
     throw new TypeError(`${name} must be non-empty and must not have surrounding whitespace.`);
@@ -36,4 +41,13 @@ export function boardStorageNamespaceKey(namespace: BoardStorageNamespace): stri
     namespace.boardId,
     namespace.graphSchemaVersion,
   ]);
+}
+
+export function accountStorageNamespacePrefix(account: AccountStorageNamespace): string {
+  requireNonEmpty(account.userId, 'userId');
+  const parsedOrigin = new URL(account.deploymentOrigin);
+  if (parsedOrigin.origin !== account.deploymentOrigin) {
+    throw new TypeError('deploymentOrigin must contain an origin only.');
+  }
+  return `${JSON.stringify([account.deploymentOrigin, account.userId]).slice(0, -1)},`;
 }

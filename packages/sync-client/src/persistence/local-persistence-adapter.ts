@@ -293,13 +293,18 @@ export class LocalPersistenceAdapter {
   public async cacheBoardAccess(access: CachedBoardAccess): Promise<void> {
     await this.whenIdle();
     if (this.readOnly) return;
-    await this.requireDatabase().put(SYNC_STORE_NAMES.BOARD_CACHE, {
+    const database = this.requireDatabase();
+    const lastServerSequence = await this.lastReceivedServerSequence();
+    const transaction = database.transaction(SYNC_STORE_NAMES.BOARD_CACHE, 'readwrite');
+    const existing = await transaction.store.get(this.namespace);
+    await transaction.store.put({
       namespace: this.namespace,
       role: access.role,
-      metadata: { archived: access.archived },
+      metadata: { ...existing?.metadata, archived: access.archived },
       cachedAt: this.now().toISOString(),
-      lastServerSequence: await this.lastReceivedServerSequence(),
+      lastServerSequence,
     });
+    await transaction.done;
   }
 
   public hydrate(updateBytes: Uint8Array): void {

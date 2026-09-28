@@ -1,4 +1,4 @@
-import type { BoardRole, ServerSequence } from '@archboard/contracts';
+import type { BoardRole, BoardSummary, ServerSequence } from '@archboard/contracts';
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
 import {
@@ -58,7 +58,20 @@ export interface LocalSnapshotRecord {
 export interface BoardCacheRecord {
   readonly namespace: string;
   readonly role: BoardRole;
-  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly metadata: {
+    readonly archived: boolean;
+    readonly summary?: Pick<
+      BoardSummary,
+      | 'id'
+      | 'title'
+      | 'description'
+      | 'archivedAt'
+      | 'metadataVersion'
+      | 'contentUpdatedAt'
+      | 'createdAt'
+      | 'updatedAt'
+    >;
+  };
   readonly cachedAt: string;
   readonly lastServerSequence: ServerSequence;
 }
