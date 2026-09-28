@@ -22,9 +22,11 @@ import {
   type BoardAction,
 } from './board-api';
 import { BoardDialog } from './board-dialog';
+import { CachedBoardDashboard } from './cached-board-dashboard';
 
 type Selection = { action: BoardAction; board: BoardSummary | null; intent: string };
 const LOADING_ROW_COUNT = 3;
+const HTTP_SERVER_ERROR = 500;
 
 export function BoardDashboard() {
   const queryClient = useQueryClient();
@@ -65,6 +67,12 @@ export function BoardDashboard() {
   const failure = boards.error;
   const expired = failure instanceof ApiClientError && failure.kind === 'unauthenticated';
   const networkDown = failure instanceof ApiClientError && failure.kind === 'network';
+  const serverUnavailable =
+    failure instanceof ApiClientError &&
+    (networkDown || (failure.kind === 'http' && (failure.status ?? 0) >= HTTP_SERVER_ERROR));
+  if (serverUnavailable) {
+    return <CachedBoardDashboard onRetry={() => void boards.refetch()} />;
+  }
   return (
     <main className="flex-1 py-10 sm:py-14">
       <div className="flex flex-wrap items-end justify-between gap-5">

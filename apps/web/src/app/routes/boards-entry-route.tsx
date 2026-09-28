@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { LogOut } from 'lucide-react';
+import { selectLocalAccount } from '@archboard/sync-client';
 import { BrandMark } from '@/app/components/brand-mark';
 import { Button } from '@/components/ui/button';
 import { SessionState, signOut, useCurrentUser } from '@/features/auth';
 import { BoardDashboard } from '@/features/boards/board-dashboard';
+import { CachedBoardDashboard } from '@/features/boards/cached-board-dashboard';
+import { ApiClientError } from '@/platform/api';
+
+const HTTP_SERVER_ERROR = 500;
 
 export function BoardsEntryRoute() {
   const navigate = useNavigate();
@@ -31,7 +36,53 @@ export function BoardsEntryRoute() {
     }
   }
   if (session.isPending) return <SessionState state="loading" />;
-  if (session.isError) return <SessionState state="error" onRetry={() => void session.refetch()} />;
+  if (session.isError) {
+    const serverUnavailable =
+      session.error instanceof ApiClientError &&
+      (session.error.kind === 'network' ||
+        (session.error.kind === 'http' && (session.error.status ?? 0) >= HTTP_SERVER_ERROR));
+    if (serverUnavailable) {
+      const selected = selectLocalAccount(window.location.origin, { kind: 'network-unavailable' });
+      if (selected) {
+        return (
+          <div className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col px-5 sm:px-8">
+            <header className="flex min-h-20 flex-wrap items-center justify-between gap-3 border-b border-border/70 py-3">
+              <Link className="flex items-center gap-2.5 font-semibold" to="/boards">
+                <BrandMark />
+                <span>Archboard</span>
+              </Link>
+              <Button asChild type="button" variant="ghost" size="sm">
+                <Link to="/demo">Local demo</Link>
+              </Button>
+            </header>
+            <CachedBoardDashboard sessionUncertain onRetry={() => void session.refetch()} />
+          </div>
+        );
+      }
+      return (
+        <main
+          className="mx-auto grid min-h-dvh max-w-xl place-content-center justify-items-center px-6 text-center"
+          role="status"
+        >
+          <BrandMark />
+          <h1 className="mt-6 text-3xl font-semibold">No account available offline</h1>
+          <p className="mt-3 text-center text-muted-foreground">
+            We could not check your session, and this device has no selected account. Reconnect and
+            sign in to see your boards.
+          </p>
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <Button type="button" onClick={() => void session.refetch()}>
+              Retry session check
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/demo">Open local demo</Link>
+            </Button>
+          </div>
+        </main>
+      );
+    }
+    return <SessionState state="error" onRetry={() => void session.refetch()} />;
+  }
   if (session.data === null) {
     if (!wasAuthenticated) return <SessionState state="redirecting" />;
     return (
