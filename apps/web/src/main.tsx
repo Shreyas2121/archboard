@@ -7,19 +7,11 @@ import { initializeTheme, ThemeProvider } from './app/theme/theme-provider.js';
 import { TooltipProvider } from './components/ui/tooltip.js';
 import { queryClient, SessionBoundary } from './features/auth/index.js';
 import { loadWebConfig } from './platform/config/index.js';
+import { AppUpdatePrompt } from './platform/update/app-update-prompt.js';
 import './styles.css';
 
 loadWebConfig(import.meta.env);
 initializeTheme();
-
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  // Activation stays user-directed; a waiting worker must not replace an active editor.
-  window.addEventListener('load', () => {
-    void navigator.serviceWorker.register('/sw.js').catch(() => {
-      // The online app remains usable when the browser blocks service workers.
-    });
-  });
-}
 
 const rootElement = document.querySelector('#root');
 
@@ -34,6 +26,7 @@ createRoot(rootElement).render(
       <ThemeProvider>
         <TooltipProvider>
           <App />
+          <AppUpdatePrompt />
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>

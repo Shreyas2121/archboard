@@ -43,6 +43,7 @@ export default defineConfig({
           /^\/invite(?:s)?(?:\/|$)/,
         ],
         runtimeCaching: [],
+        importScripts: ['/worker-compatibility.js'],
         skipWaiting: false,
         clientsClaim: false,
         cleanupOutdatedCaches: true,

@@ -175,6 +175,11 @@ export class OrderedSyncClient {
     this.publish();
   }
 
+  /** Resolve after all already queued socket and receipt work has settled. */
+  public whenIdle(): Promise<void> {
+    return this.work;
+  }
+
   public retryNow(): void {
     if (
       !this.started ||

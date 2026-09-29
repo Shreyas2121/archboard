@@ -51,6 +51,8 @@ import {
   type WriterSessionSnapshot,
 } from '@archboard/sync-client';
 
+import { registerUpdateSession, unregisterUpdateSession } from './update-sessions';
+
 export const DEMO_BOARD_ID = '6f5eb829-0b42-4e62-8a8a-3db5176adf67';
 
 export interface EditorSessionSnapshot {
@@ -112,6 +114,8 @@ export class EditorSession {
   private closePromise: Promise<void> | null = null;
   private preparingDemo = false;
   private initializing = true;
+  private updatePrepared = false;
+  private updateStoppedSync = false;
   private snapshot: EditorSessionSnapshot;
 
   public constructor(options: EditorSessionOptions) {
@@ -143,6 +147,7 @@ export class EditorSession {
   }
 
   public open(): Promise<void> {
+    registerUpdateSession(this);
     this.opening ??= this.openInternal().catch(() => {
       this.snapshot = Object.freeze({
         revision: this.snapshot.revision + 1,
@@ -180,6 +185,7 @@ export class EditorSession {
   }
 
   public canEdit(): boolean {
+    if (this.updatePrepared) return false;
     if (!this.writerSession.getSnapshot().writable) return false;
     if (this.board === undefined) return true;
     if (!this.accessChecked) return false;
@@ -190,6 +196,7 @@ export class EditorSession {
       !this.archived &&
       !this.accessDenied &&
       this.initialBootstrapBytes === null &&
+      this.syncClient?.getSnapshot().errorCode !== ERROR_CODES.SCHEMA_UNSUPPORTED &&
       syncPhase !== SYNC_PHASES.ACCESS_CHANGED &&
       syncPhase !== SYNC_PHASES.RECOVERY_REQUIRED &&
       syncPhase !== SYNC_PHASES.STORAGE_ERROR
@@ -405,8 +412,41 @@ export class EditorSession {
   }
 
   public close(): Promise<void> {
+    unregisterUpdateSession(this);
     this.closePromise ??= this.closeInternal();
     return this.closePromise;
+  }
+
+  public async prepareForUpdate(): Promise<void> {
+    this.updatePrepared = true;
+    this.refresh();
+    await this.opening;
+    if (this.syncClient !== null) {
+      this.syncClient.stop();
+      this.updateStoppedSync = true;
+      await this.syncClient.whenIdle();
+    }
+    await this.writerSession.whenIdle();
+    const persistence = this.writerSession.getSnapshot().persistence;
+    if (persistence === null || persistence.pendingWrites !== 0 || !persistence.savedOnDevice)
+      throw new Error('Local changes have not finished saving. The update is still waiting.');
+  }
+
+  public cancelUpdatePreparation(): void {
+    if (this.closePromise !== null) return;
+    this.updatePrepared = false;
+    if (this.updateStoppedSync) {
+      this.updateStoppedSync = false;
+      this.unsubscribeSync?.();
+      this.unsubscribeSync = null;
+      this.syncClient = null;
+      const binding = this.writerSession.getWritableBinding();
+      if (binding !== null) {
+        this.attachSyncClient(binding);
+        void this.startSync().catch(() => undefined);
+      }
+    }
+    this.refresh();
   }
 
   private executeMutation(mutate: Parameters<BrowserWriterSession['executeMutation']>[0]): void {
