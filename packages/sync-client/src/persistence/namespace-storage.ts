@@ -22,6 +22,36 @@ export interface BoardStorageNamespaceRecords {
   readonly boardCache: BoardCacheRecord | null;
 }
 
+export interface BoardStorageHealth {
+  readonly hasSnapshot: boolean;
+  readonly cachedMetadataAt: string | null;
+  readonly snapshotAt: string | null;
+  readonly pendingCount: number;
+}
+
+/** Read exact-namespace diagnostics without loading outbox or local update logs. */
+export async function readBoardStorageHealth(
+  namespace: BoardStorageNamespace,
+): Promise<BoardStorageHealth> {
+  const key = boardStorageNamespaceKey(namespace);
+  const database = await openSyncClientDatabase();
+  try {
+    const [snapshot, boardCache, pendingCount] = await Promise.all([
+      database.get(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS, key),
+      database.get(SYNC_STORE_NAMES.BOARD_CACHE, key),
+      database.countFromIndex(SYNC_STORE_NAMES.OUTBOX, SYNC_INDEX_NAMES.BY_NAMESPACE, key),
+    ]);
+    return {
+      hasSnapshot: snapshot !== undefined && snapshot.updateBytes.byteLength > 0,
+      cachedMetadataAt: boardCache?.cachedAt ?? null,
+      snapshotAt: snapshot?.updatedAt ?? null,
+      pendingCount,
+    };
+  } finally {
+    database.close();
+  }
+}
+
 export async function listBoardStorageNamespaceRecords(
   namespace: BoardStorageNamespace,
 ): Promise<BoardStorageNamespaceRecords> {

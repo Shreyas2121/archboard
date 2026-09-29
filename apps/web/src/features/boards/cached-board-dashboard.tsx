@@ -191,6 +191,12 @@ function CachedBoardCard({ entry }: { readonly entry: CachedBoardEntry }) {
         {entry.archived ? 'Archived' : 'Active'} ·{' '}
         {entry.locallyAvailable ? 'Local document available' : 'Local document unavailable'}
       </p>
+      {!entry.locallyAvailable && (
+        <p className="mt-2 text-sm text-muted-foreground">
+          The local document may have been cleared or evicted. Reconnect and authenticate to open
+          this board again. Browser storage is not a backup.
+        </p>
+      )}
       <p className="mt-2 text-xs text-muted-foreground">
         Cached <time dateTime={entry.fetchedAt}>{new Date(entry.fetchedAt).toLocaleString()}</time>{' '}
         · Details may be outdated

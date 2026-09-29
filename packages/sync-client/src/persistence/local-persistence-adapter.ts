@@ -94,6 +94,17 @@ export class LocalPersistenceError extends Error {
   }
 }
 
+export function storageFailureDiagnostic(cause: unknown): string {
+  const quotaExceeded =
+    typeof cause === 'object' &&
+    cause !== null &&
+    'name' in cause &&
+    cause.name === 'QuotaExceededError';
+  return quotaExceeded
+    ? 'Browser storage quota was exceeded; export the in-memory graph before leaving.'
+    : 'Local persistence failed; export the in-memory graph before leaving.';
+}
+
 type LocalWriteTransaction = IDBPTransaction<
   SyncClientDatabase,
   [
@@ -378,9 +389,9 @@ export class LocalPersistenceAdapter {
           this.publishSaved();
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         failed = true;
-        this.recordStorageFailure();
+        this.recordStorageFailure(error);
       });
     await this.writeTail;
     if (failed) throw new LocalPersistenceError();
@@ -451,7 +462,7 @@ export class LocalPersistenceAdapter {
     } catch (error) {
       await transaction.done.catch(() => undefined);
       if (error instanceof LocalPersistenceError) throw error;
-      this.recordStorageFailure();
+      this.recordStorageFailure(error);
       throw new LocalPersistenceError();
     }
   }
@@ -489,8 +500,8 @@ export class LocalPersistenceAdapter {
         return;
       }
       this.database = database;
-    } catch {
-      this.recordStorageFailure();
+    } catch (error) {
+      this.recordStorageFailure(error);
       return;
     }
 
@@ -506,8 +517,8 @@ export class LocalPersistenceAdapter {
         )
       ).sort((a, b) => a.localSequence - b.localSequence);
       this.namespaceHadStoredState = snapshot !== undefined || records.length > 0;
-    } catch {
-      this.recordStorageFailure();
+    } catch (error) {
+      this.recordStorageFailure(error);
       return;
     }
 
@@ -559,8 +570,8 @@ export class LocalPersistenceAdapter {
           updatedAt: this.now().toISOString(),
         });
         await this.deleteCoveredLocalUpdates(this.nextLocalSequence, records);
-      } catch {
-        this.recordStorageFailure();
+      } catch (error) {
+        this.recordStorageFailure(error);
         return;
       }
     }
@@ -599,7 +610,7 @@ export class LocalPersistenceAdapter {
         this.publishSaved();
       }
     });
-    this.writeTail = this.writeTail.catch(() => this.recordStorageFailure());
+    this.writeTail = this.writeTail.catch((error: unknown) => this.recordStorageFailure(error));
   }
 
   private reserveLocalSequence(): number {
@@ -745,7 +756,7 @@ export class LocalPersistenceAdapter {
     });
   }
 
-  private recordStorageFailure(): void {
+  private recordStorageFailure(cause?: unknown): void {
     this.pendingLocalWrites = 0;
     this.setStatus({
       phase: LOCAL_PERSISTENCE_PHASES.STORAGE_ERROR,
@@ -753,7 +764,7 @@ export class LocalPersistenceAdapter {
       editingPaused: true,
       pendingWrites: 0,
       errorCode: ERROR_CODES.PERSISTENCE_FAILED,
-      diagnostic: 'Local persistence failed; export the in-memory graph before leaving.',
+      diagnostic: storageFailureDiagnostic(cause),
     });
   }
 

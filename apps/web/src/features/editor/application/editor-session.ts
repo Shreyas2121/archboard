@@ -49,6 +49,7 @@ import {
   WRITER_SESSION_PHASES,
   type SyncStatus,
   type WriterSessionSnapshot,
+  type BoardStorageNamespace,
 } from '@archboard/sync-client';
 
 import { registerUpdateSession, unregisterUpdateSession } from './update-sessions';
@@ -93,6 +94,7 @@ export interface EditorSessionOptions {
 
 export class EditorSession {
   private readonly board: EditorSessionOptions['board'];
+  private readonly storageNamespace: BoardStorageNamespace;
   private readonly writerSession: BrowserWriterSession;
   private syncClient: OrderedSyncClient | null = null;
   private unsubscribeSync: (() => void) | null = null;
@@ -120,13 +122,14 @@ export class EditorSession {
 
   public constructor(options: EditorSessionOptions) {
     this.board = options.board;
+    this.storageNamespace = {
+      deploymentOrigin: options.deploymentOrigin,
+      userId: options.board?.userId ?? LOCAL_DEMO_USER_KEY,
+      boardId: options.board?.boardId ?? DEMO_BOARD_ID,
+      graphSchemaVersion: GRAPH_SCHEMA_VERSION,
+    };
     this.writerSession = BrowserWriterSession.create({
-      namespace: {
-        deploymentOrigin: options.deploymentOrigin,
-        userId: options.board?.userId ?? LOCAL_DEMO_USER_KEY,
-        boardId: options.board?.boardId ?? DEMO_BOARD_ID,
-        graphSchemaVersion: GRAPH_SCHEMA_VERSION,
-      },
+      namespace: this.storageNamespace,
       ...(options.forceReadOnly ? { lockManager: null } : {}),
     });
     this.snapshot = Object.freeze({
@@ -170,6 +173,10 @@ export class EditorSession {
   }
 
   public getSnapshot = (): EditorSessionSnapshot => this.snapshot;
+
+  public getStorageNamespace(): BoardStorageNamespace {
+    return this.storageNamespace;
+  }
 
   public get presence() {
     return this.syncClient?.presence ?? null;

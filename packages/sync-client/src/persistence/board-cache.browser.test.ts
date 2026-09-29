@@ -26,6 +26,7 @@ import {
 import { openSyncClientDatabase } from './database.js';
 import { LocalPersistenceAdapter } from './local-persistence-adapter.js';
 import { boardStorageNamespaceKey, type BoardStorageNamespace } from './namespace.js';
+import { readBoardStorageHealth } from './namespace-storage.js';
 
 const ORIGIN = 'https://app.archboard.example';
 const OTHER_ORIGIN = 'https://preview.archboard.example';
@@ -78,6 +79,42 @@ afterEach(async () => {
 });
 
 describe('account-scoped board cache in a real browser', () => {
+  it('reports exact-namespace storage health without mixing another account or demo', async () => {
+    const first = namespace(USER_A);
+    const otherAccount = { ...first, userId: USER_B };
+    const demo = { ...first, userId: LOCAL_DEMO_USER_KEY };
+    await cacheBoardSummary(first, summary(first.boardId, 'First board'), FETCHED_AT);
+    await storeSnapshot(first);
+    const database = await openSyncClientDatabase();
+    try {
+      for (const item of [first, otherAccount, demo]) {
+        await database.put(SYNC_STORE_NAMES.OUTBOX, {
+          namespace: boardStorageNamespaceKey(item),
+          updateId: crypto.randomUUID(),
+          localSequence: 1,
+          updateBytes: new Uint8Array([1]),
+          payloadHash: new Uint8Array([1]),
+          createdAt: COMMITTED_AT,
+          status: OUTBOX_STATUSES.PENDING,
+        });
+      }
+    } finally {
+      database.close();
+    }
+    expect(await readBoardStorageHealth(first)).toEqual({
+      hasSnapshot: true,
+      cachedMetadataAt: FETCHED_AT.toISOString(),
+      snapshotAt: COMMITTED_AT,
+      pendingCount: 1,
+    });
+    expect(await readBoardStorageHealth(otherAccount)).toMatchObject({
+      hasSnapshot: false,
+      cachedMetadataAt: null,
+      pendingCount: 1,
+    });
+    expect(await readBoardStorageHealth(demo)).toMatchObject({ pendingCount: 1 });
+  });
+
   it('selects only a previously authenticated account when auth is unavailable and blocks pending sign-out', () => {
     expect(selectLocalAccount(ORIGIN, { kind: 'network-unavailable' })).toBeNull();
     expect(selectLocalAccount(ORIGIN, { kind: 'authenticated', userId: USER_A })).toEqual({

@@ -20,6 +20,7 @@ import {
   Database,
   Download,
   Grid3X3,
+  HardDrive,
   Maximize,
   Monitor,
   Moon,
@@ -97,6 +98,7 @@ import {
   usePaletteOpen,
 } from '@/features/editor/state';
 import { cn } from '@/lib/utils';
+import { LocalStorageDialog } from './local-storage-dialog';
 
 import { EDITOR_VIEW_PHASES, editorViewState } from './editor-view-state';
 
@@ -240,6 +242,9 @@ export function EditorShell({
   const [serverReloadOpen, setServerReloadOpen] = useState(false);
   const [serverReloadPending, setServerReloadPending] = useState(false);
   const [serverReloadError, setServerReloadError] = useState<string | null>(null);
+  const [storageOpen, setStorageOpen] = useState(false);
+  const storageButtonRef = useRef<HTMLButtonElement>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const { preference, cyclePreference } = useTheme();
   const boardMode = boardTitle !== undefined;
   const baseViewState = editorViewState(phaseForSession(sessionSnapshot, narrowScreen, boardMode));
@@ -469,7 +474,13 @@ export function EditorShell({
     session !== null &&
     sessionSnapshot?.writer.writable === true;
   const downloadRecovery = useCallback((): void => {
-    if (projection !== null) downloadRecoveryArtifact(projection);
+    if (projection === null) return;
+    setRecoveryError(null);
+    try {
+      downloadRecoveryArtifact(projection);
+    } catch (error) {
+      setRecoveryError(error instanceof Error ? error.message : 'Recovery export failed.');
+    }
   }, [projection]);
   const confirmReset = useCallback(async (): Promise<void> => {
     if (session === null || !canReset) return;
@@ -583,6 +594,15 @@ export function EditorShell({
               <RotateCcw />
             </IconButton>
           )}
+          <IconButton
+            ref={storageButtonRef}
+            label="Local storage status"
+            variant="ghost"
+            disabled={session === null}
+            onClick={() => setStorageOpen(true)}
+          >
+            <HardDrive />
+          </IconButton>
           <IconButton
             className="max-sm:hidden"
             label={
@@ -742,6 +762,7 @@ export function EditorShell({
                 !sessionSnapshot?.hasLocalCopy) ||
               viewState.phase === EDITOR_VIEW_PHASES.STORAGE_ERROR ||
               viewState.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED ||
+              viewState.phase === EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED ||
               viewState.phase === EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED ||
               viewState.phase === EDITOR_VIEW_PHASES.VALIDATION_REJECTED) && (
               <section
@@ -761,6 +782,26 @@ export function EditorShell({
                 >
                   {viewState.detail}
                 </p>
+                {viewState.phase === EDITOR_VIEW_PHASES.STORAGE_ERROR &&
+                  sessionSnapshot?.writer.persistence?.diagnostic && (
+                    <p className="mt-2 max-w-sm text-sm text-destructive">
+                      {sessionSnapshot.writer.persistence.diagnostic}
+                    </p>
+                  )}
+                {projection !== null &&
+                  (viewState.phase === EDITOR_VIEW_PHASES.STORAGE_ERROR ||
+                    viewState.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED ||
+                    viewState.phase === EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED ||
+                    viewState.phase === EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED) && (
+                    <Button type="button" className="mt-5" onClick={downloadRecovery}>
+                      <Download /> Download in-memory recovery
+                    </Button>
+                  )}
+                {recoveryError && (
+                  <p className="mt-3 text-sm text-destructive" role="alert">
+                    {recoveryError}
+                  </p>
+                )}
               </section>
             )}
             {canvasReady &&
@@ -816,6 +857,18 @@ export function EditorShell({
                 {connectionNotice}
               </aside>
             )}
+            {recoveryError !== null &&
+              viewState.phase !== EDITOR_VIEW_PHASES.STORAGE_ERROR &&
+              viewState.phase !== EDITOR_VIEW_PHASES.RECOVERY_REQUIRED &&
+              viewState.phase !== EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED &&
+              viewState.phase !== EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED && (
+                <aside
+                  className="absolute inset-x-3 bottom-3 z-20 rounded-lg border bg-background px-3 py-2 text-center text-sm text-destructive"
+                  role="alert"
+                >
+                  {recoveryError}
+                </aside>
+              )}
           </div>
         </main>
 
@@ -987,6 +1040,14 @@ export function EditorShell({
           </Button>
         </div>
       </footer>
+
+      <LocalStorageDialog
+        open={storageOpen}
+        onOpenChange={setStorageOpen}
+        session={session}
+        snapshot={sessionSnapshot}
+        returnFocusRef={storageButtonRef}
+      />
 
       <Dialog
         open={editorCommands.deleteConfirmationOpen}

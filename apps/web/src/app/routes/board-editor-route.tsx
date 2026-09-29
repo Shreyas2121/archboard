@@ -77,7 +77,7 @@ function OfflineBoardState({
     state === 'no-account'
       ? 'Reconnect and sign in before opening an account board on this device.'
       : state === 'unavailable'
-        ? 'This board has no usable local document for the selected account. Reconnect to open it.'
+        ? 'This board has no usable local document for the selected account. Browser storage may have been cleared or evicted. Reconnect and authenticate to load it again; this device cache is not a backup.'
         : 'This device could not read the local board cache. Your stored data was left unchanged.';
   return (
     <main

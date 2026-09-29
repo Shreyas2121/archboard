@@ -71,7 +71,8 @@ const EDITOR_VIEW_STATES: Readonly<Record<EditorViewPhase, EditorViewState>> = {
   [EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED]: {
     phase: EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED,
     label: 'Read-only · browser lock unavailable',
-    detail: 'This browser cannot safely claim single-writer access to the local board.',
+    detail:
+      'This browser cannot safely claim single-writer access. Editing is paused; download recovery if a local graph is available.',
     tone: 'warning',
     editable: false,
     showStableSkeleton: false,
@@ -95,7 +96,8 @@ const EDITOR_VIEW_STATES: Readonly<Record<EditorViewPhase, EditorViewState>> = {
   [EDITOR_VIEW_PHASES.STORAGE_ERROR]: {
     phase: EDITOR_VIEW_PHASES.STORAGE_ERROR,
     label: 'Storage error · export your changes',
-    detail: 'Editing is paused. The current in-memory board remains available for recovery.',
+    detail:
+      'Local writes failed. Editing is paused and recent in-memory changes are not saved on this device. Download recovery before leaving.',
     tone: 'danger',
     editable: false,
     showStableSkeleton: false,
