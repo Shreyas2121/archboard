@@ -17,6 +17,9 @@ export const EDITOR_VIEW_PHASES = {
   VIEWER: 'viewer',
   ARCHIVED: 'archived',
   ACCESS_CHANGED: 'access-changed',
+  SESSION_EXPIRED: 'session-expired',
+  SCHEMA_UNSUPPORTED: 'schema-unsupported',
+  VALIDATION_REJECTED: 'validation-rejected',
   UNAVAILABLE: 'unavailable',
 } as const;
 
@@ -174,6 +177,32 @@ const EDITOR_VIEW_STATES: Readonly<Record<EditorViewPhase, EditorViewState>> = {
     label: 'Access changed · local changes preserved',
     detail: 'Editing and sending are paused. Download local recovery if needed.',
     tone: 'warning',
+    editable: false,
+    showStableSkeleton: false,
+  },
+  [EDITOR_VIEW_PHASES.SESSION_EXPIRED]: {
+    phase: EDITOR_VIEW_PHASES.SESSION_EXPIRED,
+    label: 'Session expired · local changes preserved',
+    detail: 'Sign in online before sending changes. Download local recovery if needed.',
+    tone: 'warning',
+    editable: false,
+    showStableSkeleton: false,
+  },
+  [EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED]: {
+    phase: EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED,
+    label: 'App update required · local changes preserved',
+    detail:
+      'This board uses a newer graph format. Update the app before editing or sending; local recovery is available.',
+    tone: 'danger',
+    editable: false,
+    showStableSkeleton: false,
+  },
+  [EDITOR_VIEW_PHASES.VALIDATION_REJECTED]: {
+    phase: EDITOR_VIEW_PHASES.VALIDATION_REJECTED,
+    label: 'Change rejected · local changes preserved',
+    detail:
+      'Sending is paused at the rejected change. Download local recovery; later changes cannot safely skip it.',
+    tone: 'danger',
     editable: false,
     showStableSkeleton: false,
   },

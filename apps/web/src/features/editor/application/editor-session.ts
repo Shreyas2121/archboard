@@ -1,6 +1,7 @@
 import {
   GRAPH_SCHEMA_VERSION,
   BOARD_ROLES,
+  ERROR_CODES,
   type BoardRole,
   type Boundary,
   type CodeContent,
@@ -95,6 +96,7 @@ export class EditorSession {
   private unsubscribeSync: (() => void) | null = null;
   private boardRole: BoardRole | null = null;
   private cachedRole: BoardRole | null = null;
+  private cachedArchived = false;
   private archived = false;
   private hasLocalCopy = false;
   private initialBootstrapBytes: Uint8Array | null = null;
@@ -200,6 +202,7 @@ export class EditorSession {
     const sync = this.syncClient?.getSnapshot();
     this.boardRole = sync?.ready ? sync.role : role;
     this.cachedRole = role;
+    this.cachedArchived = archived;
     this.archived = archived;
     this.accessDenied = false;
     this.accessChecked = true;
@@ -234,10 +237,13 @@ export class EditorSession {
   }
 
   public canReloadServerVersion(): boolean {
+    const sync = this.syncClient?.getSnapshot();
     return (
       this.board !== undefined &&
       this.writerSession.getSnapshot().phase === WRITER_SESSION_PHASES.WRITER &&
-      this.syncClient?.getSnapshot().ready === true &&
+      sync?.ready === true &&
+      sync.errorCode === null &&
+      sync.phase !== SYNC_PHASES.ACCESS_CHANGED &&
       !this.accessDenied
     );
   }
@@ -432,6 +438,7 @@ export class EditorSession {
       if (cached !== undefined && cached !== null) {
         this.boardRole = cached.role;
         this.cachedRole = cached.role;
+        this.cachedArchived = cached.archived;
         this.archived = cached.archived;
       }
       this.initializing = false;
@@ -473,11 +480,25 @@ export class EditorSession {
       if (sync?.ready || sync?.phase === SYNC_PHASES.ACCESS_CHANGED) {
         this.boardRole = sync.role;
       }
+      if (sync?.accessChanged) this.archived = sync.archived;
       if (sync?.ready) this.hasLocalCopy = true;
-      if (sync?.ready && sync.role !== null && sync.role !== this.cachedRole) {
-        this.cachedRole = sync.role;
+      const cacheRole =
+        sync?.errorCode === ERROR_CODES.FORBIDDEN || sync?.errorCode === ERROR_CODES.NOT_FOUND
+          ? BOARD_ROLES.VIEWER
+          : (sync?.role ??
+            (sync?.accessChanged && sync.errorCode !== ERROR_CODES.UNAUTHENTICATED
+              ? BOARD_ROLES.VIEWER
+              : null));
+      if (
+        cacheRole !== null &&
+        sync !== undefined &&
+        (sync.accessChanged || sync.ready) &&
+        (cacheRole !== this.cachedRole || this.archived !== this.cachedArchived)
+      ) {
+        this.cachedRole = cacheRole;
+        this.cachedArchived = this.archived;
         void binding.persistence
-          .cacheBoardAccess({ role: sync.role, archived: this.archived })
+          .cacheBoardAccess({ role: cacheRole, archived: this.archived })
           .catch(() => undefined);
       }
       this.refresh();

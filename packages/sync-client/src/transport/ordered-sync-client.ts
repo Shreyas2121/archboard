@@ -42,6 +42,8 @@ export interface SyncStatus {
   readonly phase: SyncPhase;
   readonly pendingCount: number;
   readonly role: BoardRole | null;
+  readonly archived: boolean;
+  readonly accessChanged: boolean;
   readonly connected: boolean;
   readonly ready: boolean;
   readonly errorCode: ErrorCode | null;
@@ -101,12 +103,17 @@ export class OrderedSyncClient {
   private reconnectCount = 0;
   private recoveryCode: ErrorCode | null = null;
   private accessDenied = false;
+  private archived = false;
+  private denialCode: ErrorCode | null = null;
+  private accessChanged = false;
   private pendingCount = 0;
   private readonly handleOnline = (): void => this.retryNow();
   private status: SyncStatus = {
     phase: SYNC_PHASES.CONNECTING,
     pendingCount: 0,
     role: null,
+    archived: false,
+    accessChanged: false,
     connected: false,
     ready: false,
     errorCode: null,
@@ -281,6 +288,7 @@ export class OrderedSyncClient {
       this.serverSequence = BigInt(message.data.latestSeq);
       if (this.socket !== socket || this.stopped) return;
       this.role = message.data.role;
+      this.denialCode = null;
       this.publish();
       await this.options.beforeDrain?.();
       if (this.socket !== socket || this.stopped) return;
@@ -338,7 +346,11 @@ export class OrderedSyncClient {
       this.handleError(message.data);
     } else if (message.event === SERVER_EVENT_NAMES.ACCESS_CHANGED) {
       this.role = message.data.role;
-      this.accessDenied = message.data.archived || !isWritableRole(message.data.role);
+      this.archived = message.data.archived;
+      this.accessChanged = true;
+      this.accessDenied = this.archived || !isWritableRole(this.role);
+      this.denialCode = null;
+      if (!this.accessDenied) this.inFlightId = null;
       this.publish();
       if (!this.accessDenied) await this.drain();
     }
@@ -371,6 +383,10 @@ export class OrderedSyncClient {
       error.code === ERROR_CODES.NOT_FOUND
     ) {
       this.accessDenied = true;
+      this.denialCode = error.code;
+      this.inFlightId = null;
+      if (error.code === ERROR_CODES.BOARD_ARCHIVED) this.archived = true;
+      this.accessChanged = true;
     } else {
       this.recoveryCode = error.code;
     }
@@ -503,9 +519,11 @@ export class OrderedSyncClient {
       phase,
       pendingCount: this.pendingCount,
       role: this.role,
+      archived: this.archived,
+      accessChanged: this.accessChanged,
       connected,
       ready: connected && this.handshakeComplete,
-      errorCode: this.recoveryCode ?? local.errorCode,
+      errorCode: this.recoveryCode ?? this.denialCode ?? local.errorCode,
     });
     for (const listener of this.listeners) listener();
   }

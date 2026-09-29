@@ -1268,6 +1268,39 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
     }
   });
 
+  it('denies a queued offline editor update after downgrade without creating a receipt', async () => {
+    const board = await createUpdateBoard(true);
+    await application
+      .get(BoardService)
+      .changeMemberRole(ownerId, board.id, viewerId, { role: 'editor' });
+    const editor = await joinRoom(board.url, viewerCookie);
+    const queued = makeNodeUpdate(editor.ready.snapshotBase64, 'Offline queued edit');
+    const updateId = randomUUID();
+    await closeWebSocket(editor.socket);
+
+    await application
+      .get(BoardService)
+      .changeMemberRole(ownerId, board.id, viewerId, { role: 'viewer' });
+    const returned = await joinRoom(board.url, viewerCookie);
+    try {
+      expect(returned.ready.role).toBe('viewer');
+      expect(await sendUpdate(returned.socket, updateId, queued.bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ERROR,
+        data: { code: ERROR_CODES.FORBIDDEN, updateId },
+      });
+      const rows = (await database.query(
+        `SELECT b.latest_seq::text AS seq,
+                (SELECT count(*)::integer FROM board_updates WHERE board_id = $1) AS updates,
+                (SELECT count(*)::integer FROM update_receipts WHERE board_id = $1) AS receipts
+         FROM boards b WHERE b.id = $1`,
+        [board.id],
+      )) as { seq: string; updates: number; receipts: number }[];
+      expect(rows[0]).toEqual({ seq: '0', updates: 0, receipts: 0 });
+    } finally {
+      await closeWebSocket(returned.socket);
+    }
+  });
+
   it('rejects an update when archive commits while validation is paused', async () => {
     const board = await createUpdateBoard();
     const owner = await joinRoom(board.url, sessionCookie);

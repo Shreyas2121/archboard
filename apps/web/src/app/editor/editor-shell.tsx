@@ -3,6 +3,7 @@ import {
   MAX_GRAPH_COORDINATE,
   NODE_KINDS,
   BOARD_ROLES,
+  ERROR_CODES,
   handleSchema,
   type NodeKind,
 } from '@archboard/contracts';
@@ -152,6 +153,16 @@ function phaseForSession(
     return EDITOR_VIEW_PHASES.RECOVERY_REQUIRED;
   }
   if (boardMode) {
+    if (snapshot.sync?.errorCode === ERROR_CODES.UNAUTHENTICATED)
+      return EDITOR_VIEW_PHASES.SESSION_EXPIRED;
+    if (snapshot.sync?.errorCode === ERROR_CODES.SCHEMA_UNSUPPORTED)
+      return EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED;
+    if (
+      snapshot.sync?.errorCode === ERROR_CODES.DOCUMENT_INVALID ||
+      snapshot.sync?.errorCode === ERROR_CODES.DOCUMENT_LIMIT ||
+      snapshot.sync?.errorCode === ERROR_CODES.VALIDATION_ERROR
+    )
+      return EDITOR_VIEW_PHASES.VALIDATION_REJECTED;
     if (snapshot.accessDenied || snapshot.sync?.phase === SYNC_PHASES.ACCESS_CHANGED)
       return EDITOR_VIEW_PHASES.ACCESS_CHANGED;
     if (snapshot.sync?.phase === SYNC_PHASES.STORAGE_ERROR) return EDITOR_VIEW_PHASES.STORAGE_ERROR;
@@ -730,7 +741,9 @@ export function EditorShell({
                 boardMode &&
                 !sessionSnapshot?.hasLocalCopy) ||
               viewState.phase === EDITOR_VIEW_PHASES.STORAGE_ERROR ||
-              viewState.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED) && (
+              viewState.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED ||
+              viewState.phase === EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED ||
+              viewState.phase === EDITOR_VIEW_PHASES.VALIDATION_REJECTED) && (
               <section
                 className="absolute z-10 mx-5 grid max-w-md justify-items-center rounded-2xl border bg-card/95 px-8 py-9 text-center shadow-xl shadow-foreground/5 backdrop-blur"
                 aria-label="Editor state"
@@ -781,7 +794,8 @@ export function EditorShell({
             {boardMode &&
               (viewState.phase === EDITOR_VIEW_PHASES.VIEWER ||
                 viewState.phase === EDITOR_VIEW_PHASES.ARCHIVED ||
-                viewState.phase === EDITOR_VIEW_PHASES.ACCESS_CHANGED) && (
+                viewState.phase === EDITOR_VIEW_PHASES.ACCESS_CHANGED ||
+                viewState.phase === EDITOR_VIEW_PHASES.SESSION_EXPIRED) && (
                 <aside
                   className="absolute inset-x-3 top-3 z-20 rounded-lg border border-status-warning/30 bg-background/90 px-3 py-2 text-center text-xs font-medium text-status-warning-foreground backdrop-blur"
                   role="status"

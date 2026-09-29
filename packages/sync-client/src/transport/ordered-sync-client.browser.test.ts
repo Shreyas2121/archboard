@@ -12,6 +12,7 @@ import {
   MAX_PRESENCE_SELECTED_IDS,
   MAX_WS_FRAME_BYTES,
   PRESENCE_EXPIRY_MS,
+  SERVER_EVENT_NAMES,
 } from '@archboard/contracts';
 import { createGraphDocument, createNode, projectGraphDocument } from '@archboard/document-model';
 import { deleteDB } from 'idb';
@@ -364,6 +365,63 @@ describe('ordered browser WebSocket client', () => {
     await vi.waitFor(() => expect(client.getSnapshot().phase).toBe(SYNC_PHASES.ACCESS_CHANGED));
     expect(sockets[0]!.sent).toHaveLength(1);
     expect(await adapter.listTransportEligibleUpdates()).toHaveLength(1);
+  });
+
+  it('keeps archived queued bytes frozen until an authoritative restore event', async () => {
+    const { document, adapter, client, sockets } = await setup();
+    addNode(document);
+    await adapter.whenIdle();
+    const queued = await adapter.listTransportEligibleUpdates();
+    sockets[0]!.open();
+    sockets[0]!.deliver(ready(createGraphDocument()));
+    await waitForSent(sockets[0]!, TWO);
+    sockets[0]!.deliver({
+      event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
+      data: { role: 'owner', archived: true },
+    });
+    await vi.waitFor(() => expect(client.getSnapshot().archived).toBe(true));
+    expect(client.getSnapshot().phase).toBe(SYNC_PHASES.ACCESS_CHANGED);
+    expect(await adapter.listTransportEligibleUpdates()).toEqual(queued);
+    sockets[0]!.deliver({
+      event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
+      data: { role: 'owner', archived: false },
+    });
+    await vi.waitFor(() => expect(client.getSnapshot().archived).toBe(false));
+    expect(client.getSnapshot().accessChanged).toBe(true);
+    await waitForSent(sockets[0]!, THREE);
+    expect(sockets[0]!.sent[2]).toEqual(sockets[0]!.sent[1]);
+    expect(await adapter.listTransportEligibleUpdates()).toEqual(queued);
+  });
+
+  it('reports expired session and unsupported schema while retaining the rejected queue', async () => {
+    const { document, adapter, client, sockets } = await setup();
+    addNode(document);
+    await adapter.whenIdle();
+    const queued = await adapter.listTransportEligibleUpdates();
+    sockets[0]!.open();
+    sockets[0]!.deliver({
+      event: 'error',
+      data: { code: ERROR_CODES.UNAUTHENTICATED, message: 'Session expired', retryable: false },
+    });
+    await vi.waitFor(() =>
+      expect(client.getSnapshot().errorCode).toBe(ERROR_CODES.UNAUTHENTICATED),
+    );
+    expect(client.getSnapshot().phase).toBe(SYNC_PHASES.ACCESS_CHANGED);
+    expect(await adapter.listTransportEligibleUpdates()).toEqual(queued);
+    expect(sockets[0]!.sent).toHaveLength(1);
+    const schema = await setup();
+    addNode(schema.document);
+    await schema.adapter.whenIdle();
+    schema.sockets[0]!.open();
+    schema.sockets[0]!.deliver({
+      event: 'error',
+      data: { code: ERROR_CODES.SCHEMA_UNSUPPORTED, message: 'Newer graph', retryable: false },
+    });
+    await vi.waitFor(() =>
+      expect(schema.client.getSnapshot().errorCode).toBe(ERROR_CODES.SCHEMA_UNSUPPORTED),
+    );
+    expect(schema.client.getSnapshot().phase).toBe(SYNC_PHASES.RECOVERY_REQUIRED);
+    expect(await schema.adapter.listTransportEligibleUpdates()).toHaveLength(1);
   });
 
   it('rejects malformed server envelopes without claiming server save', async () => {
