@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
-import { LogOut } from 'lucide-react';
 import { selectLocalAccount } from '@archboard/sync-client';
 import { BrandMark } from '@/app/components/brand-mark';
 import { Button } from '@/components/ui/button';
-import { SessionState, signOut, useCurrentUser } from '@/features/auth';
+import { SessionState, useCurrentUser } from '@/features/auth';
+import { SignOutControl } from '@/features/auth/sign-out-control';
 import { BoardDashboard } from '@/features/boards/board-dashboard';
 import { CachedBoardDashboard } from '@/features/boards/cached-board-dashboard';
 import { ApiClientError } from '@/platform/api';
@@ -14,8 +14,6 @@ const HTTP_SERVER_ERROR = 500;
 export function BoardsEntryRoute() {
   const navigate = useNavigate();
   const session = useCurrentUser();
-  const [signingOut, setSigningOut] = useState(false);
-  const [signOutError, setSignOutError] = useState(false);
   const [wasAuthenticated, setWasAuthenticated] = useState(false);
   useEffect(() => {
     if (session.data) setWasAuthenticated(true);
@@ -23,18 +21,6 @@ export function BoardsEntryRoute() {
       void navigate({ to: '/', search: { returnTo: '/boards' }, replace: true });
     }
   }, [navigate, session.data, session.isSuccess, wasAuthenticated]);
-  async function handleSignOut() {
-    setSigningOut(true);
-    setSignOutError(false);
-    try {
-      await signOut();
-      await navigate({ to: '/', search: {}, replace: true });
-    } catch {
-      setSignOutError(true);
-    } finally {
-      setSigningOut(false);
-    }
-  }
   if (session.isPending) return <SessionState state="loading" />;
   if (session.isError) {
     const serverUnavailable =
@@ -51,9 +37,17 @@ export function BoardsEntryRoute() {
                 <BrandMark />
                 <span>Archboard</span>
               </Link>
-              <Button asChild type="button" variant="ghost" size="sm">
-                <Link to="/demo">Local demo</Link>
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button asChild type="button" variant="ghost" size="sm">
+                  <Link to="/demo">Local demo</Link>
+                </Button>
+                <SignOutControl
+                  userId={selected.userId}
+                  onComplete={async () => {
+                    await navigate({ to: '/', search: {}, replace: true });
+                  }}
+                />
+              </div>
             </header>
             <CachedBoardDashboard sessionUncertain onRetry={() => void session.refetch()} />
           </div>
@@ -117,22 +111,14 @@ export function BoardsEntryRoute() {
           <Button asChild type="button" variant="ghost" size="sm">
             <Link to="/demo">Local demo</Link>
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={signingOut}
-            onClick={() => void handleSignOut()}
-          >
-            <LogOut /> {signingOut ? 'Signing out…' : 'Sign out'}
-          </Button>
+          <SignOutControl
+            userId={session.data.id}
+            onComplete={async () => {
+              await navigate({ to: '/', search: {}, replace: true });
+            }}
+          />
         </div>
       </header>
-      {signOutError ? (
-        <p className="mt-4 text-sm text-destructive" role="alert">
-          Sign-out could not finish. Please try again.
-        </p>
-      ) : null}
       <BoardDashboard />
     </div>
   );

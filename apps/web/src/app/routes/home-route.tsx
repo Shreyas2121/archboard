@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { ArrowRight, Database, GitBranch, Laptop, LogIn } from 'lucide-react';
+import { readLocalSignOutPending } from '@archboard/sync-client';
 
 import { BrandMark } from '@/app/components/brand-mark';
 import { Button } from '@/components/ui/button';
@@ -31,6 +32,7 @@ export function HomeRoute() {
   const session = useCurrentUser();
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState(false);
+  const serverSignOutPending = readLocalSignOutPending(window.location.origin) !== null;
 
   useEffect(() => {
     if (session.isSuccess && session.data) {
@@ -55,6 +57,29 @@ export function HomeRoute() {
   }
 
   if (session.isPending) return <SessionState state="loading" />;
+  if (serverSignOutPending) {
+    return (
+      <main
+        className="mx-auto grid min-h-dvh max-w-xl place-content-center justify-items-center px-6 text-center"
+        role="status"
+      >
+        <BrandMark />
+        <h1 className="mt-6 text-2xl font-semibold">Signed out on this device</h1>
+        <p className="mt-3 text-muted-foreground">
+          Server session invalidation is pending. Reconnect and retry before signing in to an
+          account again. Your retained local boards stay under the previous account.
+        </p>
+        <div className="mt-6 flex gap-3">
+          <Button type="button" onClick={() => void session.refetch()}>
+            Retry server sign-out
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/demo">Open local demo</Link>
+          </Button>
+        </div>
+      </main>
+    );
+  }
   if (session.isError) {
     return <SessionState state="error" onRetry={() => void session.refetch()} />;
   }

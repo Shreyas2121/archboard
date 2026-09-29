@@ -4,7 +4,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { deleteDB } from 'idb';
 import * as Y from 'yjs';
 
-import { LOCAL_DEMO_USER_KEY, SYNC_DATABASE_NAME, SYNC_STORE_NAMES } from '../config/index.js';
+import {
+  LOCAL_DEMO_USER_KEY,
+  OUTBOX_STATUSES,
+  SYNC_DATABASE_NAME,
+  SYNC_STORE_NAMES,
+} from '../config/index.js';
+import { writerLockName } from '../locking/names.js';
+import { clearAccountBoardNamespaces, listAccountPendingBoards } from './account-pending.js';
 import {
   clearLocalSignOutPending,
   forgetSelectedLocalAccount,
@@ -86,9 +93,7 @@ describe('account-scoped board cache in a real browser', () => {
     markLocalSignOutPending(ORIGIN, USER_A);
     expect(selectLocalAccount(ORIGIN, { kind: 'network-unavailable' })).toBeNull();
     expect(selectLocalAccount(ORIGIN, { kind: 'authenticated', userId: USER_A })).toBeNull();
-    expect(selectLocalAccount(ORIGIN, { kind: 'authenticated', userId: USER_B })?.userId).toBe(
-      USER_B,
-    );
+    expect(selectLocalAccount(ORIGIN, { kind: 'authenticated', userId: USER_B })).toBeNull();
     clearLocalSignOutPending(ORIGIN, USER_A);
     expect(selectLocalAccount(OTHER_ORIGIN, { kind: 'network-unavailable' })).toBeNull();
     expect(() =>
@@ -232,5 +237,61 @@ describe('account-scoped board cache in a real browser', () => {
     expect(
       (await readSelectedCachedBoard(ORIGIN, storageNamespace.boardId))?.locallyAvailable,
     ).toBe(false);
+  });
+
+  it('counts only one account and requires the board writer lock before exact clearing', async () => {
+    const first = namespace(USER_A);
+    const second = namespace(USER_B);
+    const demo = namespace(LOCAL_DEMO_USER_KEY);
+    const database = await openSyncClientDatabase();
+    for (const item of [first, second, demo]) {
+      await database.put(SYNC_STORE_NAMES.OUTBOX, {
+        namespace: boardStorageNamespaceKey(item),
+        updateId: crypto.randomUUID(),
+        localSequence: 1,
+        updateBytes: new Uint8Array([1]),
+        payloadHash: new Uint8Array([1]),
+        createdAt: COMMITTED_AT,
+        status: OUTBOX_STATUSES.PENDING,
+      });
+    }
+    database.close();
+    const account = { deploymentOrigin: ORIGIN, userId: USER_A };
+    const pending = await listAccountPendingBoards(account);
+    expect(pending).toMatchObject([{ namespace: first, pendingCount: 1 }]);
+    await expect(
+      clearAccountBoardNamespaces(account, [{ ...pending[0]!, updateIds: [] }]),
+    ).rejects.toThrow();
+    expect(await listAccountPendingBoards(account)).toHaveLength(1);
+    let release!: () => void;
+    let acquired!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      acquired = resolve;
+    });
+    const lock = navigator.locks.request(writerLockName(first), async () => {
+      acquired();
+      await held;
+    });
+    await ready;
+    await expect(clearAccountBoardNamespaces(account, pending)).rejects.toThrow('Another tab');
+    release();
+    await lock;
+    await clearAccountBoardNamespaces(account, pending);
+    expect(await listAccountPendingBoards(account)).toEqual([]);
+    expect(
+      await listAccountPendingBoards({ deploymentOrigin: ORIGIN, userId: USER_B }),
+    ).toHaveLength(1);
+    const remaining = await openSyncClientDatabase();
+    expect(
+      await remaining.getAllFromIndex(
+        SYNC_STORE_NAMES.OUTBOX,
+        'byNamespace',
+        boardStorageNamespaceKey(demo),
+      ),
+    ).toHaveLength(1);
+    remaining.close();
   });
 });
