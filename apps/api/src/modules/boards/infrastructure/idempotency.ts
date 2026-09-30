@@ -124,11 +124,14 @@ export class IdempotencyService {
     key: string,
     request: unknown,
     effect: (runner: QueryRunner) => Promise<IdempotentEffect<T>>,
+    authorize?: (runner: QueryRunner) => Promise<void>,
   ): Promise<IdempotencyResult<T>> {
     const hash = canonicalRequestHash(request);
     return this.transactions.run(async (runner) => {
       const repository = new IdempotencyRepository(runner);
       await repository.lock(actorUserId, operation, key);
+      // Board-scoped consumers recheck current authority before even disclosing a stored result.
+      await authorize?.(runner);
       const stored = await repository.findLive(actorUserId, operation, key);
       if (stored) {
         if (!stored.requestHash.equals(hash)) throw new IdempotencyConflictError();

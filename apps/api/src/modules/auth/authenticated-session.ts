@@ -6,11 +6,8 @@ import {
   type ExecutionContext,
 } from '@nestjs/common';
 import type { IncomingMessage } from 'node:http';
-import {
-  AUTH_REQUEST_ACTOR,
-  type AuthenticatedSession,
-  type RequestActor,
-} from './application/index.js';
+import { AUTH_REQUEST_ACTOR, type RequestActor } from './application/request-actor.js';
+import type { AuthenticatedSession } from './application/session-lookup.js';
 
 const REQUEST_SESSION = Symbol('authenticated-request-session');
 type SessionRequest = IncomingMessage & { [REQUEST_SESSION]?: AuthenticatedSession };

@@ -19,6 +19,7 @@ const OPERATIONS: BoardOperation[] = [
   'read',
   'editMetadata',
   'editGraph',
+  'editDiscussion',
   'manageAccess',
   'manageLifecycle',
   'leave',
@@ -59,7 +60,7 @@ describe('central board permission matrix', () => {
     });
   });
 
-  it.each(['editMetadata', 'editGraph'] as const)(
+  it.each(['editMetadata', 'editGraph', 'editDiscussion'] as const)(
     '%s permits owner/editor, denies viewer, and blocks archived writes',
     (operation) => {
       for (const role of ['owner', 'editor'] as const) {

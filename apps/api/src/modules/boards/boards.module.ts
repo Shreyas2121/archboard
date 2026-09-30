@@ -10,6 +10,10 @@ import {
 import { BoardService } from './application/board-service.js';
 import { InviteService } from './application/invite-service.js';
 import { BoardsController } from './boards.controller.js';
+import { DiscussionController } from './discussion.controller.js';
+import { DiscussionService } from './application/discussion-service.js';
+import { PostgresDiscussionPersistence } from './infrastructure/postgres-discussion-persistence.js';
+import { CommittedAnchorReader } from '../collaboration/application/index.js';
 import { InvitesController } from './invites.controller.js';
 import { PostgresBoardPersistence } from './infrastructure/postgres-board-persistence.js';
 import { PostgresInvitePersistence } from './infrastructure/postgres-invite-persistence.js';
@@ -25,8 +29,21 @@ export class BoardsModule {
     return {
       module: BoardsModule,
       imports: [auth, collaboration, BoardAuthorityModule],
-      controllers: [BoardsController, InvitesController],
+      controllers: [BoardsController, InvitesController, DiscussionController],
       providers: [
+        {
+          provide: DiscussionService,
+          inject: [DataSource, BoardPermissionService, CommittedAnchorReader],
+          useFactory: (
+            dataSource: DataSource,
+            permissions: BoardPermissionService,
+            anchors: CommittedAnchorReader,
+          ) =>
+            new DiscussionService(
+              new PostgresDiscussionPersistence(dataSource, anchors),
+              permissions,
+            ),
+        },
         {
           provide: BoardService,
           inject: [

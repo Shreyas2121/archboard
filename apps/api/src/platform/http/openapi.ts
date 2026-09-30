@@ -33,6 +33,9 @@ import {
   editCommentSchema,
   deleteCommentSchema,
   resolveThreadSchema,
+  threadPathSchema,
+  threadListQuerySchema,
+  commentListQuerySchema,
 } from '@archboard/contracts';
 import { z } from 'zod';
 
@@ -67,7 +70,7 @@ const schemas = {
   ChangeMemberRoleRequest: changeMemberRoleSchema,
   CreateInviteRequest: createInviteSchema,
   InviteTokenRequest: inviteTokenRequestSchema,
-  // Phase 6 components are defined ahead of route implementation. No discussion paths yet.
+  // Moderation components precede their P6-03 routes; P6-02 registers reads and creation below.
   ThreadAnchor: threadAnchorSchema,
   ThreadListResponse: threadListResponseSchema,
   CommentListResponse: commentListResponseSchema,
@@ -88,6 +91,8 @@ type ParameterSchema =
   | typeof invitePathSchema
   | typeof boardListQuerySchema
   | typeof inviteListQuerySchema;
+type DiscussionParameterSchema =
+  typeof threadPathSchema | typeof threadListQuerySchema | typeof commentListQuerySchema;
 
 interface RouteSpec {
   method: 'get' | 'post' | 'patch' | 'delete';
@@ -95,14 +100,54 @@ interface RouteSpec {
   summary: string;
   response?: SchemaName;
   request?: SchemaName;
-  pathSchema?: ParameterSchema;
-  querySchema?: ParameterSchema;
+  pathSchema?: ParameterSchema | DiscussionParameterSchema;
+  querySchema?: ParameterSchema | DiscussionParameterSchema;
   idempotent?: boolean;
   success?: number;
   errors?: readonly number[];
 }
 
 const routes: readonly RouteSpec[] = [
+  {
+    method: 'get',
+    path: '/api/v1/boards/{id}/threads',
+    summary: 'List discussion threads (createdAt/id descending)',
+    pathSchema: boardIdPathSchema,
+    querySchema: threadListQuerySchema,
+    response: 'ThreadListResponse',
+    errors: [HTTP_NOT_FOUND],
+  },
+  {
+    method: 'get',
+    path: '/api/v1/boards/{id}/threads/{threadId}/comments',
+    summary: 'List discussion messages (createdAt/id ascending)',
+    pathSchema: threadPathSchema,
+    querySchema: commentListQuerySchema,
+    response: 'CommentListResponse',
+    errors: [HTTP_NOT_FOUND],
+  },
+  {
+    method: 'post',
+    path: '/api/v1/boards/{id}/threads',
+    summary: 'Create thread and first message atomically',
+    pathSchema: boardIdPathSchema,
+    request: 'CreateThreadRequest',
+    response: 'ThreadCreateResponse',
+    idempotent: true,
+    success: HTTP_CREATED,
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT],
+  },
+  {
+    method: 'post',
+    path: '/api/v1/boards/{id}/threads/{threadId}/comments',
+    summary: 'Reply to discussion thread',
+    pathSchema: threadPathSchema,
+    request: 'CreateCommentRequest',
+    response: 'CommentResponse',
+    idempotent: true,
+    success: HTTP_CREATED,
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT],
+  },
   { method: 'get', path: '/api/v1/me', summary: 'Current user', response: 'CurrentUserResponse' },
   {
     method: 'get',
@@ -238,7 +283,10 @@ const routes: readonly RouteSpec[] = [
   },
 ];
 
-function parameterEntries(schema: ParameterSchema, location: 'path' | 'query') {
+function parameterEntries(
+  schema: ParameterSchema | DiscussionParameterSchema,
+  location: 'path' | 'query',
+) {
   return Object.entries(schema.shape).map(([name, field]) => ({
     name,
     in: location,
@@ -321,7 +369,7 @@ export function createOpenApiDocument() {
   }
   return {
     openapi: '3.1.0',
-    info: { title: 'Archboard Phase 3 API', version: '1.0.0' },
+    info: { title: 'Archboard API', version: '1.0.0' },
     paths,
     components: {
       securitySchemes: {

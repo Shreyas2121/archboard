@@ -5,6 +5,8 @@ import { BoardAuthorityModule } from '../boards/board-authority.module.js';
 import { BoardPermissionService } from '../boards/application/index.js';
 import { BOARD_ACCESS_NOTIFICATION } from '../boards/application/board-access-notification.js';
 import { CollaborationRoomRegistry } from './application/room-registry.js';
+import { CommittedAnchorReader } from './application/committed-anchor-reader.js';
+import { PostgresCommittedAnchorReader } from './infrastructure/room/postgres-committed-anchor-reader.js';
 import { RoomMaintenanceService } from './application/room-maintenance.service.js';
 import { CollaborationShutdownService } from './application/collaboration-shutdown.service.js';
 import { CollaborationUpdateService } from './application/collaboration-update-service.js';
@@ -48,6 +50,11 @@ export class CollaborationModule {
         DurableUpdateFailpointController,
         { provide: ValidationWorkerPool, useFactory: () => new ValidationWorkerPool() },
         {
+          provide: CommittedAnchorReader,
+          inject: [ValidationWorkerPool],
+          useFactory: (workers: ValidationWorkerPool) => new PostgresCommittedAnchorReader(workers),
+        },
+        {
           provide: CollaborationRoomRegistry,
           inject: [PostgresRoomLoader],
           useFactory: (loader: PostgresRoomLoader) => new CollaborationRoomRegistry(loader),
@@ -79,7 +86,12 @@ export class CollaborationModule {
             gateway.accessChanged(boardId, userId),
         },
       ],
-      exports: [BOARD_ACCESS_NOTIFICATION, ValidationWorkerPool, CollaborationUpgradeService],
+      exports: [
+        BOARD_ACCESS_NOTIFICATION,
+        ValidationWorkerPool,
+        CollaborationUpgradeService,
+        CommittedAnchorReader,
+      ],
     };
   }
 }
