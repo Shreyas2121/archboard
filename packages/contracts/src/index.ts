@@ -1,6 +1,7 @@
 export * from './errors/index.js';
 export * from './auth/index.js';
 export * from './boards/index.js';
+export * from './discussion/index.js';
 export * from './graph/index.js';
 export * from './http/index.js';
 export * from './limits/index.js';

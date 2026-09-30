@@ -22,6 +22,17 @@ import {
   memberPathSchema,
   patchBoardSchema,
   idempotencyKeySchema,
+  threadAnchorSchema,
+  threadListResponseSchema,
+  commentListResponseSchema,
+  threadCreateResponseSchema,
+  commentResponseSchema,
+  threadResponseSchema,
+  createThreadSchema,
+  createCommentSchema,
+  editCommentSchema,
+  deleteCommentSchema,
+  resolveThreadSchema,
 } from '@archboard/contracts';
 import { z } from 'zod';
 
@@ -56,6 +67,18 @@ const schemas = {
   ChangeMemberRoleRequest: changeMemberRoleSchema,
   CreateInviteRequest: createInviteSchema,
   InviteTokenRequest: inviteTokenRequestSchema,
+  // Phase 6 components are defined ahead of route implementation. No discussion paths yet.
+  ThreadAnchor: threadAnchorSchema,
+  ThreadListResponse: threadListResponseSchema,
+  CommentListResponse: commentListResponseSchema,
+  ThreadCreateResponse: threadCreateResponseSchema,
+  CommentResponse: commentResponseSchema,
+  ThreadResponse: threadResponseSchema,
+  CreateThreadRequest: createThreadSchema,
+  CreateCommentRequest: createCommentSchema,
+  EditCommentRequest: editCommentSchema,
+  DeleteCommentRequest: deleteCommentSchema,
+  ResolveThreadRequest: resolveThreadSchema,
 } as const;
 
 type SchemaName = keyof typeof schemas;

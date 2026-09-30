@@ -69,3 +69,7 @@ export const MAX_BOARD_PAGE_SIZE = 100;
 export const INVITE_TOKEN_BYTES = 32;
 export const INVITE_LIFETIME_DAYS = 7;
 export const IDEMPOTENCY_LIFETIME_HOURS = 24;
+
+export const MAX_COMMENT_BODY_CHARACTERS = 4_000;
+export const MAX_THREADS_PER_BOARD = 2_000;
+export const MAX_COMMENTS_PER_THREAD = 500;
