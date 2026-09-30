@@ -7,6 +7,7 @@ import {
   Background,
   BackgroundVariant,
   MiniMap,
+  MarkerType,
   ReactFlow,
   SelectionMode,
   type Connection,
@@ -244,7 +245,18 @@ export function GraphCanvas({
     () =>
       canvasProjection.edges.map((edge) => {
         const selected = selectedEdgeIds.has(edge.id);
-        return edge.selected === selected ? edge : { ...edge, selected };
+        return !selected
+          ? edge
+          : {
+              ...edge,
+              selected,
+              markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--primary)' },
+              ...(edge.markerStart === undefined
+                ? {}
+                : {
+                    markerStart: { type: MarkerType.ArrowClosed, color: 'var(--primary)' },
+                  }),
+            };
       }),
     [canvasProjection.edges, selectedEdgeIds],
   );
@@ -376,9 +388,10 @@ export function GraphCanvas({
     [gridSnapEnabled],
   );
 
+  // React Flow owns the SVG paths and marquee; use its installed CSS variable hooks.
   return (
     <ReactFlow<EditorCanvasNode, CanvasEdge>
-      className="bg-muted/25"
+      className="[--xy-background-color:transparent] [--xy-edge-stroke:var(--edge)] [--xy-edge-stroke-width:1.5] [--xy-edge-stroke-selected:var(--primary)] [--xy-connectionline-stroke:var(--primary)] [--xy-connectionline-stroke-width:1.5] [--xy-selection-background-color:color-mix(in_oklch,var(--primary)_8%,transparent)] [--xy-selection-border:1px_dashed_var(--primary)] [--xy-attribution-background-color:var(--surface-panel)] [&_.react-flow__attribution_a]:text-muted-foreground [&_.react-flow__node:focus-visible]:outline-2 [&_.react-flow__node:focus-visible]:outline-ring [&_.react-flow__node:focus-visible]:outline-offset-2"
       defaultViewport={DEFAULT_CANVAS_VIEWPORT}
       edges={edges}
       edgesReconnectable={editable}
@@ -462,9 +475,13 @@ export function GraphCanvas({
       {minimapVisible && (
         <MiniMap
           ariaLabel="Architecture canvas minimap"
-          className="!border !border-border !bg-card"
-          maskColor="color-mix(in oklch, var(--background) 72%, transparent)"
-          nodeColor="var(--muted-foreground)"
+          className="overflow-hidden rounded-lg !border !border-border !bg-surface-panel shadow-sm"
+          bgColor="var(--surface-panel)"
+          maskColor="color-mix(in oklch, var(--surface-canvas) 72%, transparent)"
+          maskStrokeColor="var(--edge)"
+          maskStrokeWidth={1}
+          nodeColor="var(--edge)"
+          nodeBorderRadius={4}
           pannable
           zoomable
         />

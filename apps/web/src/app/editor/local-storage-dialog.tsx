@@ -4,7 +4,7 @@ import {
   readBoardStorageHealth,
   type BoardStorageHealth,
 } from '@archboard/sync-client';
-import { Download, RotateCcw } from 'lucide-react';
+import { Database, Download, RotateCcw, TriangleAlert } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -88,7 +88,10 @@ export function LocalStorageDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Local storage</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <Database className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            Local storage
+          </DialogTitle>
           <DialogDescription>
             Browser storage is best effort. It can be cleared or evicted and is not a backup of your
             board.
@@ -99,58 +102,82 @@ export function LocalStorageDialog({
             Checking this device’s storage…
           </p>
         ) : (
-          <div className="grid gap-2 text-sm" role="status">
+          <div className="grid gap-4 text-sm" role="status">
             {visibleReport.readError && (
-              <p className="text-destructive" role="alert">
+              <p
+                className="rounded-control border bg-status-danger-surface p-3 text-destructive"
+                role="alert"
+              >
                 Local records could not be read. Existing data was left unchanged.
               </p>
             )}
-            <p>
-              Local board copy:{' '}
-              {visibleReport.readError ? 'Unknown' : currentCopy ? 'Available' : 'Unavailable'}
-            </p>
-            <p>{localWriteDescription(snapshot?.writer.persistence ?? null)}</p>
-            {snapshot?.writer.persistence?.diagnostic && (
-              <p className="text-destructive">{snapshot.writer.persistence.diagnostic}</p>
-            )}
-            {isDemo ? (
-              <p>Pending server updates: not applicable to the local demo</p>
-            ) : (
-              <p>
-                Pending server updates:{' '}
-                {visibleReport.readError ? 'Unknown' : visibleReport.health?.pendingCount}
-                {visibleReport.readError ? '' : ' (at last check)'}
+            <div className="grid gap-2 rounded-lg border bg-surface-panel p-3">
+              <p className="font-medium">
+                Local board copy:{' '}
+                {visibleReport.readError ? 'Unknown' : currentCopy ? 'Available' : 'Unavailable'}
               </p>
-            )}
-            <p>
-              Board details cached:{' '}
-              {metadataAt ? (
-                <time dateTime={metadataAt}>{new Date(metadataAt).toLocaleString()}</time>
-              ) : (
-                'Unavailable'
+              <p className="text-muted-foreground">
+                {localWriteDescription(snapshot?.writer.persistence ?? null)}
+              </p>
+              {snapshot?.writer.persistence?.diagnostic && (
+                <p className="break-words text-destructive" role="alert">
+                  {snapshot.writer.persistence.diagnostic}
+                </p>
               )}
-            </p>
-            <p>
-              Local snapshot stored:{' '}
-              {snapshotAt ? (
-                <time dateTime={snapshotAt}>{new Date(snapshotAt).toLocaleString()}</time>
-              ) : (
-                'Unavailable'
-              )}
-            </p>
-            <p>
-              Browser reported usage: {formatStorageBytes(visibleReport.estimate?.usage)}; quota:{' '}
-              {formatStorageBytes(visibleReport.estimate?.quota)}
-            </p>
-            <p className="text-xs text-muted-foreground">
+            </div>
+            <dl className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-1">
+                <dt className="text-xs text-muted-foreground">Pending server updates</dt>
+                {isDemo ? (
+                  <dd>Not applicable to the local demo</dd>
+                ) : (
+                  <dd className="tabular-nums">
+                    {visibleReport.readError ? 'Unknown' : visibleReport.health?.pendingCount}
+                    {visibleReport.readError ? '' : ' (at last check)'}
+                  </dd>
+                )}
+              </div>
+              <div className="grid gap-1">
+                <dt className="text-xs text-muted-foreground">Board details cached</dt>
+                <dd className="break-words tabular-nums">
+                  {metadataAt ? (
+                    <time dateTime={metadataAt}>{new Date(metadataAt).toLocaleString()}</time>
+                  ) : (
+                    'Unavailable'
+                  )}
+                </dd>
+              </div>
+              <div className="grid gap-1">
+                <dt className="text-xs text-muted-foreground">Local snapshot stored</dt>
+                <dd className="break-words tabular-nums">
+                  {snapshotAt ? (
+                    <time dateTime={snapshotAt}>{new Date(snapshotAt).toLocaleString()}</time>
+                  ) : (
+                    'Unavailable'
+                  )}
+                </dd>
+              </div>
+              <div className="grid gap-1">
+                <dt className="text-xs text-muted-foreground">Browser reported usage / quota</dt>
+                <dd className="tabular-nums">
+                  {formatStorageBytes(visibleReport.estimate?.usage)} /{' '}
+                  {formatStorageBytes(visibleReport.estimate?.quota)}
+                </dd>
+              </div>
+            </dl>
+            <p className="border-t pt-3 text-xs leading-5 text-muted-foreground">
               Usage and quota are browser estimates for this origin, not a board-specific guarantee.
               A queued update is not saved to the server until acknowledged.
             </p>
           </div>
         )}
         {exportError && (
-          <p className="text-sm text-destructive" role="alert">
-            {exportError}
+          <p
+            className="flex items-start gap-2 rounded-control border bg-status-danger-surface p-3 text-sm text-destructive"
+            role="alert"
+          >
+            <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 break-words">{exportError}</span>
           </p>
         )}
         <DialogFooter>
@@ -164,7 +191,7 @@ export function LocalStorageDialog({
           </Button>
           <Button
             type="button"
-            variant="outline"
+            className="h-auto min-h-9 whitespace-normal"
             disabled={projection === null}
             onClick={() => {
               if (projection === null) return;

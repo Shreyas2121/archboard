@@ -1,19 +1,9 @@
-import {
-  CircleHelp,
-  Download,
-  HardDrive,
-  Monitor,
-  Moon,
-  Redo2,
-  RotateCcw,
-  Sun,
-  Undo2,
-} from 'lucide-react';
+import { CircleHelp, Download, HardDrive, Redo2, RotateCcw, Undo2 } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 
 import { BrandMark } from '@/app/components/brand-mark';
 import { IconButton } from '@/app/components/icon-button';
-import { THEME_PREFERENCES, useTheme } from '@/app/theme/theme-provider';
+import { ThemeControl } from '@/app/components/theme-control';
 
 import type { EditorToolbarProps } from './editor-composition-types';
 export function EditorToolbar({
@@ -34,56 +24,44 @@ export function EditorToolbar({
   serverReloadPending,
   setServerReloadOpen,
 }: EditorToolbarProps) {
-  const { preference, cyclePreference } = useTheme();
-  const ThemeIcon =
-    preference === THEME_PREFERENCES.LIGHT
-      ? Sun
-      : preference === THEME_PREFERENCES.DARK
-        ? Moon
-        : Monitor;
-  const nextTheme =
-    preference === THEME_PREFERENCES.LIGHT
-      ? 'dark'
-      : preference === THEME_PREFERENCES.DARK
-        ? 'system'
-        : 'light';
-
   return (
     <>
-      <header className="relative z-20 flex items-center gap-3 border-b bg-background/95 px-3 backdrop-blur sm:px-4">
-        <Link
-          className="flex items-center gap-2.5 text-sm font-semibold tracking-tight"
-          to={boardMode ? '/boards' : '/'}
-          aria-label={boardMode ? 'Back to your boards' : 'Archboard home'}
-        >
-          <BrandMark />
-          <span>Archboard</span>
-        </Link>
-        <span className="max-w-48 truncate rounded-md border bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
-          {boardMode ? boardTitle : 'Local demo'}
-        </span>
-
-        <div
-          className="group absolute left-1/2 hidden -translate-x-1/2 items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs font-medium shadow-sm md:flex"
-          data-tone={viewState.tone}
-          role="status"
-        >
-          <span
-            className="size-1.5 rounded-full bg-primary group-data-[tone=danger]:bg-destructive group-data-[tone=success]:bg-status-success group-data-[tone=warning]:bg-status-warning"
-            aria-hidden="true"
-          />
-          <span>{viewState.label}</span>
+      <header className="relative z-20 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b bg-surface-panel px-3 sm:px-4">
+        <div className="flex min-w-0 flex-col gap-0.5 lg:flex-row lg:items-center lg:gap-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Link
+              className="flex shrink-0 items-center gap-2 text-sm font-semibold max-lg:[&>span:first-child]:size-5"
+              to={boardMode ? '/boards' : '/'}
+              aria-label={boardMode ? 'Back to your boards' : 'Archboard home'}
+            >
+              <BrandMark />
+              <span className="max-sm:hidden">Archboard</span>
+            </Link>
+            <span className="text-muted-foreground" aria-hidden="true">
+              /
+            </span>
+            <span
+              className="min-w-0 truncate text-sm font-medium lg:max-w-64"
+              title={boardMode ? boardTitle : 'Local demo'}
+            >
+              {boardMode ? boardTitle : 'Local demo'}
+            </span>
+          </div>
+          <div
+            className="group flex min-w-0 items-start gap-2 text-xs leading-4 text-muted-foreground"
+            data-tone={viewState.tone}
+            role="status"
+          >
+            <span
+              className="mt-1 size-1.5 shrink-0 rounded-full bg-muted-foreground group-data-[tone=danger]:bg-destructive group-data-[tone=success]:bg-status-success group-data-[tone=warning]:bg-status-warning"
+              aria-hidden="true"
+            />
+            <span className="min-w-0 line-clamp-2 break-words" title={viewState.label}>
+              {viewState.label}
+            </span>
+          </div>
         </div>
-
-        <span
-          className="ml-auto max-w-32 truncate text-xs text-muted-foreground md:hidden"
-          role="status"
-          aria-live="polite"
-        >
-          {viewState.label}
-        </span>
-
-        <div className="ml-auto flex items-center gap-0.5" aria-label="Board actions">
+        <div className="flex shrink-0 items-center gap-0.5" aria-label="Board actions">
           <IconButton
             className="max-sm:hidden"
             label={`Undo (${shortcutModifier}+Z)`}
@@ -102,6 +80,7 @@ export function EditorToolbar({
           >
             <Redo2 />
           </IconButton>
+          <span className="mx-1 h-5 w-px bg-border max-sm:hidden" aria-hidden="true" />
           {!boardMode && (
             <IconButton
               ref={resetButtonRef}
@@ -152,13 +131,7 @@ export function EditorToolbar({
             </IconButton>
           )}
           <span className="mx-1 h-5 w-px bg-border max-sm:hidden" aria-hidden="true" />
-          <IconButton
-            label={`Theme: ${preference}. Switch to ${nextTheme}.`}
-            variant="ghost"
-            onClick={cyclePreference}
-          >
-            <ThemeIcon />
-          </IconButton>
+          <ThemeControl compact />
           <IconButton
             ref={helpButtonRef}
             label="Open keyboard help"

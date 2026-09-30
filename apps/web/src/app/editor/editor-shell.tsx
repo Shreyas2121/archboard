@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MAX_GRAPH_COORDINATE,
   NODE_KINDS,
@@ -7,6 +7,8 @@ import {
 } from '@archboard/contracts';
 import {
   Download,
+  AlertTriangle,
+  CloudOff,
   Grid3X3,
   Maximize,
   PanelLeftClose,
@@ -62,6 +64,7 @@ import { EditorInspector } from './editor-inspector';
 import { EditorToolbar } from './editor-toolbar';
 import { editorSessionViewState } from './editor-status-policy';
 import { PALETTE_ITEMS } from './editor-palette-definitions';
+import { COMPACT_EDITOR_QUERY } from './editor-layout-constants';
 import type { EditorShellProps } from './editor-composition-types';
 
 const PERCENT_SCALE = 100;
@@ -94,8 +97,11 @@ export function EditorShell({
   const gridSnapEnabled = useGridSnapEnabled();
   const activeDialog = useActiveEditorDialog();
   const actions = useEditorUiActions();
+  useEffect(() => {
+    actions.initializePalette(!window.matchMedia(COMPACT_EDITOR_QUERY).matches);
+  }, [actions]);
   const reactFlow = useReactFlow();
-  const canvasContainer = useRef<HTMLElement>(null);
+  const canvasContainer = useRef<HTMLDivElement>(null);
   const creationSequence = useRef(0);
   const [viewport, setViewport] = useState<Viewport>(DEFAULT_CANVAS_VIEWPORT);
   const [creationError, setCreationError] = useState<string | null>(null);
@@ -358,9 +364,36 @@ export function EditorShell({
     }
   }, [session]);
 
+  const showStatePanel =
+    viewState.showStableSkeleton ||
+    viewState.phase === EDITOR_VIEW_PHASES.UNAVAILABLE ||
+    (viewState.phase === EDITOR_VIEW_PHASES.CONNECTING &&
+      boardMode &&
+      !sessionSnapshot?.hasLocalCopy) ||
+    viewState.phase === EDITOR_VIEW_PHASES.STORAGE_ERROR ||
+    viewState.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED ||
+    viewState.phase === EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED ||
+    viewState.phase === EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED ||
+    viewState.phase === EDITOR_VIEW_PHASES.VALIDATION_REJECTED;
+  const showOfflineNotice =
+    boardMode &&
+    (viewState.phase === EDITOR_VIEW_PHASES.SAVED_ON_DEVICE_OFFLINE ||
+      viewState.phase === EDITOR_VIEW_PHASES.OFFLINE_CACHED);
+  const hasNotices =
+    showOfflineNotice ||
+    narrowScreen ||
+    connectionNotice !== null ||
+    (recoveryError !== null && !showStatePanel) ||
+    viewState.phase === EDITOR_VIEW_PHASES.READ_ONLY ||
+    (boardMode &&
+      (viewState.phase === EDITOR_VIEW_PHASES.VIEWER ||
+        viewState.phase === EDITOR_VIEW_PHASES.ARCHIVED ||
+        viewState.phase === EDITOR_VIEW_PHASES.ACCESS_CHANGED ||
+        viewState.phase === EDITOR_VIEW_PHASES.SESSION_EXPIRED));
+
   return (
     <div
-      className="grid h-dvh min-h-[36rem] grid-rows-[3.5rem_minmax(0,1fr)_2.75rem] overflow-hidden bg-background"
+      className="grid h-full grid-rows-[3.5rem_minmax(0,1fr)_2.75rem] overflow-hidden bg-background"
       data-phase={viewState.phase}
     >
       <EditorToolbar
@@ -384,16 +417,16 @@ export function EditorShell({
 
       <div
         className={cn(
-          'grid min-h-0 grid-cols-1 overflow-hidden md:grid-cols-[17rem_minmax(0,1fr)_20rem]',
+          'grid min-h-0 grid-cols-1 overflow-hidden md:grid-cols-[14rem_minmax(0,1fr)_20rem]',
           !paletteOpen && 'md:grid-cols-[3.5rem_minmax(0,1fr)_20rem]',
-          !inspectorOpen && 'md:grid-cols-[17rem_minmax(0,1fr)_3.5rem]',
+          !inspectorOpen && 'md:grid-cols-[14rem_minmax(0,1fr)_3.5rem]',
           !paletteOpen && !inspectorOpen && 'md:grid-cols-[3.5rem_minmax(0,1fr)_3.5rem]',
         )}
         data-palette={paletteOpen ? 'open' : 'closed'}
         data-inspector={inspectorOpen ? 'open' : 'closed'}
       >
         <Collapsible
-          className="min-h-0 overflow-hidden border-r bg-card max-md:hidden"
+          className="min-h-0 overflow-hidden border-r bg-surface-panel max-md:hidden"
           open={paletteOpen}
         >
           <div
@@ -402,14 +435,7 @@ export function EditorShell({
               paletteOpen ? 'justify-between' : 'justify-center',
             )}
           >
-            {paletteOpen && (
-              <div>
-                <p className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  Create
-                </p>
-                <h2 className="text-sm font-semibold">Palette</h2>
-              </div>
-            )}
+            {paletteOpen && <h2 className="text-sm font-semibold">Add to board</h2>}
             <IconButton
               label={paletteOpen ? 'Collapse palette' : 'Expand palette'}
               variant="ghost"
@@ -418,16 +444,16 @@ export function EditorShell({
               {paletteOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
             </IconButton>
           </div>
-          <CollapsibleContent className="p-3">
+          <CollapsibleContent className="h-[calc(100%-3.5rem)] overflow-y-auto p-3">
             <p className="mb-3 text-xs leading-5 text-muted-foreground">
               Choose a card or boundary to create it in the visible canvas.
             </p>
-            <div className="grid gap-2">
+            <div className="grid gap-1">
               {PALETTE_ITEMS.map((item) => (
                 <Button
                   type="button"
-                  className="h-auto justify-start gap-3 px-3 py-3 text-left"
-                  variant="outline"
+                  className="h-auto min-h-12 justify-start gap-3 px-2 py-2 text-left whitespace-normal"
+                  variant="ghost"
                   disabled={!viewState.editable}
                   key={item.label}
                   onClick={() =>
@@ -436,8 +462,8 @@ export function EditorShell({
                 >
                   <item.icon aria-hidden="true" />
                   <span className="grid gap-0.5">
-                    <strong className="text-xs font-medium">{item.label}</strong>
-                    <small className="text-[0.7rem] font-normal text-muted-foreground">
+                    <strong className="text-sm leading-5 font-medium">{item.label}</strong>
+                    <small className="text-xs leading-4 font-normal text-muted-foreground">
                       {item.description}
                     </small>
                   </span>
@@ -453,16 +479,85 @@ export function EditorShell({
         </Collapsible>
 
         <main
-          ref={canvasContainer}
-          className="relative min-w-0 overflow-hidden bg-muted/25"
+          className="relative flex min-h-0 min-w-0 flex-col overflow-hidden"
           aria-labelledby="canvas-heading"
         >
           <h1 id="canvas-heading" className="sr-only">
             {boardMode ? `${boardTitle} architecture canvas` : 'Local demo architecture canvas'}
           </h1>
+          {hasNotices && (
+            <div className="grid max-h-[40%] shrink-0 gap-2 overflow-y-auto border-b bg-surface-panel p-3">
+              {showOfflineNotice && (
+                <aside
+                  className="flex items-start gap-2 rounded-control border bg-surface-panel px-3 py-2 text-xs leading-5"
+                  role="status"
+                >
+                  <CloudOff
+                    className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                  <span>{viewState.detail}</span>
+                </aside>
+              )}
+              {viewState.phase === EDITOR_VIEW_PHASES.READ_ONLY && (
+                <aside
+                  className="flex flex-wrap items-center gap-2 rounded-control border bg-status-warning-surface px-3 py-2 text-xs leading-5 font-medium text-status-warning-foreground"
+                  role="status"
+                >
+                  <AlertTriangle className="size-4 shrink-0" aria-hidden="true" /> Another tab owns
+                  editing access.
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void session?.retry()}
+                  >
+                    Retry
+                  </Button>
+                </aside>
+              )}
+              {boardMode &&
+                (viewState.phase === EDITOR_VIEW_PHASES.VIEWER ||
+                  viewState.phase === EDITOR_VIEW_PHASES.ARCHIVED ||
+                  viewState.phase === EDITOR_VIEW_PHASES.ACCESS_CHANGED ||
+                  viewState.phase === EDITOR_VIEW_PHASES.SESSION_EXPIRED) && (
+                  <aside
+                    className="rounded-control border bg-status-warning-surface px-3 py-2 text-xs leading-5 font-medium text-status-warning-foreground"
+                    role="status"
+                  >
+                    {viewState.detail}
+                  </aside>
+                )}
+              {narrowScreen && (
+                <aside
+                  className="rounded-control border bg-status-warning-surface px-3 py-2 text-xs leading-5 font-medium text-status-warning-foreground"
+                  role="status"
+                >
+                  This view stays read-only on narrow screens. Use a wider window to edit.
+                </aside>
+              )}
+              {connectionNotice !== null && (
+                <aside
+                  className="rounded-control border bg-surface-panel px-3 py-2 text-xs leading-5"
+                  role="status"
+                >
+                  {connectionNotice}
+                </aside>
+              )}
+              {recoveryError !== null && !showStatePanel && (
+                <aside
+                  className="rounded-control border bg-status-danger-surface px-3 py-2 text-xs leading-5 text-destructive"
+                  role="alert"
+                >
+                  {recoveryError}
+                </aside>
+              )}
+            </div>
+          )}
           <div
-            className="relative grid size-full place-items-center overflow-hidden"
-            aria-describedby="canvas-status-detail"
+            ref={canvasContainer}
+            className="relative grid min-h-0 w-full flex-1 place-items-center overflow-hidden bg-surface-canvas"
+            aria-describedby={showStatePanel ? 'canvas-status-detail' : undefined}
           >
             {projection !== null && (
               <GraphCanvas
@@ -487,24 +582,12 @@ export function EditorShell({
                 <span className="absolute right-[17%] top-[45%] h-28 w-44 rounded-xl border bg-card shadow-sm" />
               </div>
             )}
-            {(viewState.showStableSkeleton ||
-              viewState.phase === EDITOR_VIEW_PHASES.UNAVAILABLE ||
-              (viewState.phase === EDITOR_VIEW_PHASES.CONNECTING &&
-                boardMode &&
-                !sessionSnapshot?.hasLocalCopy) ||
-              viewState.phase === EDITOR_VIEW_PHASES.STORAGE_ERROR ||
-              viewState.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED ||
-              viewState.phase === EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED ||
-              viewState.phase === EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED ||
-              viewState.phase === EDITOR_VIEW_PHASES.VALIDATION_REJECTED) && (
+            {showStatePanel && (
               <section
-                className="absolute z-10 mx-5 grid max-w-md justify-items-center rounded-2xl border bg-card/95 px-8 py-9 text-center shadow-xl shadow-foreground/5 backdrop-blur"
+                className="absolute inset-x-4 top-1/2 z-10 mx-auto grid max-h-[calc(100%-2rem)] max-w-md -translate-y-1/2 justify-items-center overflow-y-auto rounded-xl border bg-popover p-4 text-center shadow-md sm:p-6"
                 aria-label="Editor state"
               >
-                <span
-                  className="mb-5 grid size-12 place-items-center rounded-xl bg-primary/10"
-                  aria-hidden="true"
-                >
+                <span className="mb-4" aria-hidden="true">
                   <BrandMark />
                 </span>
                 <h2 className="text-lg font-semibold tracking-tight">{viewState.label}</h2>
@@ -525,7 +608,11 @@ export function EditorShell({
                     viewState.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED ||
                     viewState.phase === EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED ||
                     viewState.phase === EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED) && (
-                    <Button type="button" className="mt-5" onClick={downloadRecovery}>
+                    <Button
+                      type="button"
+                      className="mt-5 h-auto min-h-9 max-w-full whitespace-normal"
+                      onClick={downloadRecovery}
+                    >
                       <Download /> Download in-memory recovery
                     </Button>
                   )}
@@ -536,11 +623,12 @@ export function EditorShell({
                 )}
               </section>
             )}
-            {canvasReady &&
+            {!showStatePanel &&
+              canvasReady &&
               (!boardMode || sessionSnapshot?.hasLocalCopy) &&
               projection.nodes.length === 0 &&
               projection.boundaries.length === 0 && (
-                <section className="pointer-events-none absolute z-10 rounded-xl border bg-card/90 px-6 py-5 text-center shadow-sm backdrop-blur">
+                <section className="pointer-events-none absolute inset-x-4 z-10 mx-auto max-h-full max-w-sm overflow-y-auto rounded-lg border bg-surface-panel px-4 py-4 text-center">
                   <h2 className="text-sm font-semibold">
                     {boardMode ? 'Board is empty' : 'Local board is empty'}
                   </h2>
@@ -550,56 +638,6 @@ export function EditorShell({
                       : 'No cards or boundaries are stored on this device yet.'}
                   </p>
                 </section>
-              )}
-            {viewState.phase === EDITOR_VIEW_PHASES.READ_ONLY && (
-              <aside className="absolute inset-x-3 top-3 z-20 flex items-center justify-center gap-3 rounded-lg border border-status-warning/30 bg-background/90 px-3 py-2 text-xs font-medium text-status-warning-foreground backdrop-blur">
-                Another tab owns editing access.
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void session?.retry()}
-                >
-                  Retry
-                </Button>
-              </aside>
-            )}
-            {boardMode &&
-              (viewState.phase === EDITOR_VIEW_PHASES.VIEWER ||
-                viewState.phase === EDITOR_VIEW_PHASES.ARCHIVED ||
-                viewState.phase === EDITOR_VIEW_PHASES.ACCESS_CHANGED ||
-                viewState.phase === EDITOR_VIEW_PHASES.SESSION_EXPIRED) && (
-                <aside
-                  className="absolute inset-x-3 top-3 z-20 rounded-lg border border-status-warning/30 bg-background/90 px-3 py-2 text-center text-xs font-medium text-status-warning-foreground backdrop-blur"
-                  role="status"
-                >
-                  {viewState.detail}
-                </aside>
-              )}
-            {narrowScreen && (
-              <aside className="absolute inset-x-3 top-3 z-20 rounded-lg border border-status-warning/30 bg-background/90 px-3 py-2 text-center text-xs font-medium text-status-warning-foreground backdrop-blur">
-                This view stays read-only on narrow screens. Use a wider window to edit.
-              </aside>
-            )}
-            {connectionNotice !== null && (
-              <aside
-                className="absolute bottom-3 left-1/2 z-20 max-w-md -translate-x-1/2 rounded-lg border bg-background/95 px-3 py-2 text-center text-xs font-medium shadow-sm"
-                role="status"
-              >
-                {connectionNotice}
-              </aside>
-            )}
-            {recoveryError !== null &&
-              viewState.phase !== EDITOR_VIEW_PHASES.STORAGE_ERROR &&
-              viewState.phase !== EDITOR_VIEW_PHASES.RECOVERY_REQUIRED &&
-              viewState.phase !== EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED &&
-              viewState.phase !== EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED && (
-                <aside
-                  className="absolute inset-x-3 bottom-3 z-20 rounded-lg border bg-background px-3 py-2 text-center text-sm text-destructive"
-                  role="alert"
-                >
-                  {recoveryError}
-                </aside>
               )}
           </div>
         </main>
@@ -628,7 +666,7 @@ export function EditorShell({
             <ZoomOut />
           </IconButton>
           <span
-            className="min-w-12 text-center font-mono text-[0.7rem] text-muted-foreground"
+            className="min-w-12 text-center font-mono text-xs tabular-nums text-muted-foreground"
             aria-label="Current zoom"
           >
             {Math.round(viewport.zoom * PERCENT_SCALE)}%
@@ -658,24 +696,28 @@ export function EditorShell({
             <RotateCcw />
           </IconButton>
         </div>
-        <div className="flex items-center gap-0.5 max-[460px]:hidden" aria-label="View preferences">
+        <div className="flex items-center gap-1" aria-label="View preferences">
           <Button
             type="button"
             size="sm"
             variant="ghost"
             aria-pressed={gridSnapEnabled}
+            aria-label="Grid snap"
+            className="max-sm:size-8 max-sm:px-0"
             onClick={actions.toggleGridSnap}
           >
-            <Grid3X3 /> Grid snap
+            <Grid3X3 aria-hidden="true" /> <span className="max-sm:sr-only">Grid snap</span>
           </Button>
           <Button
             type="button"
             size="sm"
             variant="ghost"
             aria-pressed={minimapVisible}
+            aria-label="Minimap"
+            className="max-sm:size-8 max-sm:px-0"
             onClick={actions.toggleMinimap}
           >
-            <Scan /> Minimap
+            <Scan aria-hidden="true" /> <span className="max-sm:sr-only">Minimap</span>
           </Button>
         </div>
       </footer>

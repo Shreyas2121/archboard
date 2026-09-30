@@ -40,12 +40,10 @@ export function EdgeInspector({ edge, nodes, session, disabled, onNotice }: Edge
   };
 
   return (
-    <div className="grid content-start gap-5 p-4">
+    <div className="grid content-start gap-4 p-4">
       <div>
-        <p className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          Connection
-        </p>
-        <p className="mt-1 truncate text-sm font-semibold">
+        <p className="text-xs font-medium capitalize text-muted-foreground">Connection</p>
+        <p className="mt-1 break-words text-sm font-semibold">
           {edge.label || 'Unlabeled connection'}
         </p>
       </div>
@@ -85,7 +83,7 @@ export function EdgeInspector({ edge, nodes, session, disabled, onNotice }: Edge
           applyCandidate({ ...edge, style }, () => session.editConnection(edge.id, { style }))
         }
       />
-      <div className="grid gap-2 rounded-lg border bg-muted/30 p-3">
+      <div className="grid gap-2 border-t pt-3">
         <p className="text-xs font-semibold">Immutable endpoints</p>
         <dl className="grid gap-2 text-xs">
           <div>
@@ -101,7 +99,7 @@ export function EdgeInspector({ edge, nodes, session, disabled, onNotice }: Edge
             </dd>
           </div>
         </dl>
-        <p className="text-[0.65rem] leading-4 text-muted-foreground">
+        <p className="text-xs leading-4 text-muted-foreground">
           Drag either selected edge endpoint to reconnect. Reconnection creates a fresh connection.
         </p>
       </div>

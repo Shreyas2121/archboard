@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { Archive, Copy, Pencil, Plus, RotateCcw, Search } from 'lucide-react';
-import { BOARD_ROLES, MAX_BOARD_TITLE_CHARACTERS, type BoardSummary } from '@archboard/contracts';
+import { Plus, RotateCcw, Search } from 'lucide-react';
+import { MAX_BOARD_TITLE_CHARACTERS, type BoardSummary } from '@archboard/contracts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,9 +23,11 @@ import {
 } from './board-api';
 import { BoardDialog } from './board-dialog';
 import { CachedBoardDashboard } from './cached-board-dashboard';
+import { BoardEntry } from './board-entry';
+import { BoardActionsMenu } from './board-actions-menu';
+import { BoardListSkeleton } from './board-list-skeleton';
 
 type Selection = { action: BoardAction; board: BoardSummary | null; intent: string };
-const LOADING_ROW_COUNT = 3;
 
 export function BoardDashboard() {
   const queryClient = useQueryClient();
@@ -51,9 +53,13 @@ export function BoardDashboard() {
   const selectedBoard = selection?.board
     ? (rows.find((board) => board.id === selection.board?.id) ?? selection.board)
     : null;
-  function openDialog(action: BoardAction, board: BoardSummary | null = null) {
+  function openDialog(
+    action: BoardAction,
+    board: BoardSummary | null = null,
+    trigger?: HTMLElement | null,
+  ) {
     returnFocus.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setSelection({ action, board, intent: crypto.randomUUID() });
   }
   function afterSuccess(action: BoardAction, title: string) {
@@ -73,19 +79,18 @@ export function BoardDashboard() {
     <main className="flex-1 py-10 sm:py-14">
       <div className="flex flex-wrap items-end justify-between gap-5">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-widest text-primary">Workspace</p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight sm:text-4xl">Your boards</h1>
+          <h1 className="text-3xl leading-10 font-semibold tracking-tight">Your boards</h1>
           <p className="mt-2 text-muted-foreground">
             Manage your saved boards here. The local demo stays on this device.
           </p>
         </div>
-        <Button type="button" onClick={() => openDialog('create')}>
+        <Button type="button" size="lg" onClick={() => openDialog('create')}>
           <Plus /> New board
         </Button>
       </div>
       <section className="mt-9" aria-label="Board list">
         <div className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-end">
-          <div className="grid w-full gap-1.5 sm:max-w-sm">
+          <div className="grid w-full gap-2 sm:max-w-sm">
             <Label htmlFor="board-search">Search titles</Label>
             <div className="relative">
               <Search
@@ -105,7 +110,7 @@ export function BoardDashboard() {
               />
             </div>
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid gap-2">
             <Label htmlFor="board-filter">Show</Label>
             <Select
               value={archived ? 'archived' : 'active'}
@@ -125,16 +130,9 @@ export function BoardDashboard() {
           </div>
         </div>
         {boards.isPending || searchSettling ? (
-          <div className="grid gap-3 py-7" role="status" aria-label="Loading boards">
-            {Array.from({ length: LOADING_ROW_COUNT }, (_, index) => index).map((index) => (
-              <div
-                key={index}
-                className="h-28 animate-pulse rounded-xl border bg-muted/50 motion-reduce:animate-none"
-              />
-            ))}
-          </div>
+          <BoardListSkeleton />
         ) : boards.isError && !boards.isFetchNextPageError ? (
-          <div className="rounded-xl border bg-card p-8 text-center" role="alert">
+          <div className="rounded-lg border bg-surface-panel p-6 text-center" role="alert">
             <h2 className="text-lg font-semibold">
               {expired
                 ? 'Your session expired'
@@ -162,7 +160,7 @@ export function BoardDashboard() {
             )}
           </div>
         ) : rows.length === 0 ? (
-          <div className="rounded-xl border bg-card p-8 text-center sm:p-12">
+          <div className="rounded-lg border bg-surface-panel p-6 text-center sm:p-12">
             <h2 className="text-xl font-semibold">
               {search
                 ? 'No titles match your search'
@@ -241,56 +239,30 @@ function BoardCard({
   onAction,
 }: {
   board: BoardSummary;
-  onAction: (action: BoardAction, board: BoardSummary) => void;
+  onAction: (action: BoardAction, board: BoardSummary, trigger?: HTMLElement | null) => void;
 }) {
-  const canEdit = !board.archivedAt && board.effectiveRole !== BOARD_ROLES.VIEWER;
-  const owner = board.effectiveRole === BOARD_ROLES.OWNER;
   return (
-    <article className="flex min-w-0 flex-col rounded-xl border bg-card p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <h2 className="min-w-0 break-words text-lg font-semibold">{board.title}</h2>
-        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs capitalize text-muted-foreground">
-          {board.effectiveRole}
-        </span>
-      </div>
-      <p className="mt-2 line-clamp-3 min-h-12 break-words text-sm text-muted-foreground">
-        {board.description || 'No description'}
-      </p>
-      <p className="mt-4 text-xs text-muted-foreground">
-        {board.archivedAt ? 'Archived' : 'Active'} · Updated{' '}
-        {new Date(board.contentUpdatedAt).toLocaleDateString()}
-      </p>
-      <div className="mt-5 flex flex-wrap gap-2 border-t pt-4">
-        <Button asChild size="sm">
-          <Link to="/boards/$boardId" params={{ boardId: board.id }}>
-            Open board
-          </Link>
-        </Button>
-        {canEdit ? (
-          <Button type="button" size="sm" variant="outline" onClick={() => onAction('edit', board)}>
-            <Pencil /> Edit details
-          </Button>
-        ) : null}
-        {owner ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => onAction(board.archivedAt ? 'restore' : 'archive', board)}
-          >
-            {board.archivedAt ? <RotateCcw /> : <Archive />}
-            {board.archivedAt ? 'Restore' : 'Archive'}
-          </Button>
-        ) : null}
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => onAction('duplicate', board)}
-        >
-          <Copy /> Duplicate
-        </Button>
-      </div>
-    </article>
+    <BoardEntry
+      boardId={board.id}
+      title={board.title}
+      description={board.description}
+      role={board.effectiveRole}
+      actions={
+        <BoardActionsMenu
+          title={board.title}
+          role={board.effectiveRole}
+          archived={Boolean(board.archivedAt)}
+          onAction={(action, trigger) => onAction(action, board, trigger)}
+        />
+      }
+      metadata={
+        <p>
+          {board.archivedAt ? 'Archived' : 'Active'} · Updated{' '}
+          <time dateTime={board.contentUpdatedAt}>
+            {new Date(board.contentUpdatedAt).toLocaleDateString()}
+          </time>
+        </p>
+      }
+    />
   );
 }

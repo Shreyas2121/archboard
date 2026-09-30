@@ -26,7 +26,7 @@ export function AtomicSelectField<Value extends string>({
 }: AtomicSelectFieldProps<Value>) {
   const id = useId();
   return (
-    <div className="grid gap-1.5" onKeyDown={(event) => event.stopPropagation()}>
+    <div className="grid gap-2" onKeyDown={(event) => event.stopPropagation()}>
       <Label htmlFor={id}>{label}</Label>
       <Select
         value={value}

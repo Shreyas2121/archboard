@@ -4,16 +4,7 @@ import type { GraphNode } from '@archboard/contracts';
 import { cn } from '@/lib/utils';
 
 import { CardHandles } from './card-handles';
-
-const COLOR_CLASSES: Readonly<Record<GraphNode['color'], string>> = {
-  gray: 'border-graph-gray/70',
-  blue: 'border-graph-blue/70',
-  teal: 'border-graph-teal/70',
-  green: 'border-graph-green/70',
-  amber: 'border-graph-amber/70',
-  red: 'border-graph-red/70',
-  violet: 'border-graph-violet/70',
-};
+import { CARD_COLOR_RULES } from './card-colors';
 
 interface CardFrameProps {
   readonly node: GraphNode;
@@ -26,14 +17,18 @@ export function CardFrame({ node, selected, children, className }: CardFrameProp
   return (
     <article
       className={cn(
-        'relative grid size-full content-start rounded-xl border-2 bg-card p-4 text-card-foreground shadow-sm',
-        COLOR_CLASSES[node.color],
-        selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background',
+        'group relative grid size-full grid-rows-[auto_minmax(0,1fr)] gap-2 rounded-lg border bg-card p-3 text-card-foreground shadow-sm',
+        selected && 'ring-2 ring-ring ring-offset-2 ring-offset-surface-canvas',
         className,
       )}
       data-color={node.color}
       data-kind={node.kind}
+      data-selected={selected}
     >
+      <span
+        aria-hidden="true"
+        className={cn('absolute inset-x-2 top-0 h-0.5 rounded-full', CARD_COLOR_RULES[node.color])}
+      />
       <CardHandles />
       {children}
     </article>
@@ -42,6 +37,11 @@ export function CardFrame({ node, selected, children, className }: CardFrameProp
 
 export function CardTitle({ children }: { readonly children: string }) {
   return (
-    <h2 className="truncate text-sm font-semibold leading-5">{children || 'Untitled card'}</h2>
+    <h2
+      className="min-w-0 truncate text-sm font-semibold leading-5"
+      title={children || 'Untitled card'}
+    >
+      {children || 'Untitled card'}
+    </h2>
   );
 }

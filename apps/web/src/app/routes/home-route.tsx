@@ -4,6 +4,9 @@ import { ArrowRight, Database, GitBranch, Laptop, LogIn } from 'lucide-react';
 import { readLocalSignOutPending } from '@archboard/sync-client';
 
 import { BrandMark } from '@/app/components/brand-mark';
+import { ArchitectureIllustration } from '@/app/components/architecture-illustration';
+import { PageState } from '@/app/components/page-state';
+import { ThemeControl } from '@/app/components/theme-control';
 import { Button } from '@/components/ui/button';
 import { authClient, safeReturnPath, SessionState, useCurrentUser } from '@/features/auth';
 
@@ -59,25 +62,18 @@ export function HomeRoute() {
   if (session.isPending) return <SessionState state="loading" />;
   if (serverSignOutPending) {
     return (
-      <main
-        className="mx-auto grid min-h-dvh max-w-xl place-content-center justify-items-center px-6 text-center"
+      <PageState
+        title="Signed out on this device"
+        description="Server session invalidation is pending. Reconnect and retry before signing in to an account again. Your retained local boards stay under the previous account."
         role="status"
       >
-        <BrandMark />
-        <h1 className="mt-6 text-2xl font-semibold">Signed out on this device</h1>
-        <p className="mt-3 text-muted-foreground">
-          Server session invalidation is pending. Reconnect and retry before signing in to an
-          account again. Your retained local boards stay under the previous account.
-        </p>
-        <div className="mt-6 flex gap-3">
-          <Button type="button" onClick={() => void session.refetch()}>
-            Retry server sign-out
-          </Button>
-          <Button asChild variant="outline">
-            <Link to="/demo">Open local demo</Link>
-          </Button>
-        </div>
-      </main>
+        <Button type="button" size="lg" onClick={() => void session.refetch()}>
+          Retry server sign-out
+        </Button>
+        <Button asChild variant="ghost" size="lg">
+          <Link to="/demo">Open local demo</Link>
+        </Button>
+      </PageState>
     );
   }
   if (session.isError) {
@@ -86,8 +82,8 @@ export function HomeRoute() {
   if (session.data) return <SessionState state="redirecting" />;
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-[90rem] flex-col px-5 sm:px-8 lg:px-12">
-      <header className="flex h-20 items-center justify-between border-b border-border/70">
+    <div className="mx-auto flex min-h-full w-full max-w-7xl flex-col px-5 sm:px-8">
+      <header className="flex min-h-20 flex-wrap items-center justify-between gap-3 border-b border-border/70 py-3">
         <Link
           className="flex items-center gap-2.5 text-sm font-semibold tracking-tight"
           to="/"
@@ -96,13 +92,16 @@ export function HomeRoute() {
           <BrandMark />
           <span>Archboard</span>
         </Link>
-        <Button asChild variant="outline">
-          <Link to="/demo">Open local demo</Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <ThemeControl />
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/demo">Open local demo</Link>
+          </Button>
+        </div>
       </header>
       <main>
         <section
-          className="grid min-h-[38rem] content-center border-b border-border/70 py-20 lg:min-h-[43rem] lg:grid-cols-[minmax(0,56rem)_1fr]"
+          className="grid items-center gap-10 border-b border-border/70 py-12 sm:py-16 lg:grid-cols-2 lg:gap-12 lg:py-20"
           aria-labelledby="hero-title"
         >
           <div>
@@ -111,26 +110,26 @@ export function HomeRoute() {
             </p>
             <h1
               id="hero-title"
-              className="max-w-4xl text-balance text-5xl font-semibold leading-[0.96] tracking-[-0.055em] sm:text-7xl lg:text-[6rem]"
+              className="max-w-2xl text-balance text-5xl leading-[3.25rem] font-semibold tracking-[-0.035em] lg:text-[4rem] lg:leading-[4.25rem]"
             >
               Think in systems.
               <br />
               See the whole board.
             </h1>
-            <p className="mt-7 max-w-2xl text-pretty text-lg leading-8 text-muted-foreground sm:text-xl">
+            <p className="mt-6 max-w-xl text-pretty text-base leading-6 text-muted-foreground">
               Map the software you have and the software you are building next. Explore in the local
               demo, or sign in to manage your boards.
             </p>
             <div className="mt-9 flex flex-wrap items-center gap-3">
               <Button
                 type="button"
-                className="h-11 gap-2 px-4"
+                size="lg"
                 disabled={signingIn}
                 onClick={() => void handleSignIn()}
               >
                 <LogIn /> {signingIn ? 'Connecting to GitHub…' : 'Continue with GitHub'}
               </Button>
-              <Button asChild variant="outline" className="h-11 gap-2 px-4">
+              <Button asChild variant="ghost" size="lg">
                 <Link to="/demo">
                   Open local demo <ArrowRight />
                 </Link>
@@ -142,13 +141,7 @@ export function HomeRoute() {
               </p>
             ) : null}
           </div>
-          <div className="mt-14 hidden place-self-end lg:block" aria-hidden="true">
-            <div className="grid size-52 rotate-3 grid-cols-2 gap-3 rounded-3xl border border-border bg-card p-5 shadow-2xl shadow-primary/10">
-              <span className="rounded-xl bg-primary/12 ring-1 ring-primary/20" />
-              <span className="rounded-xl bg-muted ring-1 ring-border" />
-              <span className="col-span-2 rounded-xl bg-foreground/5 ring-1 ring-border" />
-            </div>
-          </div>
+          <ArchitectureIllustration />
         </section>
         <section
           className="grid border-b border-border/70 md:grid-cols-3"
@@ -157,17 +150,16 @@ export function HomeRoute() {
           <h2 id="features-title" className="sr-only">
             Why Archboard
           </h2>
-          {FEATURES.map((feature, index) => (
+          {FEATURES.map((feature) => (
             <article
-              className="relative min-h-64 border-b border-border/70 p-7 last:border-b-0 md:border-r md:border-b-0 md:last:border-r-0 lg:p-9"
+              className="border-b border-border/70 py-6 last:border-b-0 md:border-r md:border-b-0 md:px-6 md:first:pl-0 md:last:border-r-0 md:last:pr-0"
               key={feature.title}
             >
-              <span className="absolute right-7 top-7 font-mono text-xs text-muted-foreground">
-                0{index + 1}
-              </span>
-              <feature.icon className="mb-12 size-6 text-primary" aria-hidden="true" />
-              <h3 className="text-lg font-semibold tracking-tight">{feature.title}</h3>
-              <p className="mt-2 max-w-xs leading-6 text-muted-foreground">{feature.description}</p>
+              <feature.icon className="mb-3 size-5 text-muted-foreground" aria-hidden="true" />
+              <h3 className="text-sm font-semibold">{feature.title}</h3>
+              <p className="mt-2 max-w-sm text-sm leading-5 text-muted-foreground">
+                {feature.description}
+              </p>
             </article>
           ))}
         </section>

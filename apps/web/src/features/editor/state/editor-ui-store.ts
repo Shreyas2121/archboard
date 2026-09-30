@@ -17,6 +17,7 @@ export interface SelectionReference {
 export type EditorDialog = 'help' | 'reset' | null;
 
 interface EditorUiActions {
+  readonly initializePalette: (open: boolean) => void;
   readonly togglePalette: () => void;
   readonly toggleInspector: () => void;
   readonly toggleMinimap: () => void;
@@ -28,6 +29,7 @@ interface EditorUiActions {
 }
 
 export interface EditorUiState {
+  readonly paletteInitialized: boolean;
   readonly paletteOpen: boolean;
   readonly inspectorOpen: boolean;
   readonly minimapVisible: boolean;
@@ -37,24 +39,34 @@ export interface EditorUiState {
   readonly actions: EditorUiActions;
 }
 
-const editorUiStore = createStore<EditorUiState>()((set) => ({
-  paletteOpen: true,
-  inspectorOpen: true,
-  minimapVisible: false,
-  gridSnapEnabled: true,
-  selection: [],
-  activeDialog: null,
-  actions: {
-    togglePalette: () => set((state) => ({ paletteOpen: !state.paletteOpen })),
-    toggleInspector: () => set((state) => ({ inspectorOpen: !state.inspectorOpen })),
-    toggleMinimap: () => set((state) => ({ minimapVisible: !state.minimapVisible })),
-    toggleGridSnap: () => set((state) => ({ gridSnapEnabled: !state.gridSnapEnabled })),
-    setSelection: (selection) => set({ selection: [...selection] }),
-    clearSelection: () => set({ selection: [] }),
-    openDialog: (activeDialog) => set({ activeDialog }),
-    closeDialog: () => set({ activeDialog: null }),
-  },
-}));
+export function createEditorUiStore() {
+  return createStore<EditorUiState>()((set) => ({
+    paletteInitialized: false,
+    paletteOpen: true,
+    inspectorOpen: true,
+    minimapVisible: false,
+    gridSnapEnabled: true,
+    selection: [],
+    activeDialog: null,
+    actions: {
+      initializePalette: (paletteOpen) =>
+        set((state) =>
+          state.paletteInitialized ? state : { paletteOpen, paletteInitialized: true },
+        ),
+      togglePalette: () =>
+        set((state) => ({ paletteOpen: !state.paletteOpen, paletteInitialized: true })),
+      toggleInspector: () => set((state) => ({ inspectorOpen: !state.inspectorOpen })),
+      toggleMinimap: () => set((state) => ({ minimapVisible: !state.minimapVisible })),
+      toggleGridSnap: () => set((state) => ({ gridSnapEnabled: !state.gridSnapEnabled })),
+      setSelection: (selection) => set({ selection: [...selection] }),
+      clearSelection: () => set({ selection: [] }),
+      openDialog: (activeDialog) => set({ activeDialog }),
+      closeDialog: () => set({ activeDialog: null }),
+    },
+  }));
+}
+
+const editorUiStore = createEditorUiStore();
 
 export const useEditorUiActions = (): EditorUiActions =>
   useStore(editorUiStore, (state) => state.actions);

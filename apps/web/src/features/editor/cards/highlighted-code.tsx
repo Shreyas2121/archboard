@@ -40,7 +40,7 @@ export function HighlightedCode({ code, language }: HighlightedCodeProps) {
   if (code.length === 0) return <span className="text-muted-foreground">No code yet</span>;
   if (highlight.key !== highlightKey || highlight.lines.length === 0) return <>{code}</>;
   return highlight.lines.map((line, lineIndex) => (
-    <span className="block min-h-4" key={lineIndex}>
+    <span className="block min-h-[18px]" key={lineIndex}>
       {line.map((token, tokenIndex) => (
         <span
           // Shiki supplies theme-derived token colors; user content remains React text.

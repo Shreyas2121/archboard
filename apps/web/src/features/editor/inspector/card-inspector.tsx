@@ -81,10 +81,10 @@ function ExternalUrlField({ node, session, disabled }: ExternalUrlFieldProps) {
   };
 
   return (
-    <div className="grid gap-1.5">
+    <div className="grid gap-2">
       <div className="flex items-center justify-between gap-3">
         <Label htmlFor={id}>External URL</Label>
-        <span className="text-[0.65rem] tabular-nums text-muted-foreground">
+        <span className="text-xs tabular-nums text-muted-foreground">
           {MAX_EXTERNAL_URL_CHARACTERS - draft.length} remaining
         </span>
       </div>
@@ -137,12 +137,10 @@ export function CardInspector({ node, session, disabled }: CardInspectorProps) {
   };
 
   return (
-    <div className="grid content-start gap-5 p-4">
+    <div className="grid content-start gap-4 p-4">
       <div>
-        <p className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          {node.kind} card
-        </p>
-        <p className="mt-1 truncate text-sm font-semibold">{node.title || 'Untitled card'}</p>
+        <p className="text-xs font-medium capitalize text-muted-foreground">{node.kind} card</p>
+        <p className="mt-1 break-words text-sm font-semibold">{node.title || 'Untitled card'}</p>
       </div>
       <ProductTextField
         session={session}
@@ -221,7 +219,7 @@ export function CardInspector({ node, session, disabled }: CardInspectorProps) {
           rows={10}
         />
       )}
-      <p className="text-[0.65rem] leading-4 text-muted-foreground">
+      <p className="text-xs leading-4 text-muted-foreground">
         Escape cancels an invalid draft. Enter finishes a single-line field; use Ctrl or Command +
         Enter for multiline fields.
       </p>

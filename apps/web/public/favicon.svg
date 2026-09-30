@@ -1,5 +1,26 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="14" height="14" x="2" y="2" rx="3" fill="#2563eb"/>
-  <rect width="12" height="12" x="18" y="3" rx="2" fill="none" stroke="#2563eb" stroke-width="2"/>
-  <rect width="28" height="12" x="2" y="18" rx="3" fill="#1f2937"/>
+  <style>
+    :root {
+      --primary: #3158c9;
+      --foreground: #202a34;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --primary: #92b1ff;
+        --foreground: #e5eaf0;
+      }
+    }
+  </style>
+  <rect width="14" height="14" x="2" y="2" rx="3" fill="var(--primary)" />
+  <rect
+    width="12"
+    height="12"
+    x="18"
+    y="3"
+    rx="2"
+    fill="none"
+    stroke="var(--primary)"
+    stroke-width="2"
+  />
+  <rect width="28" height="12" x="2" y="18" rx="3" fill="var(--foreground)" />
 </svg>

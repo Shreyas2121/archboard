@@ -202,12 +202,12 @@ export function ProductTextField({
   } as const;
 
   return (
-    <div className="grid gap-1.5">
+    <div className="grid gap-2">
       <div className="flex items-center justify-between gap-3">
         <Label htmlFor={inputId}>{label}</Label>
         <span
           className={cn(
-            'text-[0.65rem] tabular-nums text-muted-foreground',
+            'text-xs tabular-nums text-muted-foreground',
             draftLength > limit && 'text-destructive',
           )}
           id={`${inputId}-help`}

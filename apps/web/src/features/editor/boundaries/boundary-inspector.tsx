@@ -24,12 +24,10 @@ export function BoundaryInspector({
   onNotice,
 }: BoundaryInspectorProps) {
   return (
-    <div className="grid content-start gap-5 p-4">
+    <div className="grid content-start gap-4 p-4">
       <div>
-        <p className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          Boundary
-        </p>
-        <p className="mt-1 truncate text-sm font-semibold">
+        <p className="text-xs font-medium capitalize text-muted-foreground">Boundary</p>
+        <p className="mt-1 break-words text-sm font-semibold">
           {boundary.title || 'Untitled boundary'}
         </p>
       </div>
@@ -59,7 +57,7 @@ export function BoundaryInspector({
           }
         }}
       />
-      <p className="rounded-lg border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
+      <p className="border-t pt-3 text-xs leading-5 text-muted-foreground">
         Boundaries are visual groupings only. Moving or resizing one never moves cards inside it;
         overlap and nesting have no semantic meaning.
       </p>

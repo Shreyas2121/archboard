@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { CheckCircle2, Download, ShieldAlert, TriangleAlert } from 'lucide-react';
 import type { PendingAccountBoard } from '@archboard/sync-client';
 
 import { Button } from '@/components/ui/button';
@@ -54,9 +55,12 @@ export function PendingChangesDialog({
         if (!next && !busy) onCancel();
       }}
     >
-      <DialogContent showCloseButton={false} className="sm:max-w-lg">
+      <DialogContent showCloseButton={false} className="sm:max-w-lg" aria-busy={busy}>
         <DialogHeader>
-          <DialogTitle>Preserve changes before you {action}</DialogTitle>
+          <DialogTitle className="flex items-start gap-2">
+            <ShieldAlert className="mt-1 size-5 shrink-0 text-status-warning" aria-hidden="true" />
+            <span>Preserve changes before you {action}</span>
+          </DialogTitle>
           <DialogDescription>
             {boards.length} {boards.length === 1 ? 'board has' : 'boards have'} {updateCount}{' '}
             changes saved on this device without server receipts. Retaining leaves private board
@@ -64,22 +68,50 @@ export function PendingChangesDialog({
             access to this browser profile may still be able to recover that local data.
           </DialogDescription>
         </DialogHeader>
-        <p className="text-sm text-muted-foreground">
-          Download one recovery file containing the graphs and exact queued update bytes before
-          choosing to clear. Check that the download completed. Clearing deletes only these board
-          namespaces on this device.
-        </p>
+        <section
+          className="grid gap-3 rounded-lg border bg-surface-panel p-3"
+          aria-label="Recovery before clearing"
+        >
+          <p className="text-sm leading-5 text-muted-foreground">
+            Download one recovery file containing the graphs and exact queued update bytes before
+            choosing to clear. Check that the download completed. Clearing deletes only these board
+            namespaces on this device.
+          </p>
+          <Button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                setExported(false);
+                await downloadPendingWork(boards);
+                setExported(true);
+              }, 'Recovery export failed. Local copies were retained.')
+            }
+          >
+            <Download /> Download recovery
+          </Button>
+        </section>
         {error && (
-          <p className="text-sm text-destructive" role="alert">
-            {error}
+          <p
+            className="flex items-start gap-2 rounded-control border bg-status-danger-surface p-3 text-sm text-destructive"
+            role="alert"
+          >
+            <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 break-words">{error}</span>
           </p>
         )}
         {exported && (
-          <p className="text-sm" role="status">
+          <p className="flex items-start gap-2 text-sm text-status-success" role="status">
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
             Recovery download requested. Check the file before clearing.
           </p>
         )}
-        <DialogFooter className="sm:flex-wrap">
+        {busy && (
+          <p className="text-xs text-muted-foreground" role="status">
+            Finishing this action…
+          </p>
+        )}
+        <DialogFooter className="flex-col sm:grid sm:grid-cols-2">
           <Button type="button" variant="outline" disabled={busy} onClick={onCancel}>
             Cancel
           </Button>
@@ -93,21 +125,8 @@ export function PendingChangesDialog({
           </Button>
           <Button
             type="button"
-            variant="outline"
-            disabled={busy}
-            onClick={() =>
-              void run(async () => {
-                setExported(false);
-                await downloadPendingWork(boards);
-                setExported(true);
-              }, 'Recovery export failed. Local copies were retained.')
-            }
-          >
-            Download recovery
-          </Button>
-          <Button
-            type="button"
             variant="destructive"
+            className="h-auto min-h-9 whitespace-normal sm:col-span-2"
             disabled={busy || !exported}
             onClick={() => void run(onClear, 'Local copies could not be cleared.')}
           >

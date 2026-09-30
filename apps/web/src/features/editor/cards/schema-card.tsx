@@ -16,7 +16,7 @@ export function SchemaCard({ node, selected }: SchemaCardProps) {
         <CardTitle>{node.title}</CardTitle>
       </header>
       <pre
-        className="nodrag nowheel mt-3 min-h-0 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-2 font-mono text-[0.65rem] leading-4"
+        className="nodrag nowheel min-h-0 min-w-0 overflow-auto whitespace-pre-wrap rounded-md border bg-field px-2 py-1 font-mono text-xs leading-[18px] focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2"
         aria-label={`${node.title || 'Schema'} body`}
         tabIndex={0}
       >

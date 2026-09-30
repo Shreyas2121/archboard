@@ -129,8 +129,13 @@ export function BoardDialog({
           }
         }}
         showCloseButton={!busy}
+        className={editsText ? 'sm:max-w-lg' : 'sm:max-w-md'}
       >
-        <form onSubmit={(event) => void submit(event)} className="grid gap-4">
+        <form
+          onSubmit={(event) => void submit(event)}
+          className="grid gap-6"
+          aria-describedby={error ? 'board-action-error' : undefined}
+        >
           <DialogHeader>
             <DialogTitle>{ACTION_LABELS[action]}</DialogTitle>
             <DialogDescription>
@@ -146,8 +151,8 @@ export function BoardDialog({
             </DialogDescription>
           </DialogHeader>
           {editsText ? (
-            <>
-              <div className="grid gap-1.5">
+            <div className="grid gap-4">
+              <div className="grid gap-2">
                 <Label htmlFor="board-title">Title</Label>
                 <Input
                   id="board-title"
@@ -158,7 +163,7 @@ export function BoardDialog({
                 />
               </div>
               {action !== 'duplicate' ? (
-                <div className="grid gap-1.5">
+                <div className="grid gap-2">
                   <Label htmlFor="board-description">Description (optional)</Label>
                   <Textarea
                     id="board-description"
@@ -168,10 +173,10 @@ export function BoardDialog({
                   />
                 </div>
               ) : null}
-            </>
+            </div>
           ) : null}
           {error ? (
-            <p role="alert" className="text-sm text-destructive">
+            <p id="board-action-error" role="alert" className="text-sm text-destructive">
               {error}
             </p>
           ) : null}

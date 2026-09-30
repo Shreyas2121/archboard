@@ -15,6 +15,7 @@ import { SELECTION_KINDS } from '@/features/editor/state';
 import { cn } from '@/lib/utils';
 
 import type { EditorInspectorProps } from './editor-composition-types';
+import { EditorInspectorSection } from './editor-inspector-section';
 export function EditorInspector({
   inspectorOpen,
   actions,
@@ -42,7 +43,7 @@ export function EditorInspector({
   return (
     <>
       <Collapsible
-        className="min-h-0 overflow-hidden border-l bg-card max-md:hidden"
+        className="min-h-0 overflow-hidden border-l bg-surface-panel max-md:hidden"
         open={inspectorOpen}
       >
         <div
@@ -58,17 +59,9 @@ export function EditorInspector({
           >
             {inspectorOpen ? <PanelRightClose /> : <PanelRightOpen />}
           </IconButton>
-          {inspectorOpen && (
-            <div>
-              <p className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                Details
-              </p>
-              <h2 className="text-sm font-semibold">Inspector</h2>
-            </div>
-          )}
+          {inspectorOpen && <h2 className="text-sm font-semibold">Properties</h2>}
         </div>
         <CollapsibleContent className="h-[calc(100%-3.5rem)] overflow-y-auto">
-          <EditorActionsPanel actions={editorCommands} disabled={!viewState.editable} />
           {selectedNode !== null && session !== null && projection !== null ? (
             <div>
               <CardInspector
@@ -77,21 +70,25 @@ export function EditorInspector({
                 session={session}
                 disabled={!viewState.editable}
               />
-              <SelectionGeometryPanel
-                projection={projection}
-                selection={selection}
-                session={session}
-                disabled={!viewState.editable}
-                onNotice={setConnectionNotice}
-              />
-              <div className="border-t p-4">
-                <KeyboardConnectionFlow
-                  nodes={projection.nodes}
-                  initialSourceId={selectedNode.id}
+              <EditorInspectorSection title="Geometry">
+                <SelectionGeometryPanel
+                  projection={projection}
+                  selection={selection}
+                  session={session}
                   disabled={!viewState.editable}
-                  onCreate={createConnection}
+                  onNotice={setConnectionNotice}
                 />
-              </div>
+              </EditorInspectorSection>
+              <EditorInspectorSection title="Connections">
+                <div className="px-4 pb-4">
+                  <KeyboardConnectionFlow
+                    nodes={projection.nodes}
+                    initialSourceId={selectedNode.id}
+                    disabled={!viewState.editable}
+                    onCreate={createConnection}
+                  />
+                </div>
+              </EditorInspectorSection>
             </div>
           ) : selectedEdge !== null && session !== null && projection !== null ? (
             <EdgeInspector
@@ -111,41 +108,47 @@ export function EditorInspector({
                 disabled={!viewState.editable}
                 onNotice={setConnectionNotice}
               />
-              <SelectionGeometryPanel
-                projection={projection}
-                selection={selection}
-                session={session}
-                disabled={!viewState.editable}
-                onNotice={setConnectionNotice}
-              />
+              <EditorInspectorSection title="Geometry">
+                <SelectionGeometryPanel
+                  projection={projection}
+                  selection={selection}
+                  session={session}
+                  disabled={!viewState.editable}
+                  onNotice={setConnectionNotice}
+                />
+              </EditorInspectorSection>
             </div>
           ) : session !== null &&
             projection !== null &&
             selection.some(
               ({ kind }) => kind === SELECTION_KINDS.NODE || kind === SELECTION_KINDS.BOUNDARY,
             ) ? (
-            <SelectionGeometryPanel
-              projection={projection}
-              selection={selection}
-              session={session}
-              disabled={!viewState.editable}
-              onNotice={setConnectionNotice}
-            />
+            <>
+              <div className="p-4 text-sm font-semibold">{selection.length} selected</div>
+              <EditorInspectorSection title="Geometry">
+                <SelectionGeometryPanel
+                  projection={projection}
+                  selection={selection}
+                  session={session}
+                  disabled={!viewState.editable}
+                  onNotice={setConnectionNotice}
+                />
+              </EditorInspectorSection>
+            </>
           ) : (
-            <div className="grid h-full place-items-center p-5">
+            <div className="grid place-items-center px-4 py-6">
               <div className="grid max-w-52 justify-items-center text-center">
-                <Scan className="mb-4 size-7 text-muted-foreground" aria-hidden="true" />
+                <Scan className="mb-3 size-5 text-muted-foreground" aria-hidden="true" />
                 <h3 className="text-sm font-semibold">
                   {selection.length === 0 ? 'Nothing selected' : `${selection.length} selected`}
                 </h3>
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  {selection.length === 1
-                    ? 'Editing for this element arrives with its dedicated tool.'
-                    : 'Select one card on the canvas to inspect its properties.'}
+                  Select a card, connection, or boundary to inspect its properties.
                 </p>
               </div>
             </div>
           )}
+          <EditorActionsPanel actions={editorCommands} disabled={!viewState.editable} />
         </CollapsibleContent>
       </Collapsible>
     </>

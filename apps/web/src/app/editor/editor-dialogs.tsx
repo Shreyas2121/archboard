@@ -57,7 +57,7 @@ export function EditorDialogs({
           if (!open) editorCommands.cancelDelete();
         }}
       >
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Delete selected objects?</DialogTitle>
             <DialogDescription>
@@ -86,6 +86,7 @@ export function EditorDialogs({
         }}
       >
         <DialogContent
+          className="sm:max-w-md"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             resetButtonRef.current?.focus();
@@ -141,7 +142,7 @@ export function EditorDialogs({
           }
         }}
       >
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Reload the server version?</DialogTitle>
             <DialogDescription>
@@ -189,6 +190,7 @@ export function EditorDialogs({
         onOpenChange={(open) => (open ? actions.openDialog('help') : actions.closeDialog())}
       >
         <DialogContent
+          className="sm:max-w-xl"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             helpButtonRef.current?.focus();
@@ -201,49 +203,65 @@ export function EditorDialogs({
             </DialogDescription>
           </DialogHeader>
           <dl className="grid gap-2">
-            <div className="flex items-center justify-between gap-8 border-b py-2">
+            <div className="flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start border-b py-2">
               <dt>Pan canvas</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">Space + drag</dd>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs tabular-nums">
+                Space + drag
+              </dd>
             </div>
-            <div className="flex items-center justify-between gap-8 border-b py-2">
+            <div className="flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start border-b py-2">
               <dt>Zoom</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">Ctrl + scroll</dd>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs tabular-nums">
+                Ctrl + scroll
+              </dd>
             </div>
-            <div className="flex items-center justify-between gap-8 py-2">
+            <div className="flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start py-2">
               <dt>Clear selection</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">Escape</dd>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs tabular-nums">
+                Escape
+              </dd>
             </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
+            <div className="flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start border-t py-2">
               <dt>Delete selection</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">Delete</dd>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs tabular-nums">
+                Delete
+              </dd>
             </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
+            <div className="flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start border-t py-2">
               <dt>Duplicate</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs tabular-nums">
                 {shortcutModifier}+D
               </dd>
             </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
+            <div className="flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start border-t py-2">
               <dt>Copy / paste selection</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs tabular-nums">
                 {shortcutModifier}+C / {shortcutModifier}+V
               </dd>
             </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
+            <div className="flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start border-t py-2">
               <dt>Undo / redo edits</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs tabular-nums">
                 {shortcutModifier}+Z / {shortcutModifier}+Shift+Z
               </dd>
             </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
+            <div className="flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start border-t py-2">
               <dt>Fit content / zoom</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">F / + / -</dd>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs tabular-nums">
+                F / + / -
+              </dd>
             </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
+            <div className="flex items-center justify-between gap-3 max-sm:flex-col max-sm:items-start border-t py-2">
               <dt>Open this dialog</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">?</dd>
+              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs tabular-nums">
+                ?
+              </dd>
             </div>
           </dl>
+          <p className="text-xs leading-5 text-muted-foreground">
+            Structural commands are excluded from Undo. Deleted objects can be restored until
+            reload.
+          </p>
           <DialogFooter showCloseButton />
         </DialogContent>
       </Dialog>

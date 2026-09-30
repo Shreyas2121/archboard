@@ -13,20 +13,18 @@ import type { EditorActionsPanelProps } from './history-types';
 
 export function EditorActionsPanel({ actions, disabled }: EditorActionsPanelProps) {
   return (
-    <section className="grid gap-3 border-b p-4" aria-label="Selection and clipboard actions">
+    <section className="grid gap-3 border-t p-4" aria-label="Selection and clipboard actions">
       <div>
-        <p className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          Commands
-        </p>
-        <p className="mt-1 text-[0.65rem] leading-4 text-muted-foreground">
+        <p className="text-xs font-medium capitalize text-muted-foreground">Object actions</p>
+        <p className="mt-1 text-xs leading-4 text-muted-foreground">
           Structural commands are excluded from Undo. Deleted objects can be restored until reload.
         </p>
       </div>
       <div className="grid grid-cols-2 gap-2">
         <Button
           type="button"
-          size="sm"
-          variant="outline"
+          size="compact"
+          variant="ghost"
           disabled={disabled || !actions.canCopySelection}
           onClick={actions.duplicateSelection}
         >
@@ -34,8 +32,8 @@ export function EditorActionsPanel({ actions, disabled }: EditorActionsPanelProp
         </Button>
         <Button
           type="button"
-          size="sm"
-          variant="outline"
+          size="compact"
+          variant="ghost"
           disabled={!actions.canCopySelection}
           onClick={() => void actions.copySelection()}
         >
@@ -43,8 +41,8 @@ export function EditorActionsPanel({ actions, disabled }: EditorActionsPanelProp
         </Button>
         <Button
           type="button"
-          size="sm"
-          variant="outline"
+          size="compact"
+          variant="ghost"
           disabled={disabled}
           onClick={() => void actions.pasteSelection()}
         >
@@ -52,8 +50,8 @@ export function EditorActionsPanel({ actions, disabled }: EditorActionsPanelProp
         </Button>
         <Button
           type="button"
-          size="sm"
-          variant="outline"
+          size="compact"
+          variant="ghost"
           disabled={disabled}
           onClick={() => void actions.pasteAsNote()}
         >
@@ -61,7 +59,7 @@ export function EditorActionsPanel({ actions, disabled }: EditorActionsPanelProp
         </Button>
         <Button
           type="button"
-          size="sm"
+          size="compact"
           variant="destructive"
           disabled={disabled || !actions.canCopySelection}
           onClick={actions.requestDelete}
@@ -70,8 +68,8 @@ export function EditorActionsPanel({ actions, disabled }: EditorActionsPanelProp
         </Button>
         <Button
           type="button"
-          size="sm"
-          variant="outline"
+          size="compact"
+          variant="ghost"
           disabled={disabled || !actions.canRestoreDeletion}
           onClick={actions.restoreDeletion}
         >

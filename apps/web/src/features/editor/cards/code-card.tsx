@@ -15,12 +15,15 @@ export function CodeCard({ node, selected }: CodeCardProps) {
       <header className="flex min-w-0 items-center gap-2">
         <Code2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         <CardTitle>{node.title}</CardTitle>
-        <span className="ml-auto rounded bg-muted px-1.5 py-0.5 font-mono text-[0.6rem] text-muted-foreground">
+        <span
+          className="ml-auto max-w-20 shrink-0 truncate rounded bg-muted px-1.5 py-0.5 font-mono text-xs leading-4 text-muted-foreground"
+          title={node.content.language}
+        >
           {node.content.language}
         </span>
       </header>
       <pre
-        className="nodrag nowheel mt-3 min-h-0 overflow-auto rounded-md bg-muted/60 p-2 font-mono text-[0.65rem] leading-4"
+        className="nodrag nowheel min-h-0 min-w-0 overflow-auto rounded-md border bg-code-surface px-2 py-1 font-mono text-xs leading-[18px] focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2"
         aria-label={`${node.title || 'Code'} source`}
         tabIndex={0}
       >

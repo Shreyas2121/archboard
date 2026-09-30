@@ -138,13 +138,9 @@ export function SelectionGeometryPanel({
   };
 
   return (
-    <section className="grid gap-4 border-t p-4" aria-label="Selection geometry">
+    <section className="grid gap-4 px-4 pb-4" aria-label="Selection geometry">
       <div>
-        <p className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-          {selection.length} selected
-        </p>
-        <h3 className="mt-1 text-xs font-semibold">Geometry</h3>
-        <p className="mt-1 text-[0.65rem] leading-4 text-muted-foreground">
+        <p className="text-xs leading-5 text-muted-foreground">
           Values are absolute world coordinates. Pointer gestures snap to the 16-unit grid; hold Alt
           to bypass snapping.
         </p>
@@ -153,8 +149,16 @@ export function SelectionGeometryPanel({
         <>
           <div className="grid grid-cols-2 gap-3">
             {(['x', 'y', 'width', 'height'] as const).map((field) => (
-              <div className="grid gap-1.5" key={field}>
-                <Label htmlFor={`geometry-${field}`}>{field.toUpperCase()}</Label>
+              <div className="grid gap-2" key={field}>
+                <Label htmlFor={`geometry-${field}`}>
+                  {field === 'x'
+                    ? 'X'
+                    : field === 'y'
+                      ? 'Y'
+                      : field === 'width'
+                        ? 'Width'
+                        : 'Height'}
+                </Label>
                 <Input
                   id={`geometry-${field}`}
                   type="number"
@@ -173,7 +177,7 @@ export function SelectionGeometryPanel({
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1.5">
+            <div className="grid gap-2">
               <Label htmlFor="selection-delta-x">Move X</Label>
               <Input
                 id="selection-delta-x"
@@ -183,7 +187,7 @@ export function SelectionGeometryPanel({
                 onChange={(event) => setDeltaX(event.target.value)}
               />
             </div>
-            <div className="grid gap-1.5">
+            <div className="grid gap-2">
               <Label htmlFor="selection-delta-y">Move Y</Label>
               <Input
                 id="selection-delta-y"
@@ -207,7 +211,8 @@ export function SelectionGeometryPanel({
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
+                variant="ghost"
+                className="h-auto min-h-8 whitespace-normal px-2 py-1 text-xs"
                 disabled={disabled}
                 key={value}
                 onClick={() => align(value)}

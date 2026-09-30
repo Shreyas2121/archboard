@@ -40,7 +40,7 @@ interface ConnectionSelectProps {
 
 function ConnectionSelect({ id, label, value, options, onChange }: ConnectionSelectProps) {
   return (
-    <div className="grid gap-1.5" onKeyDown={(event) => event.stopPropagation()}>
+    <div className="grid gap-2" onKeyDown={(event) => event.stopPropagation()}>
       <Label htmlFor={id}>{label}</Label>
       <Select value={value} onValueChange={onChange}>
         <SelectTrigger className="w-full" id={id}>
@@ -127,7 +127,7 @@ export function KeyboardConnectionFlow({
           <Cable /> Connect cards
         </Button>
       </DialogTrigger>
-      <p className="mt-2 text-[0.65rem] leading-4 text-muted-foreground">
+      <p className="mt-2 text-xs leading-4 text-muted-foreground">
         {nodes.length < MINIMUM_CONNECTION_NODES
           ? 'Create another card to enable keyboard connection.'
           : 'Keyboard flow: choose endpoints, review, then create.'}

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
+import { CloudOff, LoaderCircle } from 'lucide-react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { applicationIdSchema } from '@archboard/contracts';
 
 import { EditorShell } from '@/app/editor/editor-shell';
+import { PageState } from '@/app/components/page-state';
 import { useNarrowScreen } from '@/app/hooks/use-narrow-screen';
 import { Button } from '@/components/ui/button';
 import { SessionState, useCurrentUser } from '@/features/auth';
@@ -40,15 +42,17 @@ function OfflineBoardState({
 }) {
   if (state === 'checking')
     return (
-      <main
-        className="mx-auto grid min-h-dvh max-w-xl place-content-center px-6 text-center"
+      <PageState
+        title="Opening cached board…"
+        description="Checking this device’s board data and writer access."
         role="status"
-      >
-        <h1 className="text-2xl font-semibold">Opening cached board…</h1>
-        <p className="mt-3 text-muted-foreground">
-          Checking this device’s board data and writer access.
-        </p>
-      </main>
+        icon={
+          <LoaderCircle
+            className="size-5 animate-spin text-muted-foreground motion-reduce:animate-none"
+            aria-hidden="true"
+          />
+        }
+      />
     );
   const title =
     state === 'no-account'
@@ -63,24 +67,22 @@ function OfflineBoardState({
         ? 'This board has no usable local document for the selected account. Browser storage may have been cleared or evicted. Reconnect and authenticate to load it again; this device cache is not a backup.'
         : 'This device could not read the local board cache. Your stored data was left unchanged.';
   return (
-    <main
-      className="mx-auto grid min-h-dvh max-w-xl place-content-center justify-items-center px-6 text-center"
+    <PageState
+      title={title}
+      description={detail}
       role="status"
+      icon={<CloudOff className="size-6 text-muted-foreground" aria-hidden="true" />}
     >
-      <h1 className="text-2xl font-semibold">{title}</h1>
-      <p className="mt-3 text-muted-foreground">{detail}</p>
-      <div className="mt-6 flex flex-wrap justify-center gap-3">
-        <Button asChild>
-          <Link to="/boards">Cached boards</Link>
-        </Button>
-        <Button type="button" variant="outline" onClick={onRetry}>
-          {state === 'cache-error' ? 'Retry local cache' : 'Retry connection'}
-        </Button>
-        <Button asChild variant="ghost">
-          <Link to="/demo">Local demo</Link>
-        </Button>
-      </div>
-    </main>
+      <Button asChild>
+        <Link to="/boards">Cached boards</Link>
+      </Button>
+      <Button type="button" variant="outline" onClick={onRetry}>
+        {state === 'cache-error' ? 'Retry local cache' : 'Retry connection'}
+      </Button>
+      <Button asChild variant="ghost">
+        <Link to="/demo">Local demo</Link>
+      </Button>
+    </PageState>
   );
 }
 

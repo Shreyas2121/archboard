@@ -1,16 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-export const THEME_PREFERENCES = {
-  LIGHT: 'light',
-  DARK: 'dark',
-  SYSTEM: 'system',
-} as const;
+import { SYSTEM_DARK_QUERY, THEME_PREFERENCES } from '@/platform/theme/theme-preferences';
+import type { ResolvedTheme, ThemePreference } from '@/platform/theme/theme-preferences';
+import { themePreferenceStorage } from '@/platform/theme/theme-preference-storage';
 
-export type ThemePreference = (typeof THEME_PREFERENCES)[keyof typeof THEME_PREFERENCES];
-export type ResolvedTheme = Exclude<ThemePreference, 'system'>;
-
-const THEME_STORAGE_KEY = 'archboard.theme';
-const SYSTEM_DARK_QUERY = '(prefers-color-scheme: dark)';
+export { THEME_PREFERENCES } from '@/platform/theme/theme-preferences';
+export type { ResolvedTheme, ThemePreference } from '@/platform/theme/theme-preferences';
 
 interface ThemeContextValue {
   readonly preference: ThemePreference;
@@ -20,15 +15,6 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
-
-function isThemePreference(value: string | null): value is ThemePreference {
-  return Object.values(THEME_PREFERENCES).some((theme) => theme === value);
-}
-
-function storedPreference(): ThemePreference {
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  return isThemePreference(stored) ? stored : THEME_PREFERENCES.SYSTEM;
-}
 
 function resolveTheme(preference: ThemePreference): ResolvedTheme {
   if (preference !== THEME_PREFERENCES.SYSTEM) return preference;
@@ -46,11 +32,11 @@ function applyTheme(preference: ThemePreference): ResolvedTheme {
 }
 
 export function initializeTheme(): void {
-  applyTheme(storedPreference());
+  applyTheme(themePreferenceStorage.read());
 }
 
 export function ThemeProvider({ children }: { readonly children: ReactNode }) {
-  const [preference, setPreferenceState] = useState<ThemePreference>(storedPreference);
+  const [preference, setPreferenceState] = useState<ThemePreference>(themePreferenceStorage.read);
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => applyTheme(preference));
 
   useEffect(() => {
@@ -63,7 +49,8 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }) {
 
   const value = useMemo<ThemeContextValue>(() => {
     const setPreference = (nextPreference: ThemePreference): void => {
-      window.localStorage.setItem(THEME_STORAGE_KEY, nextPreference);
+      themePreferenceStorage.write(nextPreference);
+      setResolvedTheme(applyTheme(nextPreference));
       setPreferenceState(nextPreference);
     };
     const cyclePreference = (): void => {

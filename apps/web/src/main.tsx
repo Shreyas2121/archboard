@@ -22,11 +22,15 @@ if (!rootElement) {
 createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <SessionBoundary />
       <ThemeProvider>
         <TooltipProvider>
-          <App />
-          <AppUpdatePrompt />
+          <SessionBoundary />
+          <div className="flex h-dvh flex-col">
+            <AppUpdatePrompt />
+            <div className="min-h-0 flex-1">
+              <App />
+            </div>
+          </div>
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>

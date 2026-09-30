@@ -25,14 +25,18 @@ export function PresenceOverlay({
   ]);
   return (
     <>
-      <Panel position="top-right" className="pointer-events-none flex flex-col gap-1">
+      <Panel
+        position="top-right"
+        className="pointer-events-none flex max-w-[calc(100%-32px)] flex-col gap-1"
+      >
         {peers.map((peer) => (
           <span
             key={peer.connectionId}
             className={cn(
-              'rounded-md border bg-card px-2 py-1 text-xs shadow-sm',
+              'truncate rounded-md border bg-popover px-2 py-1 text-xs leading-4 shadow-sm',
               PRESENCE_COLORS[peer.user.color],
             )}
+            title={`${peer.user.name || 'Collaborator'} · ${peer.presence.selectedCount ?? peer.presence.selectedIds.length} selected`}
           >
             {peer.user.name || 'Collaborator'} ·{' '}
             {peer.presence.selectedCount ?? peer.presence.selectedIds.length} selected
@@ -57,9 +61,13 @@ export function PresenceOverlay({
                 <div
                   key={id}
                   data-presence-selection={id}
-                  className="absolute rounded-lg border-2 border-current opacity-60"
+                  className="absolute rounded-lg border-2 border-dashed border-current"
                   style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
-                />
+                >
+                  <span className="absolute bottom-full left-0 max-w-48 truncate rounded-t border border-current bg-popover px-1 text-xs leading-4">
+                    {peer.user.name || 'Collaborator'}
+                  </span>
+                </div>
               );
             })}
             {peer.presence.dragPreview?.positions.map(({ id, position }) => {
@@ -70,7 +78,7 @@ export function PresenceOverlay({
                 <div
                   key={id}
                   data-presence-preview={id}
-                  className="absolute rounded-lg border-2 border-dashed border-current bg-card/40"
+                  className="absolute rounded-lg border-2 border-dotted border-current bg-card/20"
                   style={{
                     left: position.x,
                     top: position.y,
@@ -78,8 +86,8 @@ export function PresenceOverlay({
                     height: rect.height,
                   }}
                 >
-                  <span className="rounded bg-card px-1 text-xs">
-                    {peer.user.name || 'Collaborator'}
+                  <span className="absolute bottom-full left-0 max-w-48 truncate rounded-t border border-current bg-popover px-1 text-xs leading-4">
+                    {peer.user.name || 'Collaborator'} · moving
                   </span>
                 </div>
               );
@@ -92,7 +100,7 @@ export function PresenceOverlay({
                 style={{ left: peer.presence.cursor.x, top: peer.presence.cursor.y }}
               >
                 <MousePointer2 className="size-4 fill-current" aria-hidden="true" />
-                <span className="whitespace-nowrap rounded bg-card px-1 text-xs">
+                <span className="max-w-48 truncate whitespace-nowrap rounded border bg-popover px-1 text-xs leading-4 shadow-sm">
                   {peer.user.name || 'Collaborator'}
                 </span>
               </div>

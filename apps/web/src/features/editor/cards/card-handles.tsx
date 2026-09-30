@@ -24,7 +24,8 @@ const SOURCE_HANDLE_CLASSES: Readonly<Record<GraphHandle, string>> = {
   [HANDLES.LEFT]: '!top-[calc(50%-0.3rem)]',
 };
 
-const HANDLE_CLASS = '!z-10 !size-2.5 !border-2 !border-background !bg-primary';
+const HANDLE_CLASS =
+  '!z-10 !size-2.5 !border-2 !border-card !bg-edge hover:!bg-primary focus-visible:!bg-primary focus-visible:outline-2 focus-visible:outline-ring group-data-[selected=true]:!bg-primary [&.connecting]:!bg-primary [&.valid]:!bg-primary';
 
 export function CardHandles() {
   return Object.values(HANDLES).flatMap((handle) => [

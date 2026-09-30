@@ -8,6 +8,7 @@ import {
   type Rect as GraphRect,
 } from '@archboard/contracts';
 import { MarkerType, type Edge, type Node, type Rect } from '@xyflow/react';
+import { CANVAS_EDGE_LABEL_PADDING } from './canvas-config';
 
 export interface CanvasNodeData extends Record<string, unknown> {
   readonly node: GraphNode;
@@ -130,10 +131,15 @@ export class CanvasProjectionAdapter {
       targetHandle: edge.targetHandle,
       data: Object.freeze({ edge }),
       label: labelParts.join(' / '),
+      // React Flow owns the SVG label and markers; semantic variables follow the app theme.
+      labelStyle: { fontSize: 12, fill: 'var(--foreground)' },
+      labelBgStyle: { fill: 'var(--surface-canvas)' },
+      labelBgPadding: CANVAS_EDGE_LABEL_PADDING,
+      labelBgBorderRadius: 4,
       selected: false,
-      markerEnd: { type: MarkerType.ArrowClosed },
+      markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--edge)' },
       ...(edge.direction === EDGE_DIRECTIONS.BIDIRECTIONAL
-        ? { markerStart: { type: MarkerType.ArrowClosed } }
+        ? { markerStart: { type: MarkerType.ArrowClosed, color: 'var(--edge)' } }
         : {}),
       ...(edge.style === EDGE_STYLES.DASHED ? { style: { strokeDasharray: '6 5' } } : {}),
       selectable: true,

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { selectLocalAccount } from '@archboard/sync-client';
 import { BrandMark } from '@/app/components/brand-mark';
+import { PageState } from '@/app/components/page-state';
+import { ThemeControl } from '@/app/components/theme-control';
 import { Button } from '@/components/ui/button';
 import { SessionState, useCurrentUser } from '@/features/auth';
 import { SignOutControl } from '@/features/auth/sign-out-control';
@@ -31,13 +33,18 @@ export function BoardsEntryRoute() {
       const selected = selectLocalAccount(window.location.origin, { kind: 'network-unavailable' });
       if (selected) {
         return (
-          <div className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col px-5 sm:px-8">
+          <div className="mx-auto flex min-h-full w-full max-w-7xl flex-col px-5 sm:px-8">
             <header className="flex min-h-20 flex-wrap items-center justify-between gap-3 border-b border-border/70 py-3">
-              <Link className="flex items-center gap-2.5 font-semibold" to="/boards">
+              <Link
+                className="flex items-center gap-2.5 text-sm font-semibold tracking-tight"
+                to="/boards"
+                aria-label="Archboard boards"
+              >
                 <BrandMark />
                 <span>Archboard</span>
               </Link>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <ThemeControl />
                 <Button asChild type="button" variant="ghost" size="sm">
                   <Link to="/demo">Local demo</Link>
                 </Button>
@@ -54,25 +61,18 @@ export function BoardsEntryRoute() {
         );
       }
       return (
-        <main
-          className="mx-auto grid min-h-dvh max-w-xl place-content-center justify-items-center px-6 text-center"
+        <PageState
+          title="No account available offline"
+          description="We could not check your session, and this device has no selected account. Reconnect and sign in to see your boards."
           role="status"
         >
-          <BrandMark />
-          <h1 className="mt-6 text-3xl font-semibold">No account available offline</h1>
-          <p className="mt-3 text-center text-muted-foreground">
-            We could not check your session, and this device has no selected account. Reconnect and
-            sign in to see your boards.
-          </p>
-          <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <Button type="button" onClick={() => void session.refetch()}>
-              Retry session check
-            </Button>
-            <Button asChild variant="outline">
-              <Link to="/demo">Open local demo</Link>
-            </Button>
-          </div>
-        </main>
+          <Button type="button" size="lg" onClick={() => void session.refetch()}>
+            Retry session check
+          </Button>
+          <Button asChild variant="ghost" size="lg">
+            <Link to="/demo">Open local demo</Link>
+          </Button>
+        </PageState>
       );
     }
     return <SessionState state="error" onRetry={() => void session.refetch()} />;
@@ -80,28 +80,32 @@ export function BoardsEntryRoute() {
   if (session.data === null) {
     if (!wasAuthenticated) return <SessionState state="redirecting" />;
     return (
-      <main
-        className="mx-auto grid min-h-dvh max-w-xl place-content-center px-6 text-center"
+      <PageState
+        title="Your session expired"
+        description="Sign in again to view your boards."
         role="alert"
       >
-        <h1 className="text-2xl font-semibold">Your session expired</h1>
-        <p className="mt-3 text-muted-foreground">Sign in again to view your boards.</p>
-        <Button asChild className="mx-auto mt-6">
+        <Button asChild size="lg">
           <Link to="/" search={{ returnTo: '/boards' }}>
             Sign in again
           </Link>
         </Button>
-      </main>
+      </PageState>
     );
   }
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col px-5 sm:px-8">
+    <div className="mx-auto flex min-h-full w-full max-w-7xl flex-col px-5 sm:px-8">
       <header className="flex min-h-20 flex-wrap items-center justify-between gap-3 border-b border-border/70 py-3">
-        <Link className="flex items-center gap-2.5 font-semibold" to="/boards">
+        <Link
+          className="flex items-center gap-2.5 text-sm font-semibold tracking-tight"
+          to="/boards"
+          aria-label="Archboard boards"
+        >
           <BrandMark />
           <span>Archboard</span>
         </Link>
         <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+          <ThemeControl />
           <span
             className="max-w-40 truncate text-sm text-muted-foreground"
             title={session.data.name}
