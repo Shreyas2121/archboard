@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BrowserClipboard } from '@/platform/clipboard';
+import { EDITOR_CANCEL_GESTURES, shouldIgnoreEditorShortcut } from './editor-shortcuts';
 import { SELECTION_KINDS, type SelectionReference } from '@/features/editor/state';
 
 import { DELETE_CONFIRMATION_THRESHOLD, PASTE_OFFSET } from './history-constants';
@@ -16,20 +17,13 @@ import {
   serializeSelection,
 } from './selection-clipboard';
 
-function isEditableTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])') !==
-      null
-  );
-}
-
 function isEmptyPayload(payload: SelectionClipboardPayload): boolean {
   return payload.nodes.length + payload.edges.length + payload.boundaries.length === 0;
 }
 
 export function useEditorCommands(options: UseEditorCommandsOptions): EditorCommandActions {
   const {
+    shortcutsBlocked,
     editable,
     projection,
     selection,
@@ -44,13 +38,17 @@ export function useEditorCommands(options: UseEditorCommandsOptions): EditorComm
     setSelection,
     clearSelection,
   } = options;
-  const clipboard = useMemo(() => new BrowserClipboard(), [session]);
+  const clipboard = useMemo(() => new BrowserClipboard(), []);
   const pasteSequence = useRef({ text: '', count: 0 });
   const [pendingDeletion, setPendingDeletion] = useState<readonly SelectionReference[] | null>(
     null,
   );
 
-  useEffect(() => () => clipboard.clear(), [clipboard]);
+  useEffect(() => {
+    clipboard.clear();
+    pasteSequence.current = { text: '', count: 0 };
+    return () => clipboard.clear();
+  }, [clipboard, session]);
 
   const createFromPayload = useCallback(
     (payload: SelectionClipboardPayload, serialized: string): boolean => {
@@ -204,11 +202,14 @@ export function useEditorCommands(options: UseEditorCommandsOptions): EditorComm
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (isEditableTarget(event.target)) return;
+      if (shouldIgnoreEditorShortcut(event, document, shortcutsBlocked || pendingDeletion !== null))
+        return;
       const modifier = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
-      if (event.key === 'Escape') clearSelection();
-      else if (editable && (event.key === 'Delete' || event.key === 'Backspace')) requestDelete();
+      if (event.key === 'Escape') {
+        window.dispatchEvent(new Event(EDITOR_CANCEL_GESTURES));
+        clearSelection();
+      } else if (editable && (event.key === 'Delete' || event.key === 'Backspace')) requestDelete();
       else if (editable && modifier && key === 'd') duplicateSelection();
       else if (modifier && key === 'c') void copySelection();
       else if (editable && modifier && key === 'v') void pasteSelection();
@@ -224,6 +225,8 @@ export function useEditorCommands(options: UseEditorCommandsOptions): EditorComm
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
+    shortcutsBlocked,
+    pendingDeletion,
     clearSelection,
     copySelection,
     duplicateSelection,

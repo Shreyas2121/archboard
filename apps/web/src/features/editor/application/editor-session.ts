@@ -58,6 +58,7 @@ export const DEMO_BOARD_ID = '6f5eb829-0b42-4e62-8a8a-3db5176adf67';
 
 export interface EditorSessionSnapshot {
   readonly revision: number;
+  readonly textBindingGeneration: number;
   readonly writer: WriterSessionSnapshot;
   readonly projection: GraphProjection | null;
   readonly initializationError: boolean;
@@ -114,11 +115,16 @@ export class EditorSession {
   private deletionCapture: GraphProjection | null = null;
   private opening: Promise<void> | null = null;
   private closePromise: Promise<void> | null = null;
+  private closeRequested = false;
+  private textDocument: object | null = null;
+  private textEditable = false;
+  private textBindingGeneration = 0;
   private preparingDemo = false;
   private initializing = true;
   private updatePrepared = false;
   private updateStoppedSync = false;
   private snapshot: EditorSessionSnapshot;
+  private projectionGeneration = -1;
 
   public constructor(options: EditorSessionOptions) {
     this.board = options.board;
@@ -134,6 +140,7 @@ export class EditorSession {
     });
     this.snapshot = Object.freeze({
       revision: 0,
+      textBindingGeneration: 0,
       writer: this.writerSession.getSnapshot(),
       projection: null,
       initializationError: false,
@@ -150,10 +157,12 @@ export class EditorSession {
   }
 
   public open(): Promise<void> {
+    if (this.closeRequested) return this.opening ?? Promise.resolve();
     registerUpdateSession(this);
     this.opening ??= this.openInternal().catch(() => {
       this.snapshot = Object.freeze({
         revision: this.snapshot.revision + 1,
+        textBindingGeneration: this.getTextBindingGeneration(),
         writer: this.writerSession.getSnapshot(),
         projection: null,
         initializationError: true,
@@ -174,6 +183,8 @@ export class EditorSession {
 
   public getSnapshot = (): EditorSessionSnapshot => this.snapshot;
 
+  public getTextBindingGeneration = (): number => this.textBindingGeneration;
+
   public getStorageNamespace(): BoardStorageNamespace {
     return this.storageNamespace;
   }
@@ -192,6 +203,7 @@ export class EditorSession {
   }
 
   public canEdit(): boolean {
+    if (this.closeRequested) return false;
     if (this.updatePrepared) return false;
     if (!this.writerSession.getSnapshot().writable) return false;
     if (this.board === undefined) return true;
@@ -380,7 +392,7 @@ export class EditorSession {
     return binding === null ? null : accessGraphText(binding.document, target);
   }
 
-  public editText(target: GraphTextTarget, edit: TextEdit): void {
+  public editText(target: GraphTextTarget, edit: TextEdit | readonly TextEdit[]): void {
     this.executeMutation((document) => editGraphText(document, target, edit));
   }
 
@@ -392,8 +404,14 @@ export class EditorSession {
     this.executeMutation((document) => setComponentCategory(document, id, category));
   }
 
-  public setComponentExternalUrl(id: string, externalUrl: string | null): void {
-    this.executeMutation((document) => setComponentExternalUrl(document, id, externalUrl));
+  public setComponentExternalUrl(
+    id: string,
+    externalUrl: string | null,
+    expected?: string | null,
+  ): void {
+    this.executeMutation((document) =>
+      setComponentExternalUrl(document, id, externalUrl, expected),
+    );
   }
 
   public setCodeLanguage(id: string, language: CodeContent['language']): void {
@@ -419,6 +437,7 @@ export class EditorSession {
   }
 
   public close(): Promise<void> {
+    this.closeRequested = true;
     unregisterUpdateSession(this);
     this.closePromise ??= this.closeInternal();
     return this.closePromise;
@@ -464,7 +483,13 @@ export class EditorSession {
   private async openInternal(): Promise<void> {
     this.unsubscribeWriter = this.writerSession.subscribe(() => {
       this.refresh();
-      if (this.initializing || this.board === undefined || this.syncClient !== null) return;
+      if (
+        this.closeRequested ||
+        this.initializing ||
+        this.board === undefined ||
+        this.syncClient !== null
+      )
+        return;
       const binding = this.writerSession.getWritableBinding();
       if (binding !== null) {
         this.attachSyncClient(binding);
@@ -472,6 +497,7 @@ export class EditorSession {
       }
     });
     await this.writerSession.initialize();
+    if (this.closeRequested) return;
     this.hasLocalCopy = this.writerSession.hadStoredStateOnOpen();
     if (this.board !== undefined) {
       const binding = this.writerSession.getWritableBinding();
@@ -567,6 +593,12 @@ export class EditorSession {
     const writer = this.writerSession.getSnapshot();
     const binding = this.writerSession.getWritableBinding();
     const nextUndoDocument = binding?.document ?? null;
+    const editable = this.canEdit();
+    if (nextUndoDocument !== this.textDocument || editable !== this.textEditable) {
+      this.textDocument = nextUndoDocument;
+      this.textEditable = editable;
+      this.textBindingGeneration += 1;
+    }
 
     if (nextUndoDocument !== this.undoDocument) {
       this.undoManager?.destroy();
@@ -576,11 +608,22 @@ export class EditorSession {
 
     let projection: GraphProjection | null = null;
     if (writer.persistence !== null && !this.initializing) {
-      projection = this.writerSession.getProjection();
+      if (
+        this.projectionGeneration === writer.documentGeneration &&
+        this.snapshot.projection !== null
+      ) {
+        projection = this.snapshot.projection;
+      } else {
+        projection = this.writerSession.getProjection();
+        this.projectionGeneration = writer.documentGeneration;
+      }
+    } else {
+      this.projectionGeneration = -1;
     }
 
     this.snapshot = Object.freeze({
       revision: this.snapshot.revision + 1,
+      textBindingGeneration: this.textBindingGeneration,
       writer,
       projection,
       initializationError: false,
@@ -598,17 +641,45 @@ export class EditorSession {
   };
 
   private async closeInternal(): Promise<void> {
-    this.unsubscribeSync?.();
+    const errors: unknown[] = [];
+    const steps = [
+      async () => {
+        await this.opening;
+      },
+      () => {
+        this.unsubscribeSync?.();
+      },
+      () => {
+        this.syncClient?.stop();
+      },
+      () => {
+        this.unsubscribeWriter?.();
+      },
+      () => {
+        this.undoManager?.destroy();
+      },
+      () => this.writerSession.close(),
+    ];
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
     this.unsubscribeSync = null;
-    this.syncClient?.stop();
     this.syncClient = null;
-    this.unsubscribeWriter?.();
     this.unsubscribeWriter = null;
-    this.undoManager?.destroy();
     this.undoManager = null;
     this.undoDocument = null;
     this.deletionCapture = null;
-    await this.writerSession.close();
-    this.listeners.clear();
+    try {
+      this.refresh();
+    } catch (error) {
+      errors.push(error);
+    } finally {
+      this.listeners.clear();
+    }
+    if (errors.length > 0) throw errors[0];
   }
 }

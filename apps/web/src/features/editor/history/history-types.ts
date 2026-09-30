@@ -36,6 +36,7 @@ export interface EditorCommandActions {
 }
 
 export interface UseEditorCommandsOptions {
+  readonly shortcutsBlocked: boolean;
   readonly editable: boolean;
   readonly projection: GraphProjection | null;
   readonly selection: readonly SelectionReference[];

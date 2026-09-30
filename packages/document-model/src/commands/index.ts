@@ -1,5 +1,17 @@
 export * from './boundaries.js';
-export * from './batch.js';
+export {
+  createGraphObjects,
+  deleteGraphObjects,
+  rectanglesIntersect,
+  setGraphGeometry,
+  setNodePositions,
+  type BoundaryGeometryChange,
+  type DeleteGraphObjectsSelection,
+  type GeometryBatch,
+  type GraphObjectBatch,
+  type NodeGeometryChange,
+  type NodePositionChange,
+} from './batch.js';
 export * from './deletion.js';
 export * from './edges.js';
 export { GraphCommandError } from './error.js';

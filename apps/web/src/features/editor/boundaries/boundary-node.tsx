@@ -17,6 +17,7 @@ const COLOR_CLASSES: Readonly<Record<Boundary['color'], string>> = {
 export interface BoundaryCanvasData extends Record<string, unknown> {
   readonly boundary: Boundary;
   readonly editable: boolean;
+  readonly onResizeStart: (id: string) => void;
   readonly onResizeEnd: (id: string, rect: Rect) => void;
 }
 
@@ -40,6 +41,7 @@ export function BoundaryNode({ data, selected }: NodeProps<BoundaryCanvasNode>) 
         maxHeight={MAX_RECT_DIMENSION}
         handleClassName="!pointer-events-auto !size-3 !border-2 !border-background !bg-primary"
         lineClassName="!pointer-events-auto !border-primary"
+        onResizeStart={() => data.onResizeStart(data.boundary.id)}
         onResizeEnd={(_event, rect) => data.onResizeEnd(data.boundary.id, rect)}
       />
       <header className="boundary-drag-handle pointer-events-auto inline-flex cursor-move rounded-md bg-background/85 px-2 py-1 shadow-sm">

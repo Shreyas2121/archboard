@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ApiClientError } from '@/platform/api';
+import { ApiClientError, serverUnavailable } from '@/platform/api';
 import {
   BOARD_QUERY_KEY,
   BOARD_SEARCH_DELAY_MS,
@@ -26,7 +26,6 @@ import { CachedBoardDashboard } from './cached-board-dashboard';
 
 type Selection = { action: BoardAction; board: BoardSummary | null; intent: string };
 const LOADING_ROW_COUNT = 3;
-const HTTP_SERVER_ERROR = 500;
 
 export function BoardDashboard() {
   const queryClient = useQueryClient();
@@ -67,10 +66,7 @@ export function BoardDashboard() {
   const failure = boards.error;
   const expired = failure instanceof ApiClientError && failure.kind === 'unauthenticated';
   const networkDown = failure instanceof ApiClientError && failure.kind === 'network';
-  const serverUnavailable =
-    failure instanceof ApiClientError &&
-    (networkDown || (failure.kind === 'http' && (failure.status ?? 0) >= HTTP_SERVER_ERROR));
-  if (serverUnavailable) {
+  if (serverUnavailable(failure)) {
     return <CachedBoardDashboard onRetry={() => void boards.refetch()} />;
   }
   return (

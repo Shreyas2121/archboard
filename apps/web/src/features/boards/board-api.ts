@@ -31,8 +31,10 @@ export function listBoards(
   return apiRequest(`/boards${suffix}`, boardListResponseSchema, { signal });
 }
 
-export async function readBoard(id: string): Promise<BoardSummary> {
-  const response = await apiRequest(`/boards/${id}`, boardDetailResponseSchema);
+export async function readBoard(id: string, signal?: AbortSignal): Promise<BoardSummary> {
+  const response = await apiRequest(`/boards/${id}`, boardDetailResponseSchema, {
+    ...(signal === undefined ? {} : { signal }),
+  });
   return response.data;
 }
 

@@ -1,1 +1,7 @@
-export { ApiClientError, apiRequest, getCurrentUser, setUnauthorizedListener } from './api-client';
+export {
+  ApiClientError,
+  apiRequest,
+  getCurrentUser,
+  serverUnavailable,
+  setUnauthorizedListener,
+} from './api-client';

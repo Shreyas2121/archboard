@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { GraphProjection } from '@archboard/contracts';
 import { NODE_ALIGNMENTS, type GeometryBatch, type NodeAlignment } from '@archboard/document-model';
 
@@ -52,9 +52,17 @@ export function SelectionGeometryPanel({
     selectedNodes.length === 1 && selectedBoundaries.length === 0 ? selectedNodes[0] : null;
   const singleBoundary =
     selectedBoundaries.length === 1 && selectedNodes.length === 0 ? selectedBoundaries[0] : null;
-  const singleRect = singleNode
-    ? { ...singleNode.position, ...singleNode.size }
-    : (singleBoundary?.rect ?? null);
+  const x = singleNode?.position.x ?? singleBoundary?.rect.x;
+  const y = singleNode?.position.y ?? singleBoundary?.rect.y;
+  const width = singleNode?.size.width ?? singleBoundary?.rect.width;
+  const height = singleNode?.size.height ?? singleBoundary?.rect.height;
+  const singleRect = useMemo(
+    () =>
+      x === undefined || y === undefined || width === undefined || height === undefined
+        ? null
+        : { x, y, width, height },
+    [x, y, width, height],
+  );
   const [values, setValues] = useState<GeometryValues>({ x: '', y: '', width: '', height: '' });
   const [deltaX, setDeltaX] = useState('0');
   const [deltaY, setDeltaY] = useState('0');
@@ -67,14 +75,7 @@ export function SelectionGeometryPanel({
       width: String(singleRect.width),
       height: String(singleRect.height),
     });
-  }, [
-    singleBoundary?.id,
-    singleNode?.id,
-    singleRect?.height,
-    singleRect?.width,
-    singleRect?.x,
-    singleRect?.y,
-  ]);
+  }, [singleBoundary?.id, singleNode?.id, singleRect]);
 
   const updateValue = (field: keyof GeometryValues, value: string): void =>
     setValues((current) => ({ ...current, [field]: value }));

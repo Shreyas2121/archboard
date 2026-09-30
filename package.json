@@ -40,6 +40,7 @@
     "concurrently": "catalog:",
     "eslint": "10.10.0",
     "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.12.0",
     "jest": "30.5.1",
     "prettier": "3.9.6",

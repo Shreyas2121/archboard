@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import type { GraphTextTarget } from '@archboard/document-model';
 
@@ -8,33 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import type { EditorSession } from '@/features/editor/application';
 import { cn } from '@/lib/utils';
 
-interface TextChange {
-  readonly index: number;
-  readonly deleteCount: number;
-  readonly insert: string;
-}
-
-export function minimalTextChange(previous: string, next: string): TextChange {
-  let prefix = 0;
-  while (prefix < previous.length && prefix < next.length && previous[prefix] === next[prefix]) {
-    prefix += 1;
-  }
-
-  let suffix = 0;
-  while (
-    suffix < previous.length - prefix &&
-    suffix < next.length - prefix &&
-    previous[previous.length - suffix - 1] === next[next.length - suffix - 1]
-  ) {
-    suffix += 1;
-  }
-
-  return {
-    index: prefix,
-    deleteCount: previous.length - prefix - suffix,
-    insert: next.slice(prefix, next.length - suffix),
-  };
-}
+import { minimalTextChange, TextDraft } from './text-draft';
 
 function updateControlValue(control: HTMLInputElement | HTMLTextAreaElement, next: string): void {
   if (control.value === next) return;
@@ -83,7 +57,8 @@ export function ProductTextField({
   monospace = false,
 }: ProductTextFieldProps) {
   const control = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
-  const rendered = useRef(value);
+  const draft = useRef(new TextDraft(value));
+  const committing = useRef(false);
   const latestValue = useRef(value);
   latestValue.current = value;
   const invalidDraft = useRef(false);
@@ -91,7 +66,23 @@ export function ProductTextField({
   const [draftLength, setDraftLength] = useState(value.length);
   const [error, setError] = useState<string | null>(null);
   const targetKey = `${target.entity}:${target.id}:${target.field}`;
-  const access = useMemo(() => session.accessText(target), [session, targetKey]);
+  const bindingGeneration = useSyncExternalStore(
+    session.subscribe,
+    session.getTextBindingGeneration,
+    session.getTextBindingGeneration,
+  );
+  const targetRef = useRef(target);
+  if (
+    targetRef.current.entity !== target.entity ||
+    targetRef.current.id !== target.id ||
+    targetRef.current.field !== target.field
+  )
+    targetRef.current = target;
+  const stableTarget = targetRef.current;
+  const access = useMemo(() => {
+    if (bindingGeneration !== session.getTextBindingGeneration()) return null;
+    return session.accessText(stableTarget);
+  }, [session, stableTarget, bindingGeneration]);
   const inputId = `inspector-${targetKey.replaceAll(':', '-')}`;
 
   useEffect(() => {
@@ -99,27 +90,35 @@ export function ProductTextField({
     if (element === null) return;
     const initialValue = access?.value ?? latestValue.current;
     element.value = initialValue;
-    rendered.current = initialValue;
+    draft.current = new TextDraft(initialValue);
+    composing.current = false;
     invalidDraft.current = false;
     setDraftLength(initialValue.length);
     setError(null);
     if (access === null) return;
 
-    return access.subscribe(() => {
+    const unsubscribe = access.subscribe((delta) => {
+      if (committing.current) return;
       const next = access.value;
-      rendered.current = next;
+      draft.current.receive(delta);
       if (!invalidDraft.current && !composing.current) {
         updateControlValue(element, next);
+        draft.current = new TextDraft(next);
         setDraftLength(next.length);
       }
     });
-  }, [access, targetKey]);
+    return () => {
+      unsubscribe();
+      composing.current = false;
+      session.finishTextHistory();
+    };
+  }, [access, targetKey, session]);
 
   useEffect(() => {
     const element = control.current;
     if (access !== null || element === null || invalidDraft.current || composing.current) return;
     updateControlValue(element, value);
-    rendered.current = value;
+    draft.current = new TextDraft(value);
     setDraftLength(value.length);
   }, [access, value]);
 
@@ -133,29 +132,30 @@ export function ProductTextField({
       setError(`Limit exceeded by ${next.length - limit} characters.`);
       return;
     }
-    const change = minimalTextChange(rendered.current, next);
-    if (change.deleteCount === 0 && change.insert.length === 0) {
-      invalidDraft.current = false;
-      setError(null);
-      return;
-    }
+    const changes = draft.current.edits(next);
     try {
-      session.editText(target, change);
-      rendered.current = next;
+      committing.current = true;
+      if (changes.length > 0) session.editText(target, changes);
+      const committed = access.value;
+      updateControlValue(element, committed);
+      draft.current = new TextDraft(committed);
+      setDraftLength(committed.length);
       invalidDraft.current = false;
       setError(null);
     } catch {
       invalidDraft.current = true;
       setError('This value could not be saved. Correct it or press Escape to cancel.');
+    } finally {
+      committing.current = false;
     }
   };
 
   const cancelDraft = (): void => {
     const element = control.current;
     if (element === null) return;
-    const committed = access?.value ?? rendered.current;
+    const committed = access?.value ?? latestValue.current;
     updateControlValue(element, committed);
-    rendered.current = committed;
+    draft.current = new TextDraft(committed);
     invalidDraft.current = false;
     setDraftLength(committed.length);
     setError(null);

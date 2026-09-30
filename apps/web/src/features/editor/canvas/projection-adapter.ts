@@ -12,6 +12,7 @@ import { MarkerType, type Edge, type Node, type Rect } from '@xyflow/react';
 export interface CanvasNodeData extends Record<string, unknown> {
   readonly node: GraphNode;
   readonly editable?: boolean;
+  readonly onResizeStart?: (id: string) => void;
   readonly onResizeEnd?: (id: string, rect: GraphRect) => void;
 }
 

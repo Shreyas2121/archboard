@@ -3,7 +3,8 @@ import type * as Y from 'yjs';
 
 import { NODE_FIELDS } from '../schema/constants.js';
 import { getGraphDocumentRoots } from '../schema/document.js';
-import { setNodePositions } from './batch.js';
+import { readPhysicalGraph } from '../validation/read.js';
+import { setGraphGeometryFromPhysical } from './batch.js';
 import { GraphCommandError } from './error.js';
 import {
   LOCAL_EDIT_ORIGIN,
@@ -125,12 +126,16 @@ export const setComponentExternalUrl = (
   document: Y.Doc,
   id: string,
   externalUrl: string | null,
+  expected?: string | null,
 ): void =>
   editNode(
     document,
     id,
     (value) => {
       const node = requireKind(value, 'component');
+      if (expected !== undefined && (node.content.externalUrl ?? null) !== expected) {
+        throw new GraphCommandError('The URL changed while this draft was being edited.');
+      }
       return { ...node, content: { ...node.content, externalUrl } };
     },
     (map) => map.set(NODE_FIELDS.EXTERNAL_URL, externalUrl),
@@ -164,8 +169,9 @@ export function alignNodes(
   coordinate: number,
 ): void {
   const uniqueIds = [...new Set(nodeIds)];
+  const physical = readPhysicalGraph(document);
   const changes = uniqueIds.map((id) => {
-    const node = liveNode(document, id);
+    const node = liveNode(document, id, physical);
     const position = { ...node.position, [axis]: coordinate };
     graphNodeSchema.parse({ ...node, position });
     return { id, position };
@@ -194,7 +200,8 @@ export function alignNodeGeometry(
   nodeIds: readonly string[],
   alignment: NodeAlignment,
 ): void {
-  const nodes = [...new Set(nodeIds)].map((id) => liveNode(document, id));
+  const physical = readPhysicalGraph(document);
+  const nodes = [...new Set(nodeIds)].map((id) => liveNode(document, id, physical));
   if (nodes.length < MINIMUM_ALIGNMENT_NODES) {
     throw new GraphCommandError('Select at least two nodes to align.');
   }
@@ -232,5 +239,5 @@ export function alignNodeGeometry(
         };
     }
   });
-  setNodePositions(document, positions);
+  setGraphGeometryFromPhysical(document, { nodes: positions }, physical);
 }

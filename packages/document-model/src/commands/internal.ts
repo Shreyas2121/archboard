@@ -16,7 +16,7 @@ import * as Y from 'yjs';
 
 import { BOUNDARY_FIELDS, EDGE_FIELDS, NODE_FIELDS, STEP_FIELDS } from '../schema/constants.js';
 import { getGraphDocumentRoots } from '../schema/document.js';
-import { readPhysicalGraph } from '../validation/read.js';
+import { readPhysicalGraph, type PhysicalGraph } from '../validation/read.js';
 import { GraphCommandError } from './error.js';
 
 export const LOCAL_EDIT_ORIGIN = Symbol('archboard.local-edit');
@@ -102,8 +102,11 @@ export interface EntityCountIncrease {
   readonly steps?: number;
 }
 
-export function assertLiveCapacity(document: Y.Doc, increase: EntityCountIncrease): void {
-  const graph = readPhysicalGraph(document);
+export function assertLiveCapacity(
+  document: Y.Doc,
+  increase: EntityCountIncrease,
+  graph: PhysicalGraph = readPhysicalGraph(document),
+): void {
   const liveCount = <T>(entities: ReadonlyMap<string, T>, deleted: ReadonlySet<string>): number =>
     [...entities.keys()].filter((id) => !deleted.has(id)).length;
   const checks = [
@@ -128,8 +131,11 @@ export function assertLiveCapacity(document: Y.Doc, increase: EntityCountIncreas
   }
 }
 
-export function liveNode(document: Y.Doc, id: string): GraphNode {
-  const graph = readPhysicalGraph(document);
+export function liveNode(
+  document: Y.Doc,
+  id: string,
+  graph: PhysicalGraph = readPhysicalGraph(document),
+): GraphNode {
   const node = graph.nodes.get(id);
   if (node === undefined) throw new GraphCommandError(`Node ${id} does not exist.`);
   if (graph.deletedNodes.has(id)) throw new GraphCommandError(`Node ${id} is deleted.`);
@@ -144,8 +150,11 @@ export function liveEdge(document: Y.Doc, id: string): GraphEdge {
   return edge;
 }
 
-export function liveBoundary(document: Y.Doc, id: string): Boundary {
-  const graph = readPhysicalGraph(document);
+export function liveBoundary(
+  document: Y.Doc,
+  id: string,
+  graph: PhysicalGraph = readPhysicalGraph(document),
+): Boundary {
   const boundary = graph.boundaries.get(id);
   if (boundary === undefined) throw new GraphCommandError(`Boundary ${id} does not exist.`);
   if (graph.deletedBoundaries.has(id)) throw new GraphCommandError(`Boundary ${id} is deleted.`);

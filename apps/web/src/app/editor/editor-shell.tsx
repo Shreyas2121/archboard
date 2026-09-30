@@ -2,64 +2,27 @@ import { useCallback, useRef, useState } from 'react';
 import {
   MAX_GRAPH_COORDINATE,
   NODE_KINDS,
-  BOARD_ROLES,
-  ERROR_CODES,
   handleSchema,
   type NodeKind,
 } from '@archboard/contracts';
 import {
-  LOCAL_PERSISTENCE_PHASES,
-  SYNC_PHASES,
-  WRITER_SESSION_PHASES,
-} from '@archboard/sync-client';
-import {
-  Box,
-  Braces,
-  CircleHelp,
-  Code2,
-  Database,
   Download,
   Grid3X3,
-  HardDrive,
   Maximize,
-  Monitor,
-  Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
-  Redo2,
   RotateCcw,
   Scan,
-  StickyNote,
-  Sun,
-  Undo2,
   ZoomIn,
   ZoomOut,
-  type LucideIcon,
 } from 'lucide-react';
-import { Link } from '@tanstack/react-router';
 import { useReactFlow, type Connection, type Viewport } from '@xyflow/react';
-
 import { BrandMark } from '@/app/components/brand-mark';
 import { IconButton } from '@/app/components/icon-button';
-import { THEME_PREFERENCES, useTheme } from '@/app/theme/theme-provider';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { type EditorSession, type EditorSessionSnapshot } from '@/features/editor/application';
-import {
-  BoundaryInspector,
-  DEFAULT_BOUNDARY_SIZE,
-  createBoundaryObject,
-} from '@/features/editor/boundaries';
+import type { EditorSession } from '@/features/editor/application';
+import { DEFAULT_BOUNDARY_SIZE, createBoundaryObject } from '@/features/editor/boundaries';
 import { CARD_SIZES, createCardNode } from '@/features/editor/cards';
 import {
   CANVAS_FIT_PADDING,
@@ -71,20 +34,15 @@ import {
   getProjectionBounds,
   GraphCanvas,
 } from '@/features/editor/canvas';
-import { CardInspector } from '@/features/editor/inspector';
 import { downloadRecoveryArtifact } from '@/features/editor/demo';
 import {
   createClipboardNote,
-  EditorActionsPanel,
   shortcutModifierLabel,
   useEditorCommands,
 } from '@/features/editor/history';
-import { SelectionGeometryPanel } from '@/features/editor/selection';
 import {
   createConnectionEdge,
   createReplacementEdge,
-  EdgeInspector,
-  KeyboardConnectionFlow,
   type ConnectionEndpoints,
 } from '@/features/editor/connections';
 import {
@@ -98,111 +56,18 @@ import {
   usePaletteOpen,
 } from '@/features/editor/state';
 import { cn } from '@/lib/utils';
-import { LocalStorageDialog } from './local-storage-dialog';
+import { EDITOR_VIEW_PHASES } from './editor-view-state';
+import { EditorDialogs } from './editor-dialogs';
+import { EditorInspector } from './editor-inspector';
+import { EditorToolbar } from './editor-toolbar';
+import { editorSessionViewState } from './editor-status-policy';
+import { PALETTE_ITEMS } from './editor-palette-definitions';
+import type { EditorShellProps } from './editor-composition-types';
 
-import { EDITOR_VIEW_PHASES, editorViewState } from './editor-view-state';
-
-interface PaletteItem {
-  readonly label: string;
-  readonly description: string;
-  readonly icon: LucideIcon;
-  readonly kind: NodeKind | 'boundary';
-}
-
-const PALETTE_ITEMS: readonly PaletteItem[] = [
-  {
-    label: 'Component',
-    description: 'Service or application',
-    icon: Box,
-    kind: NODE_KINDS.COMPONENT,
-  },
-  { label: 'Code', description: 'Module or repository', icon: Code2, kind: NODE_KINDS.CODE },
-  {
-    label: 'Schema',
-    description: 'Data contract or store',
-    icon: Database,
-    kind: NODE_KINDS.SCHEMA,
-  },
-  { label: 'Note', description: 'Context for the team', icon: StickyNote, kind: NODE_KINDS.NOTE },
-  { label: 'Boundary', description: 'Visual grouping region', icon: Braces, kind: 'boundary' },
-];
 const PERCENT_SCALE = 100;
 const HALF = 2;
 const CREATION_OFFSET = 32;
 const CREATION_OFFSET_STEPS = 6;
-
-interface EditorShellProps {
-  readonly narrowScreen: boolean;
-  readonly session: EditorSession | null;
-  readonly sessionSnapshot: EditorSessionSnapshot | null;
-  readonly boardTitle?: string;
-}
-
-function phaseForSession(
-  snapshot: EditorSessionSnapshot | null,
-  narrowScreen: boolean,
-  boardMode: boolean,
-): (typeof EDITOR_VIEW_PHASES)[keyof typeof EDITOR_VIEW_PHASES] {
-  if (snapshot?.initializationError) return EDITOR_VIEW_PHASES.RECOVERY_REQUIRED;
-  if (snapshot?.preparingDemo) return EDITOR_VIEW_PHASES.SEEDING;
-  if (snapshot?.projection === null || snapshot === null) return EDITOR_VIEW_PHASES.LOADING;
-
-  const persistence = snapshot.writer.persistence;
-  if (persistence?.phase === LOCAL_PERSISTENCE_PHASES.STORAGE_ERROR) {
-    return EDITOR_VIEW_PHASES.STORAGE_ERROR;
-  }
-  if (persistence?.phase === LOCAL_PERSISTENCE_PHASES.RECOVERY_REQUIRED) {
-    return EDITOR_VIEW_PHASES.RECOVERY_REQUIRED;
-  }
-  if (boardMode) {
-    if (snapshot.sync?.errorCode === ERROR_CODES.UNAUTHENTICATED)
-      return EDITOR_VIEW_PHASES.SESSION_EXPIRED;
-    if (snapshot.sync?.errorCode === ERROR_CODES.SCHEMA_UNSUPPORTED)
-      return EDITOR_VIEW_PHASES.SCHEMA_UNSUPPORTED;
-    if (
-      snapshot.sync?.errorCode === ERROR_CODES.DOCUMENT_INVALID ||
-      snapshot.sync?.errorCode === ERROR_CODES.DOCUMENT_LIMIT ||
-      snapshot.sync?.errorCode === ERROR_CODES.VALIDATION_ERROR
-    )
-      return EDITOR_VIEW_PHASES.VALIDATION_REJECTED;
-    if (snapshot.accessDenied || snapshot.sync?.phase === SYNC_PHASES.ACCESS_CHANGED)
-      return EDITOR_VIEW_PHASES.ACCESS_CHANGED;
-    if (snapshot.sync?.phase === SYNC_PHASES.STORAGE_ERROR) return EDITOR_VIEW_PHASES.STORAGE_ERROR;
-    if (snapshot.sync?.phase === SYNC_PHASES.RECOVERY_REQUIRED)
-      return EDITOR_VIEW_PHASES.RECOVERY_REQUIRED;
-    if (snapshot.archived) return EDITOR_VIEW_PHASES.ARCHIVED;
-    if (snapshot.boardRole === BOARD_ROLES.VIEWER) return EDITOR_VIEW_PHASES.VIEWER;
-  }
-  if (narrowScreen) return EDITOR_VIEW_PHASES.NARROW_SCREEN;
-  if (snapshot.writer.phase === WRITER_SESSION_PHASES.READ_ONLY_HELD_ELSEWHERE) {
-    return EDITOR_VIEW_PHASES.READ_ONLY;
-  }
-  if (snapshot.writer.phase === WRITER_SESSION_PHASES.UNSUPPORTED) {
-    return EDITOR_VIEW_PHASES.READ_ONLY_UNSUPPORTED;
-  }
-  if (boardMode) {
-    const sync = snapshot.sync;
-    if (
-      !snapshot.hasLocalCopy &&
-      (sync?.phase === SYNC_PHASES.OFFLINE_CACHED ||
-        sync?.phase === SYNC_PHASES.SAVED_ON_DEVICE_OFFLINE)
-    ) {
-      return EDITOR_VIEW_PHASES.UNAVAILABLE;
-    }
-    if (persistence?.phase === LOCAL_PERSISTENCE_PHASES.SAVING) return EDITOR_VIEW_PHASES.SAVING;
-    if (sync?.phase === SYNC_PHASES.SYNCING) return EDITOR_VIEW_PHASES.SYNCING;
-    if (sync?.phase === SYNC_PHASES.SAVED_TO_SERVER) return EDITOR_VIEW_PHASES.SAVED_TO_SERVER;
-    if (sync?.phase === SYNC_PHASES.SAVED_ON_DEVICE_OFFLINE)
-      return EDITOR_VIEW_PHASES.SAVED_ON_DEVICE_OFFLINE;
-    if (sync?.phase === SYNC_PHASES.OFFLINE_CACHED) return EDITOR_VIEW_PHASES.OFFLINE_CACHED;
-    return EDITOR_VIEW_PHASES.CONNECTING;
-  }
-  if (persistence?.phase === LOCAL_PERSISTENCE_PHASES.SAVING) {
-    return EDITOR_VIEW_PHASES.SAVING;
-  }
-  if (persistence?.savedOnDevice) return EDITOR_VIEW_PHASES.SAVED;
-  return snapshot.writer.writable ? EDITOR_VIEW_PHASES.WRITABLE : EDITOR_VIEW_PHASES.LOADING;
-}
 
 function connectionEndpoints(connection: Connection): ConnectionEndpoints {
   if (connection.source === null || connection.target === null) {
@@ -245,37 +110,15 @@ export function EditorShell({
   const [storageOpen, setStorageOpen] = useState(false);
   const storageButtonRef = useRef<HTMLButtonElement>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
-  const { preference, cyclePreference } = useTheme();
   const boardMode = boardTitle !== undefined;
-  const baseViewState = editorViewState(phaseForSession(sessionSnapshot, narrowScreen, boardMode));
-  const viewState = boardMode
-    ? {
-        ...baseViewState,
-        editable:
-          baseViewState.phase !== EDITOR_VIEW_PHASES.UNAVAILABLE &&
-          !narrowScreen &&
-          (session?.canEdit() ?? false),
-        label:
-          baseViewState.phase === EDITOR_VIEW_PHASES.SYNCING
-            ? `Syncing ${sessionSnapshot?.sync?.pendingCount ?? 0} changes…`
-            : baseViewState.label,
-      }
-    : baseViewState;
+  const viewState = editorSessionViewState(
+    sessionSnapshot,
+    narrowScreen,
+    boardMode,
+    session?.canEdit() ?? false,
+  );
   const projection = sessionSnapshot?.projection ?? null;
   const canvasReady = projection !== null;
-  const selectedNode =
-    selection.length === 1 && selection[0]?.kind === SELECTION_KINDS.NODE
-      ? (projection?.nodes.find(({ id }) => id === selection[0]?.id) ?? null)
-      : null;
-  const selectedEdge =
-    selection.length === 1 && selection[0]?.kind === SELECTION_KINDS.EDGE
-      ? (projection?.edges.find(({ id }) => id === selection[0]?.id) ?? null)
-      : null;
-  const selectedBoundary =
-    selection.length === 1 && selection[0]?.kind === SELECTION_KINDS.BOUNDARY
-      ? (projection?.boundaries.find(({ id }) => id === selection[0]?.id) ?? null)
-      : null;
-
   const createConnection = useCallback(
     (endpoints: ConnectionEndpoints): string | null => {
       if (session === null || !viewState.editable) return 'Editing is not available in this view.';
@@ -392,13 +235,15 @@ export function EditorShell({
   }, [actions, gridSnapEnabled, session, viewState.editable, viewport]);
 
   const commitGeometry = useCallback(
-    (batch: Parameters<EditorSession['setGeometry']>[0]): void => {
-      if (session === null || !viewState.editable) return;
+    (batch: Parameters<EditorSession['setGeometry']>[0]) => {
+      if (session === null || !viewState.editable || !session.canEdit()) return null;
       try {
         session.setGeometry(batch);
         setConnectionNotice('Geometry updated.');
+        return session.getSnapshot().projection;
       } catch {
         setConnectionNotice('The geometry exceeds the shared coordinate or size limits.');
+        return null;
       }
     },
     [session, viewState.editable],
@@ -453,6 +298,7 @@ export function EditorShell({
     [actions, session, viewState.editable, viewport],
   );
   const editorCommands = useEditorCommands({
+    shortcutsBlocked: activeDialog !== null || storageOpen || serverReloadOpen,
     editable: viewState.editable,
     projection,
     selection,
@@ -512,143 +358,29 @@ export function EditorShell({
     }
   }, [session]);
 
-  const ThemeIcon =
-    preference === THEME_PREFERENCES.LIGHT
-      ? Sun
-      : preference === THEME_PREFERENCES.DARK
-        ? Moon
-        : Monitor;
-  const nextTheme =
-    preference === THEME_PREFERENCES.LIGHT
-      ? 'dark'
-      : preference === THEME_PREFERENCES.DARK
-        ? 'system'
-        : 'light';
-
   return (
     <div
       className="grid h-dvh min-h-[36rem] grid-rows-[3.5rem_minmax(0,1fr)_2.75rem] overflow-hidden bg-background"
       data-phase={viewState.phase}
     >
-      <header className="relative z-20 flex items-center gap-3 border-b bg-background/95 px-3 backdrop-blur sm:px-4">
-        <Link
-          className="flex items-center gap-2.5 text-sm font-semibold tracking-tight"
-          to={boardMode ? '/boards' : '/'}
-          aria-label={boardMode ? 'Back to your boards' : 'Archboard home'}
-        >
-          <BrandMark />
-          <span>Archboard</span>
-        </Link>
-        <span className="max-w-48 truncate rounded-md border bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
-          {boardMode ? boardTitle : 'Local demo'}
-        </span>
-
-        <div
-          className="group absolute left-1/2 hidden -translate-x-1/2 items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs font-medium shadow-sm md:flex"
-          data-tone={viewState.tone}
-          role="status"
-        >
-          <span
-            className="size-1.5 rounded-full bg-primary group-data-[tone=danger]:bg-destructive group-data-[tone=success]:bg-status-success group-data-[tone=warning]:bg-status-warning"
-            aria-hidden="true"
-          />
-          <span>{viewState.label}</span>
-        </div>
-
-        <span
-          className="ml-auto max-w-32 truncate text-xs text-muted-foreground md:hidden"
-          role="status"
-          aria-live="polite"
-        >
-          {viewState.label}
-        </span>
-
-        <div className="ml-auto flex items-center gap-0.5" aria-label="Board actions">
-          <IconButton
-            className="max-sm:hidden"
-            label={`Undo (${shortcutModifier}+Z)`}
-            variant="ghost"
-            disabled={!viewState.editable || !editorCommands.canUndo}
-            onClick={editorCommands.undo}
-          >
-            <Undo2 />
-          </IconButton>
-          <IconButton
-            className="max-sm:hidden"
-            label={`Redo (${shortcutModifier}+Shift+Z)`}
-            variant="ghost"
-            disabled={!viewState.editable || !editorCommands.canRedo}
-            onClick={editorCommands.redo}
-          >
-            <Redo2 />
-          </IconButton>
-          {!boardMode && (
-            <IconButton
-              ref={resetButtonRef}
-              className="max-sm:hidden"
-              label={canReset ? 'Reset local demo' : 'Reset demo unavailable in this view'}
-              variant="ghost"
-              disabled={!canReset}
-              onClick={() => actions.openDialog('reset')}
-            >
-              <RotateCcw />
-            </IconButton>
-          )}
-          <IconButton
-            ref={storageButtonRef}
-            label="Local storage status"
-            variant="ghost"
-            disabled={session === null}
-            onClick={() => setStorageOpen(true)}
-          >
-            <HardDrive />
-          </IconButton>
-          <IconButton
-            className="max-sm:hidden"
-            label={
-              projection === null
-                ? 'Download recovery unavailable while loading'
-                : 'Download local recovery'
-            }
-            variant="ghost"
-            disabled={projection === null}
-            onClick={downloadRecovery}
-          >
-            <Download />
-          </IconButton>
-          {boardMode && (
-            <IconButton
-              className="max-sm:hidden"
-              label={
-                session?.canReloadServerVersion()
-                  ? 'Reload server version'
-                  : 'Reconnect before reloading the server version'
-              }
-              variant="ghost"
-              disabled={!session?.canReloadServerVersion() || serverReloadPending}
-              onClick={() => setServerReloadOpen(true)}
-            >
-              <RotateCcw />
-            </IconButton>
-          )}
-          <span className="mx-1 h-5 w-px bg-border max-sm:hidden" aria-hidden="true" />
-          <IconButton
-            label={`Theme: ${preference}. Switch to ${nextTheme}.`}
-            variant="ghost"
-            onClick={cyclePreference}
-          >
-            <ThemeIcon />
-          </IconButton>
-          <IconButton
-            ref={helpButtonRef}
-            label="Open keyboard help"
-            variant="ghost"
-            onClick={() => actions.openDialog('help')}
-          >
-            <CircleHelp />
-          </IconButton>
-        </div>
-      </header>
+      <EditorToolbar
+        boardMode={boardMode}
+        boardTitle={boardTitle}
+        viewState={viewState}
+        editorCommands={editorCommands}
+        shortcutModifier={shortcutModifier}
+        canReset={canReset}
+        resetButtonRef={resetButtonRef}
+        storageButtonRef={storageButtonRef}
+        helpButtonRef={helpButtonRef}
+        actions={actions}
+        session={session}
+        projection={projection}
+        setStorageOpen={setStorageOpen}
+        downloadRecovery={downloadRecovery}
+        serverReloadPending={serverReloadPending}
+        setServerReloadOpen={setServerReloadOpen}
+      />
 
       <div
         className={cn(
@@ -872,110 +604,17 @@ export function EditorShell({
           </div>
         </main>
 
-        <Collapsible
-          className="min-h-0 overflow-hidden border-l bg-card max-md:hidden"
-          open={inspectorOpen}
-        >
-          <div
-            className={cn(
-              'flex h-14 items-center gap-3 border-b px-3',
-              !inspectorOpen && 'justify-center',
-            )}
-          >
-            <IconButton
-              label={inspectorOpen ? 'Collapse inspector' : 'Expand inspector'}
-              variant="ghost"
-              onClick={actions.toggleInspector}
-            >
-              {inspectorOpen ? <PanelRightClose /> : <PanelRightOpen />}
-            </IconButton>
-            {inspectorOpen && (
-              <div>
-                <p className="text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                  Details
-                </p>
-                <h2 className="text-sm font-semibold">Inspector</h2>
-              </div>
-            )}
-          </div>
-          <CollapsibleContent className="h-[calc(100%-3.5rem)] overflow-y-auto">
-            <EditorActionsPanel actions={editorCommands} disabled={!viewState.editable} />
-            {selectedNode !== null && session !== null && projection !== null ? (
-              <div>
-                <CardInspector
-                  node={selectedNode}
-                  session={session}
-                  disabled={!viewState.editable}
-                />
-                <SelectionGeometryPanel
-                  projection={projection}
-                  selection={selection}
-                  session={session}
-                  disabled={!viewState.editable}
-                  onNotice={setConnectionNotice}
-                />
-                <div className="border-t p-4">
-                  <KeyboardConnectionFlow
-                    nodes={projection.nodes}
-                    initialSourceId={selectedNode.id}
-                    disabled={!viewState.editable}
-                    onCreate={createConnection}
-                  />
-                </div>
-              </div>
-            ) : selectedEdge !== null && session !== null && projection !== null ? (
-              <EdgeInspector
-                edge={selectedEdge}
-                nodes={projection.nodes}
-                session={session}
-                disabled={!viewState.editable}
-                onNotice={setConnectionNotice}
-              />
-            ) : selectedBoundary !== null && session !== null && projection !== null ? (
-              <div>
-                <BoundaryInspector
-                  boundary={selectedBoundary}
-                  session={session}
-                  disabled={!viewState.editable}
-                  onNotice={setConnectionNotice}
-                />
-                <SelectionGeometryPanel
-                  projection={projection}
-                  selection={selection}
-                  session={session}
-                  disabled={!viewState.editable}
-                  onNotice={setConnectionNotice}
-                />
-              </div>
-            ) : session !== null &&
-              projection !== null &&
-              selection.some(
-                ({ kind }) => kind === SELECTION_KINDS.NODE || kind === SELECTION_KINDS.BOUNDARY,
-              ) ? (
-              <SelectionGeometryPanel
-                projection={projection}
-                selection={selection}
-                session={session}
-                disabled={!viewState.editable}
-                onNotice={setConnectionNotice}
-              />
-            ) : (
-              <div className="grid h-full place-items-center p-5">
-                <div className="grid max-w-52 justify-items-center text-center">
-                  <Scan className="mb-4 size-7 text-muted-foreground" aria-hidden="true" />
-                  <h3 className="text-sm font-semibold">
-                    {selection.length === 0 ? 'Nothing selected' : `${selection.length} selected`}
-                  </h3>
-                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                    {selection.length === 1
-                      ? 'Editing for this element arrives with its dedicated tool.'
-                      : 'Select one card on the canvas to inspect its properties.'}
-                  </p>
-                </div>
-              </div>
-            )}
-          </CollapsibleContent>
-        </Collapsible>
+        <EditorInspector
+          inspectorOpen={inspectorOpen}
+          actions={actions}
+          editorCommands={editorCommands}
+          viewState={viewState}
+          session={session}
+          projection={projection}
+          selection={selection}
+          setConnectionNotice={setConnectionNotice}
+          createConnection={createConnection}
+        />
       </div>
 
       <footer className="relative z-20 flex items-center justify-between border-t bg-background px-2 sm:px-3">
@@ -1041,211 +680,33 @@ export function EditorShell({
         </div>
       </footer>
 
-      <LocalStorageDialog
-        open={storageOpen}
-        onOpenChange={setStorageOpen}
+      <EditorDialogs
+        storageOpen={storageOpen}
+        setStorageOpen={setStorageOpen}
         session={session}
-        snapshot={sessionSnapshot}
-        returnFocusRef={storageButtonRef}
+        sessionSnapshot={sessionSnapshot}
+        storageButtonRef={storageButtonRef}
+        editorCommands={editorCommands}
+        boardMode={boardMode}
+        activeDialog={activeDialog}
+        resetPending={resetPending}
+        setResetError={setResetError}
+        actions={actions}
+        resetButtonRef={resetButtonRef}
+        resetError={resetError}
+        projection={projection}
+        downloadRecovery={downloadRecovery}
+        canReset={canReset}
+        confirmReset={confirmReset}
+        serverReloadOpen={serverReloadOpen}
+        serverReloadPending={serverReloadPending}
+        setServerReloadOpen={setServerReloadOpen}
+        setServerReloadError={setServerReloadError}
+        serverReloadError={serverReloadError}
+        confirmServerReload={confirmServerReload}
+        helpButtonRef={helpButtonRef}
+        shortcutModifier={shortcutModifier}
       />
-
-      <Dialog
-        open={editorCommands.deleteConfirmationOpen}
-        onOpenChange={(open) => {
-          if (!open) editorCommands.cancelDelete();
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete selected objects?</DialogTitle>
-            <DialogDescription>
-              This selection contains more than 10 objects. The objects and internal connections
-              will be deleted together. Undo does not apply to deletion.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={editorCommands.cancelDelete}>
-              Cancel
-            </Button>
-            <Button type="button" variant="destructive" onClick={editorCommands.confirmDelete}>
-              Delete objects
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={!boardMode && activeDialog === 'reset'}
-        onOpenChange={(open) => {
-          if (!open && !resetPending) {
-            setResetError(null);
-            actions.closeDialog();
-          }
-        }}
-      >
-        <DialogContent
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            resetButtonRef.current?.focus();
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>Reset the local demo?</DialogTitle>
-            <DialogDescription>
-              This replaces only this device&apos;s local demo board with a fresh copy. Download a
-              recovery file first if you want to keep the current graph.
-            </DialogDescription>
-          </DialogHeader>
-          {resetError !== null && (
-            <p className="text-sm text-destructive" role="alert">
-              {resetError}
-            </p>
-          )}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={resetPending || projection === null}
-              onClick={downloadRecovery}
-            >
-              <Download /> Download recovery
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={resetPending}
-              onClick={actions.closeDialog}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={resetPending || !canReset}
-              onClick={() => void confirmReset()}
-            >
-              {resetPending ? 'Resetting…' : 'Reset local demo'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={boardMode && serverReloadOpen}
-        onOpenChange={(open) => {
-          if (!serverReloadPending) {
-            setServerReloadOpen(open);
-            setServerReloadError(null);
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Reload the server version?</DialogTitle>
-            <DialogDescription>
-              This deletes this board&apos;s local copy and pending changes for this account on this
-              device. Changes without a server receipt will be lost. Download recovery first if you
-              want to keep them. Other accounts and boards are not cleared.
-            </DialogDescription>
-          </DialogHeader>
-          {serverReloadError !== null && (
-            <p className="text-sm text-destructive" role="alert">
-              {serverReloadError}
-            </p>
-          )}
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={serverReloadPending || projection === null}
-              onClick={downloadRecovery}
-            >
-              <Download /> Download recovery
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={serverReloadPending}
-              onClick={() => setServerReloadOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={serverReloadPending || !session?.canReloadServerVersion()}
-              onClick={() => void confirmServerReload()}
-            >
-              {serverReloadPending ? 'Reloading…' : 'Delete local copy and reload'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={activeDialog === 'help'}
-        onOpenChange={(open) => (open ? actions.openDialog('help') : actions.closeDialog())}
-      >
-        <DialogContent
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            helpButtonRef.current?.focus();
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>Keyboard help</DialogTitle>
-            <DialogDescription>
-              Editing shortcuts become available after the local board finishes loading.
-            </DialogDescription>
-          </DialogHeader>
-          <dl className="grid gap-2">
-            <div className="flex items-center justify-between gap-8 border-b py-2">
-              <dt>Pan canvas</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">Space + drag</dd>
-            </div>
-            <div className="flex items-center justify-between gap-8 border-b py-2">
-              <dt>Zoom</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">Ctrl + scroll</dd>
-            </div>
-            <div className="flex items-center justify-between gap-8 py-2">
-              <dt>Clear selection</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">Escape</dd>
-            </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
-              <dt>Delete selection</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">Delete</dd>
-            </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
-              <dt>Duplicate</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">
-                {shortcutModifier}+D
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
-              <dt>Copy / paste selection</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">
-                {shortcutModifier}+C / {shortcutModifier}+V
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
-              <dt>Undo / redo edits</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">
-                {shortcutModifier}+Z / {shortcutModifier}+Shift+Z
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
-              <dt>Fit content / zoom</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">F / + / -</dd>
-            </div>
-            <div className="flex items-center justify-between gap-8 border-t py-2">
-              <dt>Open this dialog</dt>
-              <dd className="rounded border bg-muted px-2 py-1 font-mono text-xs">?</dd>
-            </div>
-          </dl>
-          <DialogFooter showCloseButton />
-        </DialogContent>
-      </Dialog>
-
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {viewState.label}
       </p>

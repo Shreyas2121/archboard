@@ -162,6 +162,7 @@ export class LocalPersistenceAdapter {
   private initialization: Promise<void> | undefined;
   private closePromise: Promise<void> | undefined;
   private nextLocalSequence = 0;
+  private committedLocalSequence = 0;
   private pendingLocalWrites = 0;
   private writeTail: Promise<void> = Promise.resolve();
   private status: LocalPersistenceStatus = loadingStatus();
@@ -244,6 +245,37 @@ export class LocalPersistenceAdapter {
       this.namespace,
     );
     return records.sort((a, b) => a.localSequence - b.localSequence).map(copyOutboxRecord);
+  }
+
+  public async countPendingUpdates(): Promise<number> {
+    await this.initialize();
+    return this.requireDatabase().countFromIndex(
+      SYNC_STORE_NAMES.OUTBOX,
+      SYNC_INDEX_NAMES.BY_NAMESPACE,
+      this.namespace,
+    );
+  }
+
+  public async oldestPendingUpdate(): Promise<OutboxRecord | null> {
+    await this.initialize();
+    const records = await this.requireDatabase().getAllFromIndex(
+      SYNC_STORE_NAMES.OUTBOX,
+      SYNC_INDEX_NAMES.BY_NAMESPACE_AND_SEQUENCE,
+      IDBKeyRange.bound([this.namespace, 0], [this.namespace, Number.MAX_SAFE_INTEGER]),
+      1,
+    );
+    return records[0] === undefined ? null : copyOutboxRecord(records[0]);
+  }
+
+  public async acknowledgedUpdate(updateId: string): Promise<OutboxReceiptRecord | null> {
+    applicationIdSchema.parse(updateId);
+    await this.initialize();
+    return (
+      (await this.requireDatabase().get(SYNC_STORE_NAMES.OUTBOX_RECEIPTS, [
+        this.namespace,
+        updateId,
+      ])) ?? null
+    );
   }
 
   public async localSnapshot(): Promise<LocalSnapshotRecord | null> {
@@ -382,6 +414,7 @@ export class LocalPersistenceAdapter {
           throw error;
         }
         applyRemoteUpdate(this.document, exactBytes);
+        this.committedLocalSequence = localSequence;
         this.pendingLocalWrites = Math.max(0, this.pendingLocalWrites - 1);
         this.publishSaving(this.pendingLocalWrites);
         if (this.pendingLocalWrites === 0) {
@@ -561,6 +594,7 @@ export class LocalPersistenceAdapter {
     }
 
     this.nextLocalSequence = Math.max(throughSequence, records.at(-1)?.localSequence ?? 0);
+    this.committedLocalSequence = this.nextLocalSequence;
     if (!this.readOnly) {
       try {
         await this.requireDatabase().put(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS, {
@@ -603,6 +637,7 @@ export class LocalPersistenceAdapter {
     this.writeTail = this.writeTail.then(async () => {
       if (this.status.editingPaused) return;
       await this.persistLocalUpdate(updateId, localSequence, exactBytes, initialState);
+      this.committedLocalSequence = localSequence;
       this.pendingLocalWrites = Math.max(0, this.pendingLocalWrites - 1);
       this.publishSaving(this.pendingLocalWrites);
       if (this.pendingLocalWrites === 0) {
@@ -678,6 +713,7 @@ export class LocalPersistenceAdapter {
   }
 
   private async compactIfNeeded(): Promise<void> {
+    if (this.status.editingPaused || this.pendingLocalWrites !== 0) return;
     const database = this.requireDatabase();
     const snapshot = await database.get(SYNC_STORE_NAMES.LOCAL_SNAPSHOTS, this.namespace);
     const records = (
@@ -695,9 +731,12 @@ export class LocalPersistenceAdapter {
     );
     if (!shouldCreateLocalSnapshot(uncovered.length, uncoveredBytes)) return;
 
+    // Reads can admit new edits. Capture bytes and their committed frontier
+    // together only if the live document still has no uncommitted local work.
+    if (this.status.editingPaused || this.pendingLocalWrites !== 0) return;
     const replacement: LocalSnapshotRecord = {
       namespace: this.namespace,
-      throughLocalSequence: this.nextLocalSequence,
+      throughLocalSequence: this.committedLocalSequence,
       updateBytes: Y.encodeStateAsUpdate(this.document),
       updatedAt: this.now().toISOString(),
     };
@@ -745,7 +784,7 @@ export class LocalPersistenceAdapter {
   }
 
   private publishSaved(): void {
-    if (this.status.editingPaused) return;
+    if (this.status.editingPaused || this.pendingLocalWrites !== 0) return;
     this.setStatus({
       phase: LOCAL_PERSISTENCE_PHASES.SAVED,
       savedOnDevice: true,

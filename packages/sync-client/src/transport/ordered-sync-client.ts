@@ -327,15 +327,8 @@ export class OrderedSyncClient {
       if (this.socket === socket && !this.stopped) await this.refresh();
     } else if (message.event === SERVER_EVENT_NAMES.ACK) {
       if (message.data.updateId !== this.inFlightId) {
-        const receipts = await this.options.persistence.listAcknowledgedUpdates();
-        if (
-          receipts.some(
-            (receipt) =>
-              receipt.updateId === message.data.updateId &&
-              receipt.serverSequence === message.data.seq,
-          )
-        )
-          return;
+        const receipt = await this.options.persistence.acknowledgedUpdate(message.data.updateId);
+        if (receipt?.serverSequence === message.data.seq) return;
         return this.reconnectForProtocolError();
       }
       const sequence = BigInt(message.data.seq);
@@ -412,7 +405,10 @@ export class OrderedSyncClient {
       return;
     await this.options.persistence.whenIdle();
     if (this.localFailure()) return;
-    const pending = await this.options.persistence.listTransportEligibleUpdates();
+    const [pendingCount, first] = await Promise.all([
+      this.options.persistence.countPendingUpdates(),
+      this.options.persistence.oldestPendingUpdate(),
+    ]);
     if (
       this.socket !== socket ||
       !this.handshakeComplete ||
@@ -424,9 +420,8 @@ export class OrderedSyncClient {
       this.recoveryCode !== null
     )
       return;
-    this.pendingCount = pending.length;
-    const first = pending[0];
-    if (first === undefined) return this.publish();
+    this.pendingCount = pendingCount;
+    if (first === null) return this.publish();
     const envelope = clientMessageSchema.parse({
       event: CLIENT_EVENT_NAMES.UPDATE,
       data: { updateId: first.updateId, updateBase64: encodeBase64(first.updateBytes) },
@@ -463,7 +458,7 @@ export class OrderedSyncClient {
 
   private async refresh(): Promise<void> {
     await this.options.persistence.whenIdle();
-    this.pendingCount = (await this.options.persistence.listTransportEligibleUpdates()).length;
+    this.pendingCount = await this.options.persistence.countPendingUpdates();
     this.publish();
   }
 

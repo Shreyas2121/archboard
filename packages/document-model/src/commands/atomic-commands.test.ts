@@ -16,6 +16,7 @@ import { getGraphDocumentRoots } from '../schema/document.js';
 import { hydrateGraphDocument } from '../schema/hydrate.js';
 import { createLocalUndoManager, stopLocalUndoCapture } from '../undo/undo.js';
 import { editGraphText } from './text.js';
+import * as physicalReads from '../validation/read.js';
 import { restoreDeletedObjects } from './restore.js';
 import {
   createGraphObjects,
@@ -35,6 +36,33 @@ const MISSING_NODE_ORDINAL = 999;
 const OVER_LIMIT_NODE_ORDINAL = 10_000;
 
 describe('atomic editor commands', () => {
+  it('reads one physical graph for bulk geometry and deletion prevalidation', () => {
+    const document = hydrateGraphDocument(allEntityGraphFixture);
+    const read = vi.spyOn(physicalReads, 'readPhysicalGraph');
+    try {
+      setGraphGeometry(document, {
+        nodes: allEntityGraphFixture.nodes.map(({ id, position }) => ({ id, position })),
+        boundaries: allEntityGraphFixture.boundaries.map(({ id, rect }) => ({ id, rect })),
+      });
+      expect(read).toHaveBeenCalledTimes(1);
+      read.mockClear();
+      alignNodeGeometry(
+        document,
+        allEntityGraphFixture.nodes.map(({ id }) => id),
+        NODE_ALIGNMENTS.LEFT,
+      );
+      expect(read).toHaveBeenCalledTimes(1);
+      read.mockClear();
+      deleteGraphObjects(document, {
+        nodeIds: allEntityGraphFixture.nodes.map(({ id }) => id),
+        boundaryIds: allEntityGraphFixture.boundaries.map(({ id }) => id),
+      });
+      expect(read).toHaveBeenCalledTimes(1);
+    } finally {
+      read.mockRestore();
+      document.destroy();
+    }
+  });
   it('uses positive-area intersection for selection rectangles', () => {
     const selection = { x: 0, y: 0, width: 100, height: 100 };
     expect(rectanglesIntersect(selection, { x: 20, y: 20, width: 30, height: 30 })).toBe(true);

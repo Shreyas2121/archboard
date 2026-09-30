@@ -15,7 +15,7 @@ import type * as Y from 'yjs';
 
 import { BOUNDARY_FIELDS, NODE_FIELDS } from '../schema/constants.js';
 import { getGraphDocumentRoots } from '../schema/document.js';
-import { readPhysicalGraph } from '../validation/read.js';
+import { readPhysicalGraph, type PhysicalGraph } from '../validation/read.js';
 import { GraphCommandError } from './error.js';
 import {
   LOCAL_EDIT_ORIGIN,
@@ -75,13 +75,23 @@ export function setNodePositions(document: Y.Doc, positions: readonly NodePositi
 }
 
 export function setGraphGeometry(document: Y.Doc, batch: GeometryBatch): void {
+  if ((batch.nodes?.length ?? 0) + (batch.boundaries?.length ?? 0) === 0) return;
+  setGraphGeometryFromPhysical(document, batch, readPhysicalGraph(document));
+}
+
+/** Internal command composition: reuse the same pre-mutation validation read. */
+export function setGraphGeometryFromPhysical(
+  document: Y.Doc,
+  batch: GeometryBatch,
+  physical: PhysicalGraph,
+): void {
   const nodeChanges = batch.nodes ?? [];
   const boundaryChanges = batch.boundaries ?? [];
   assertUniqueIds(nodeChanges, 'Node geometry batch');
   assertUniqueIds(boundaryChanges, 'Boundary geometry batch');
 
   const nodes = nodeChanges.map((change) => {
-    const current = liveNode(document, change.id);
+    const current = liveNode(document, change.id, physical);
     graphNodeSchema.parse({
       ...current,
       position: change.position,
@@ -90,7 +100,7 @@ export function setGraphGeometry(document: Y.Doc, batch: GeometryBatch): void {
     return change;
   });
   const boundaries = boundaryChanges.map((change) => {
-    boundarySchema.parse({ ...liveBoundary(document, change.id), rect: change.rect });
+    boundarySchema.parse({ ...liveBoundary(document, change.id, physical), rect: change.rect });
     return change;
   });
   if (nodes.length === 0 && boundaries.length === 0) return;
@@ -117,13 +127,16 @@ export function createGraphObjects(document: Y.Doc, batch: GraphObjectBatch): vo
   const entities = [...nodes, ...edges, ...boundaries];
   assertUniqueIds(entities, 'Creation batch');
   for (const { id } of entities) assertFreshId(document, id);
-  assertLiveCapacity(document, {
-    nodes: nodes.length,
-    edges: edges.length,
-    boundaries: boundaries.length,
-  });
-
   const physical = readPhysicalGraph(document);
+  assertLiveCapacity(
+    document,
+    {
+      nodes: nodes.length,
+      edges: edges.length,
+      boundaries: boundaries.length,
+    },
+    physical,
+  );
   const availableNodeIds = new Set(
     [...physical.nodes.keys()].filter((id) => !physical.deletedNodes.has(id)),
   );
@@ -173,8 +186,8 @@ export function deleteGraphObjects(
   );
 
   const physical = readPhysicalGraph(document);
-  const nodes = nodeIds.map((id) => liveNode(document, id));
-  const boundaries = boundaryIds.map((id) => liveBoundary(document, id));
+  const nodes = nodeIds.map((id) => liveNode(document, id, physical));
+  const boundaries = boundaryIds.map((id) => liveBoundary(document, id, physical));
   const selectedNodes = new Set(nodeIds);
   const edgeIds = new Set(selectedEdgeIds);
   for (const edge of physical.edges.values()) {

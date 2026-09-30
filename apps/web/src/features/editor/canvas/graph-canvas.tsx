@@ -17,6 +17,7 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import { PresenceOverlay } from '@/features/collaboration/presence-overlay';
+import { EDITOR_CANCEL_GESTURES } from '@/features/editor/history/editor-shortcuts';
 import {
   SELECTION_KINDS,
   type SelectionReference,
@@ -33,7 +34,14 @@ import {
   CANVAS_MIN_ZOOM,
   DEFAULT_CANVAS_VIEWPORT,
 } from './canvas-config';
-import { CanvasProjectionAdapter, type CanvasEdge, type CanvasNode } from './projection-adapter';
+import {
+  CanvasProjectionAdapter,
+  type CanvasProjection,
+  type CanvasEdge,
+  type CanvasNode,
+} from './projection-adapter';
+import { CanvasGestures, reconcileCanvasNodes } from './canvas-gestures';
+import { CanvasRenderCache } from './canvas-render-cache';
 
 const NODE_TYPES = { 'graph-card': CardNode, 'graph-boundary': BoundaryNode } as const;
 const SNAP_GRID: [number, number] = [CANVAS_GRID_SIZE, CANVAS_GRID_SIZE];
@@ -48,7 +56,7 @@ interface GraphCanvasProps {
   readonly editable: boolean;
   readonly onConnect: (connection: Connection) => void;
   readonly onReconnect: (edgeId: string, connection: Connection) => void;
-  readonly onGeometryCommit: (batch: GeometryBatch) => void;
+  readonly onGeometryCommit: (batch: GeometryBatch) => GraphProjection | null;
 }
 
 export function GraphCanvas({
@@ -63,6 +71,10 @@ export function GraphCanvas({
   onGeometryCommit,
 }: GraphCanvasProps) {
   const adapter = useRef(new CanvasProjectionAdapter());
+  const renderCache = useRef(new CanvasRenderCache<CanvasNode>());
+  const boundaryRenderCache = useRef(new CanvasRenderCache<BoundaryCanvasNode>());
+  const projectionRef = useRef(projection);
+  projectionRef.current = projection;
   const canvasProjection = useMemo(() => adapter.current.adapt(projection), [projection]);
   const selection = useEditorSelection();
   const flow = useRef<ReactFlowInstance<EditorCanvasNode, CanvasEdge> | null>(null);
@@ -83,7 +95,13 @@ export function GraphCanvas({
   const actions = useEditorUiActions();
   const altPressed = useRef(false);
   const [altBypass, setAltBypass] = useState(false);
-  const gestureActive = useRef(false);
+  const gestures = useRef(new CanvasGestures());
+  const editableRef = useRef(editable);
+  editableRef.current = editable;
+  const completeGesture = useRef<(ids: readonly string[], batch: GeometryBatch) => void>(() => {});
+  const beginResize = useCallback((id: string) => {
+    if (editableRef.current) gestures.current.begin([id]);
+  }, []);
   const selectedNodeIds = useMemo(
     () =>
       new Set(selection.filter(({ kind }) => kind === SELECTION_KINDS.NODE).map(({ id }) => id)),
@@ -103,58 +121,88 @@ export function GraphCanvas({
   );
   const finishCardResize = useCallback(
     (id: string, rect: Rect): void => {
-      const node = projection.nodes.find((candidate) => candidate.id === id);
-      if (node === undefined) return;
-      onGeometryCommit({
-        nodes: [
-          normalizeNodeRect(node, rect, CANVAS_GRID_SIZE, gridSnapEnabled && !altPressed.current),
-        ],
+      const node = projectionRef.current.nodes.find((candidate) => candidate.id === id);
+      completeGesture.current([id], {
+        nodes:
+          node === undefined
+            ? []
+            : [
+                normalizeNodeRect(
+                  node,
+                  rect,
+                  CANVAS_GRID_SIZE,
+                  gridSnapEnabled && !altPressed.current,
+                ),
+              ],
       });
-      gestureActive.current = false;
     },
-    [gridSnapEnabled, onGeometryCommit, projection.nodes],
+    [gridSnapEnabled],
   );
   const finishBoundaryResize = useCallback(
     (id: string, rect: Rect): void => {
-      onGeometryCommit({
+      completeGesture.current([id], {
         boundaries: [
           normalizeBoundaryRect(id, rect, CANVAS_GRID_SIZE, gridSnapEnabled && !altPressed.current),
         ],
       });
-      gestureActive.current = false;
     },
-    [gridSnapEnabled, onGeometryCommit],
+    [gridSnapEnabled],
   );
-  const projectedNodes = useMemo<EditorCanvasNode[]>(
-    () => [
-      ...canvasProjection.boundaries.map<BoundaryCanvasNode>((boundary) => ({
-        id: boundary.id,
-        type: 'graph-boundary',
-        position: { x: boundary.rect.x, y: boundary.rect.y },
-        data: { boundary, editable, onResizeEnd: finishBoundaryResize },
-        style: { width: boundary.rect.width, height: boundary.rect.height },
-        selected: selectedBoundaryIds.has(boundary.id),
-        draggable: editable,
-        dragHandle: '.boundary-drag-handle',
-        className: '!pointer-events-none',
-        deletable: false,
-        selectable: true,
-        zIndex: -10,
-        ariaLabel: `Boundary: ${boundary.title || 'Untitled boundary'}`,
-      })),
+  const renderNodes = useCallback(
+    (canvasProjection: CanvasProjection): EditorCanvasNode[] => [
+      ...canvasProjection.boundaries.map<BoundaryCanvasNode>((boundary) =>
+        boundaryRenderCache.current.get(
+          boundary.id,
+          [
+            boundary,
+            editable,
+            selectedBoundaryIds.has(boundary.id),
+            beginResize,
+            finishBoundaryResize,
+          ],
+          () => ({
+            id: boundary.id,
+            type: 'graph-boundary',
+            position: { x: boundary.rect.x, y: boundary.rect.y },
+            data: {
+              boundary,
+              editable,
+              onResizeStart: beginResize,
+              onResizeEnd: finishBoundaryResize,
+            },
+            style: { width: boundary.rect.width, height: boundary.rect.height },
+            selected: selectedBoundaryIds.has(boundary.id),
+            draggable: editable,
+            dragHandle: '.boundary-drag-handle',
+            className: '!pointer-events-none',
+            deletable: false,
+            selectable: true,
+            zIndex: -10,
+            ariaLabel: `Boundary: ${boundary.title || 'Untitled boundary'}`,
+          }),
+        ),
+      ),
       ...canvasProjection.nodes.map((node) => {
         const selected = selectedNodeIds.has(node.id);
-        return {
-          ...node,
-          selected,
-          draggable: editable,
-          data: { ...node.data, editable, onResizeEnd: finishCardResize },
-        };
+        return renderCache.current.get(
+          node.id,
+          [node, selected, editable, beginResize, finishCardResize],
+          () => ({
+            ...node,
+            selected,
+            draggable: editable,
+            data: {
+              ...node.data,
+              editable,
+              onResizeStart: beginResize,
+              onResizeEnd: finishCardResize,
+            },
+          }),
+        );
       }),
     ],
     [
-      canvasProjection.boundaries,
-      canvasProjection.nodes,
+      beginResize,
       editable,
       finishBoundaryResize,
       finishCardResize,
@@ -162,8 +210,36 @@ export function GraphCanvas({
       selectedNodeIds,
     ],
   );
+  const projectedNodes = useMemo(
+    () => renderNodes(canvasProjection),
+    [canvasProjection, renderNodes],
+  );
   const [nodes, setNodes] = useState<EditorCanvasNode[]>(projectedNodes);
   const nodesRef = useRef(nodes);
+  const projectedRef = useRef(projectedNodes);
+  projectedRef.current = projectedNodes;
+  const reconcile = useCallback((canonical = projectedRef.current): void => {
+    const next = reconcileCanvasNodes(nodesRef.current, canonical, gestures.current.activeIds);
+    nodesRef.current = next;
+    setNodes(next);
+  }, []);
+  const cancelGestures = useCallback(() => {
+    gestures.current.cancel();
+    reconcile();
+    publishPresence({ dragPreview: null });
+  }, [reconcile, publishPresence]);
+  completeGesture.current = (ids, batch) => {
+    const active = gestures.current.finish(ids);
+    let committed: GraphProjection | null = null;
+    try {
+      if (active && editableRef.current) committed = onGeometryCommit(batch);
+    } finally {
+      const canonical =
+        committed === null ? projectedRef.current : renderNodes(adapter.current.adapt(committed));
+      reconcile(canonical);
+      publishPresence({ dragPreview: null });
+    }
+  };
   const edges = useMemo(
     () =>
       canvasProjection.edges.map((edge) => {
@@ -211,11 +287,13 @@ export function GraphCanvas({
   ]);
 
   useEffect(() => {
-    if (!gestureActive.current) {
-      nodesRef.current = projectedNodes;
-      setNodes(projectedNodes);
-    }
-  }, [projectedNodes]);
+    if (!editable) gestures.current.cancel();
+    const liveIds = new Set(projectedNodes.map(({ id }) => id));
+    renderCache.current.retain(liveIds);
+    boundaryRenderCache.current.retain(liveIds);
+    gestures.current.retain(liveIds);
+    reconcile(projectedNodes);
+  }, [editable, projectedNodes, reconcile]);
 
   useEffect(() => {
     const updateAlt = (pressed: boolean): void => {
@@ -224,25 +302,40 @@ export function GraphCanvas({
     };
     const keyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Alt') updateAlt(true);
-      if (event.key === 'Escape') actions.clearSelection();
     };
     const keyUp = (event: KeyboardEvent): void => {
       if (event.key === 'Alt') updateAlt(false);
     };
-    const blur = (): void => updateAlt(false);
+    const blur = (): void => {
+      updateAlt(false);
+      cancelGestures();
+    };
+    const cancel = (): void => cancelGestures();
     window.addEventListener('keydown', keyDown);
     window.addEventListener('keyup', keyUp);
     window.addEventListener('blur', blur);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('touchcancel', cancel);
+    window.addEventListener(EDITOR_CANCEL_GESTURES, cancel);
     return () => {
       window.removeEventListener('keydown', keyDown);
       window.removeEventListener('keyup', keyUp);
       window.removeEventListener('blur', blur);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('touchcancel', cancel);
+      window.removeEventListener(EDITOR_CANCEL_GESTURES, cancel);
     };
-  }, [actions]);
+  }, [cancelGestures]);
 
   const handleNodesChange = useCallback((changes: NodeChange<EditorCanvasNode>[]): void => {
     setNodes((current) => {
-      const next = applyNodeChanges(changes, current);
+      const allowed = changes.filter((change) => {
+        const gestureChange =
+          (change.type === 'position' && change.dragging !== undefined) ||
+          (change.type === 'dimensions' && change.resizing !== undefined);
+        return !gestureChange || (editableRef.current && gestures.current.activeIds.has(change.id));
+      });
+      const next = applyNodeChanges(allowed, current);
       nodesRef.current = next;
       return next;
     });
@@ -275,11 +368,12 @@ export function GraphCanvas({
             ),
           ),
       };
-      onGeometryCommit(batch);
-      publishPresence({ dragPreview: null });
-      gestureActive.current = false;
+      completeGesture.current(
+        draggedNodes.map(({ id }) => id),
+        batch,
+      );
     },
-    [gridSnapEnabled, onGeometryCommit, publishPresence],
+    [gridSnapEnabled],
   );
 
   return (
@@ -319,12 +413,15 @@ export function GraphCanvas({
       onEdgeClick={(event, edge) =>
         selectObject({ id: edge.id, kind: SELECTION_KINDS.EDGE }, event.shiftKey)
       }
-      onNodeDragStart={() => {
-        gestureActive.current = true;
+      onNodeDragStart={(_event, _node, draggedNodes) => {
+        if (editableRef.current) gestures.current.begin(draggedNodes.map(({ id }) => id));
       }}
       onNodeDragStop={finishDrag}
       onNodeDrag={(_event, _node, draggedNodes) => {
-        if (editable)
+        if (
+          editableRef.current &&
+          draggedNodes.some(({ id }) => gestures.current.activeIds.has(id))
+        )
           publishPresence({
             dragPreview: {
               positions: draggedNodes.map(({ id, position }) => ({ id, position })),

@@ -25,6 +25,7 @@ export const WRITER_SESSION_PHASES = {
 export type WriterSessionPhase = (typeof WRITER_SESSION_PHASES)[keyof typeof WRITER_SESSION_PHASES];
 
 export interface WriterSessionSnapshot {
+  readonly documentGeneration: number;
   readonly phase: WriterSessionPhase;
   readonly writable: boolean;
   readonly persistence: LocalPersistenceStatus | null;
@@ -77,6 +78,18 @@ export interface BrowserWriterSessionOptions {
 type SessionListener = () => void;
 type LockAttempt = 'acquired' | 'unavailable' | 'failed';
 
+async function cleanUp(steps: readonly (() => void | Promise<void>)[]): Promise<void> {
+  const errors: unknown[] = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) throw errors[0];
+}
+
 function defaultLockManager(): LockManagerLike | null {
   return typeof navigator !== 'undefined' && 'locks' in navigator ? navigator.locks : null;
 }
@@ -108,16 +121,22 @@ export class BrowserWriterSession {
   private readonly lifecycleTarget: PageLifecycleTarget | null;
   private readonly listeners = new Set<SessionListener>();
   private document: Y.Doc | null = null;
+  private documentGeneration = 0;
+  private projectionGeneration = -1;
+  private cachedProjection: ReturnType<LocalPersistenceAdapter['exportInMemoryProjection']> | null =
+    null;
   private persistence: LocalPersistenceAdapter | null = null;
   private unsubscribePersistence: (() => void) | null = null;
   private initialization: Promise<void> | null = null;
   private transition: Promise<void> | null = null;
   private closePromise: Promise<void> | null = null;
+  private disposal: Promise<void> | null = null;
   private lockRequest: Promise<void> | null = null;
   private releaseLock: (() => void) | null = null;
   private ownsLock = false;
   private closeRequested = false;
   private snapshot: WriterSessionSnapshot = Object.freeze({
+    documentGeneration: 0,
     phase: WRITER_SESSION_PHASES.OPENING,
     writable: false,
     persistence: null,
@@ -155,7 +174,10 @@ export class BrowserWriterSession {
   }
 
   public initialize(): Promise<void> {
-    this.initialization ??= this.initializeInternal();
+    if (this.closeRequested && this.initialization === null) return Promise.resolve();
+    this.initialization ??= this.initializeInternal().catch((error: unknown) =>
+      this.failAndDispose(error),
+    );
     return this.initialization;
   }
 
@@ -170,7 +192,11 @@ export class BrowserWriterSession {
 
   public getProjection(): GraphProjection {
     if (this.persistence === null) throw new Error('Writer session has not hydrated a document.');
-    return this.persistence.exportInMemoryProjection();
+    if (this.cachedProjection === null || this.projectionGeneration !== this.documentGeneration) {
+      this.cachedProjection = this.persistence.exportInMemoryProjection();
+      this.projectionGeneration = this.documentGeneration;
+    }
+    return this.cachedProjection;
   }
 
   public getWritableBinding(): WritableDocumentBinding | null {
@@ -196,33 +222,51 @@ export class BrowserWriterSession {
     return this.persistence.hadStoredStateOnOpen();
   }
 
-  public async replaceLocalState(initialize: (document: Y.Doc) => void): Promise<void> {
-    if (!this.ownsLock || this.snapshot.phase !== WRITER_SESSION_PHASES.WRITER) {
+  public replaceLocalState(initialize: (document: Y.Doc) => void): Promise<void> {
+    return this.runTransition(() => this.replaceLocalStateInternal(initialize));
+  }
+
+  private async replaceLocalStateInternal(initialize: (document: Y.Doc) => void): Promise<void> {
+    if (
+      this.closeRequested ||
+      !this.ownsLock ||
+      this.snapshot.phase !== WRITER_SESSION_PHASES.WRITER
+    ) {
       throw new WriterLockRequiredError();
     }
     this.publish(WRITER_SESSION_PHASES.OPENING);
     await this.closeView();
+    if (this.closeRequested) return;
     await deleteBoardStorageNamespace(this.options.namespace);
+    if (this.closeRequested) return;
     await this.openView('read-write');
     const binding = this.getBindingDuringOwnedTransition();
-    try {
-      initialize(binding.document);
-      await binding.persistence.whenIdle();
-    } finally {
-      this.publish(WRITER_SESSION_PHASES.WRITER);
-    }
+    initialize(binding.document);
+    await binding.persistence.whenIdle();
+    if (this.closeRequested) return;
+    this.publish(WRITER_SESSION_PHASES.WRITER);
     binding.persistence.assertEditingAllowed();
     this.announceResetComplete();
   }
 
   /** Call only after an explicit server-reload decision; keep the lock through deletion. */
-  public async clearOwnedLocalState(): Promise<void> {
-    if (!this.ownsLock || this.snapshot.phase !== WRITER_SESSION_PHASES.WRITER) {
+  public clearOwnedLocalState(): Promise<void> {
+    return this.runTransition(() => this.clearOwnedLocalStateInternal());
+  }
+
+  private async clearOwnedLocalStateInternal(): Promise<void> {
+    if (
+      this.closeRequested ||
+      !this.ownsLock ||
+      this.snapshot.phase !== WRITER_SESSION_PHASES.WRITER
+    ) {
       throw new WriterLockRequiredError();
     }
     this.publish(WRITER_SESSION_PHASES.OPENING);
     await this.closeView();
+    if (this.closeRequested) return;
     await deleteBoardStorageNamespace(this.options.namespace);
+    if (this.closeRequested) return;
     this.announceResetComplete();
   }
 
@@ -233,10 +277,27 @@ export class BrowserWriterSession {
     ) {
       return Promise.resolve();
     }
-    this.transition ??= this.retryInternal().finally(() => {
-      this.transition = null;
-    });
+    return this.transition ?? this.runTransition(() => this.retryInternal());
+  }
+
+  private runTransition(operation: () => Promise<void>): Promise<void> {
+    if (this.closeRequested || this.transition !== null) {
+      return Promise.reject(new WriterLockRequiredError());
+    }
+    this.transition = Promise.resolve()
+      .then(operation)
+      .catch((error: unknown) => this.failAndDispose(error))
+      .finally(() => {
+        this.transition = null;
+      });
     return this.transition;
+  }
+
+  private async failAndDispose(error: unknown): Promise<never> {
+    this.closeRequested = true;
+    // Preserve the operation error even if a cleanup step also fails.
+    await this.disposeResources().catch(() => undefined);
+    throw error;
   }
 
   public announceResetComplete(): void {
@@ -302,21 +363,25 @@ export class BrowserWriterSession {
   }
 
   private async openView(mode: 'read-write' | 'read-only'): Promise<void> {
+    if (this.closeRequested) return;
     const document = this.documentFactory();
-    const persistence = await LocalPersistenceAdapter.open({
+    this.document = document;
+    this.documentGeneration += 1;
+    document.on('afterTransaction', this.handleDocumentTransaction);
+    const persistence = LocalPersistenceAdapter.create({
       ...this.persistenceOptions,
       namespace: this.options.namespace,
       document,
       mode,
     });
+    this.persistence = persistence;
+    await persistence.initialize();
     if (this.closeRequested) {
-      await persistence.close();
-      document.destroy();
+      await this.closeView();
       return;
     }
-    this.document = document;
-    this.persistence = persistence;
     this.unsubscribePersistence = persistence.subscribe(this.handlePersistenceStatus);
+    document.on('update', this.handleDocumentUpdate);
   }
 
   private getBindingDuringOwnedTransition(): WritableDocumentBinding {
@@ -328,14 +393,23 @@ export class BrowserWriterSession {
   }
 
   private async closeView(): Promise<void> {
-    this.unsubscribePersistence?.();
+    const unsubscribe = this.unsubscribePersistence;
     this.unsubscribePersistence = null;
     const persistence = this.persistence;
     const document = this.document;
     this.persistence = null;
     this.document = null;
-    await persistence?.close();
-    document?.destroy();
+    this.documentGeneration += 1;
+    this.cachedProjection = null;
+    document?.off('afterTransaction', this.handleDocumentTransaction);
+    document?.off('update', this.handleDocumentUpdate);
+    await cleanUp([
+      () => unsubscribe?.(),
+      async () => {
+        await persistence?.close();
+      },
+      () => document?.destroy(),
+    ]);
   }
 
   private async tryAcquireLock(): Promise<LockAttempt> {
@@ -381,20 +455,26 @@ export class BrowserWriterSession {
       event.data.type === LOCK_HINT_TYPES.LOCK_RELEASED &&
       this.snapshot.phase === WRITER_SESSION_PHASES.READ_ONLY_HELD_ELSEWHERE
     ) {
-      void this.retry();
+      void this.retry().catch((error: unknown) => this.reportBackgroundFailure(error));
     } else if (
       event.data.type === LOCK_HINT_TYPES.RESET_COMPLETE &&
       this.snapshot.phase === WRITER_SESSION_PHASES.READ_ONLY_HELD_ELSEWHERE
     ) {
-      this.transition ??= this.refreshReadOnlyInternal().finally(() => {
-        this.transition = null;
-      });
+      if (this.transition === null) {
+        void this.runTransition(() => this.refreshReadOnlyInternal()).catch((error: unknown) =>
+          this.reportBackgroundFailure(error),
+        );
+      }
     }
   };
 
   private readonly handlePageHide = (): void => {
-    void this.close();
+    void this.close().catch((error: unknown) => this.reportBackgroundFailure(error));
   };
+
+  private reportBackgroundFailure(error: unknown): void {
+    console.error('Board writer session cleanup or transition failed.', error);
+  }
 
   private postHint(type: LockHintType): void {
     this.channel.postMessage({ version: WRITER_LOCK_VERSION, namespace: this.namespaceKey, type });
@@ -403,6 +483,7 @@ export class BrowserWriterSession {
   private publish(phase: WriterSessionPhase, lastHint = this.snapshot.lastHint): void {
     const persistence = this.persistence?.getSnapshot() ?? null;
     this.snapshot = Object.freeze({
+      documentGeneration: this.documentGeneration,
       phase,
       writable: phase === WRITER_SESSION_PHASES.WRITER && persistence?.editingPaused === false,
       persistence,
@@ -411,23 +492,53 @@ export class BrowserWriterSession {
     for (const listener of this.listeners) listener();
   }
 
+  private readonly handleDocumentTransaction = (transaction: Y.Transaction): void => {
+    if (transaction.changed.size > 0) this.documentGeneration += 1;
+  };
+
+  private readonly handleDocumentUpdate = (): void => {
+    if (!this.closeRequested) this.publish(this.snapshot.phase);
+  };
+
   private async closeInternal(): Promise<void> {
     this.closeRequested = true;
-    this.lifecycleTarget?.removeEventListener('pagehide', this.handlePageHide);
-    await this.initialization;
-    await this.transition;
+    await cleanUp([
+      async () => {
+        await this.initialization;
+      },
+      async () => {
+        await this.transition;
+      },
+      () => this.disposeResources(),
+    ]);
+  }
+
+  private disposeResources(): Promise<void> {
+    this.disposal ??= this.disposeResourcesInternal();
+    return this.disposal;
+  }
+
+  private async disposeResourcesInternal(): Promise<void> {
     const heldWriterLock = this.ownsLock;
-    if (heldWriterLock) this.publish(WRITER_SESSION_PHASES.RELEASING);
-    await this.closeView();
-    if (heldWriterLock) {
-      this.releaseLock?.();
-      this.releaseLock = null;
-      await this.lockRequest;
-      this.postHint(LOCK_HINT_TYPES.LOCK_RELEASED);
-    }
-    this.channel.removeEventListener('message', this.handleHint);
-    this.channel.close();
-    this.publish(WRITER_SESSION_PHASES.CLOSED);
-    this.listeners.clear();
+    await cleanUp([
+      () => this.lifecycleTarget?.removeEventListener('pagehide', this.handlePageHide),
+      () => {
+        if (heldWriterLock) this.publish(WRITER_SESSION_PHASES.RELEASING);
+      },
+      () => this.closeView(),
+      async () => {
+        this.releaseLock?.();
+        this.releaseLock = null;
+        await this.lockRequest;
+        this.ownsLock = false;
+      },
+      () => {
+        if (heldWriterLock) this.postHint(LOCK_HINT_TYPES.LOCK_RELEASED);
+      },
+      () => this.channel.removeEventListener('message', this.handleHint),
+      () => this.channel.close(),
+      () => this.publish(WRITER_SESSION_PHASES.CLOSED),
+      () => this.listeners.clear(),
+    ]);
   }
 }

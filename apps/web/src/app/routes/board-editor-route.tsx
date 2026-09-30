@@ -1,39 +1,22 @@
 import { useEffect, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
-import { GRAPH_SCHEMA_VERSION, applicationIdSchema } from '@archboard/contracts';
-import {
-  cacheBoardSummary,
-  readSelectedCachedBoard,
-  selectLocalAccount,
-} from '@archboard/sync-client';
+import { applicationIdSchema } from '@archboard/contracts';
 
 import { EditorShell } from '@/app/editor/editor-shell';
 import { useNarrowScreen } from '@/app/hooks/use-narrow-screen';
 import { Button } from '@/components/ui/button';
 import { SessionState, useCurrentUser } from '@/features/auth';
 import { NotFoundRoute } from './not-found-route';
-import { readBoard } from '@/features/boards/board-api';
-import { EditorSession, useEditorSession } from '@/features/editor/application';
-import { ApiClientError } from '@/platform/api';
-import { loadWebConfig } from '@/platform/config';
-
-const HTTP_SERVER_ERROR = 500;
+import { useEditorSession, type EditorSession } from '@/features/editor/application';
+import { serverUnavailable } from '@/platform/api';
+import { useBoardEditorLoader } from '@/app/editor/use-board-editor-loader';
+import type { BoardLoadStatus } from '@/app/editor/board-editor-loader';
 
 interface SessionEditorProps {
   readonly session: EditorSession;
   readonly boardTitle: string;
   readonly narrowScreen: boolean;
-}
-
-type OfflineRouteState = 'checking' | 'ready' | 'no-account' | 'unavailable' | 'cache-error';
-
-function serverUnavailable(error: unknown): boolean {
-  return (
-    error instanceof ApiClientError &&
-    (error.kind === 'network' ||
-      (error.kind === 'http' && (error.status ?? 0) >= HTTP_SERVER_ERROR))
-  );
 }
 
 function SessionEditor({ session, boardTitle, narrowScreen }: SessionEditorProps) {
@@ -52,7 +35,7 @@ function OfflineBoardState({
   state,
   onRetry,
 }: {
-  readonly state: Exclude<OfflineRouteState, 'ready'>;
+  readonly state: Exclude<BoardLoadStatus, 'ready'>;
   readonly onRetry: () => void;
 }) {
   if (state === 'checking')
@@ -107,11 +90,25 @@ export function BoardEditorRoute() {
   const navigate = useNavigate();
   const currentUser = useCurrentUser();
   const narrowScreen = useNarrowScreen();
-  const [session, setSession] = useState<EditorSession | null>(null);
-  const [sessionBoardId, setSessionBoardId] = useState<string | null>(null);
-  const [boardTitle, setBoardTitle] = useState('Board');
-  const [offlineState, setOfflineState] = useState<OfflineRouteState>('checking');
   const [retryAttempt, setRetryAttempt] = useState(0);
+  const mode = !validBoardId
+    ? 'none'
+    : currentUser.isError && serverUnavailable(currentUser.error)
+      ? 'offline'
+      : currentUser.data && !currentUser.isError
+        ? 'online'
+        : 'none';
+  const {
+    session,
+    boardTitle,
+    status: offlineState,
+  } = useBoardEditorLoader({
+    boardId,
+    accountId: currentUser.data?.id ?? null,
+    mode,
+    forceReadOnly: narrowScreen,
+    retryAttempt,
+  });
 
   useEffect(() => {
     if (currentUser.isSuccess && currentUser.data === null) {
@@ -119,125 +116,12 @@ export function BoardEditorRoute() {
     }
   }, [currentUser.data, currentUser.isSuccess, navigate]);
 
-  useEffect(() => {
-    if (!validBoardId) return;
-    const offlineSession = currentUser.isError && serverUnavailable(currentUser.error);
-    if (!offlineSession && !currentUser.data) return;
-    let active = true;
-    let current: EditorSession | null = null;
-    setSession(null);
-    setSessionBoardId(null);
-    setBoardTitle('Board');
-    setOfflineState('checking');
-    void (async () => {
-      const origin = window.location.origin;
-      let userId = currentUser.data?.id ?? null;
-      if (offlineSession) {
-        const selected = selectLocalAccount(origin, { kind: 'network-unavailable' });
-        if (selected === null) {
-          if (active) setOfflineState('no-account');
-          return;
-        }
-        userId = selected.userId;
-      }
-      if (userId === null) return;
-      const openCached = async (): Promise<boolean> => {
-        try {
-          const cached = await readSelectedCachedBoard(origin, boardId);
-          if (!active) return false;
-          if (cached === null || !cached.locallyAvailable) {
-            setOfflineState('unavailable');
-            return false;
-          }
-          if (current === null) {
-            current = new EditorSession({
-              deploymentOrigin: origin,
-              forceReadOnly: narrowScreen,
-              board: {
-                boardId,
-                userId,
-                webSocketOrigin: loadWebConfig(import.meta.env).webSocketOrigin,
-              },
-            });
-            await current.open();
-          }
-          if (!active) return false;
-          if (!current.useCachedBoardAccess(cached.role, cached.archived)) {
-            setOfflineState('unavailable');
-            await current.close();
-            current = null;
-            setSession(null);
-            return false;
-          }
-          setBoardTitle(cached.summary?.title ?? 'Cached board');
-          setSession(current);
-          setSessionBoardId(boardId);
-          setOfflineState('ready');
-          await current.startSync();
-          return true;
-        } catch {
-          await current?.close();
-          current = null;
-          if (active) setSession(null);
-          if (active) setOfflineState('cache-error');
-          return false;
-        }
-      };
-      if (offlineSession) {
-        await openCached();
-        return;
-      }
-      current = new EditorSession({
-        deploymentOrigin: origin,
-        forceReadOnly: narrowScreen,
-        board: { boardId, userId, webSocketOrigin: loadWebConfig(import.meta.env).webSocketOrigin },
-      });
-      setSession(current);
-      setSessionBoardId(boardId);
-      await current.open();
-      if (!active) return;
-      try {
-        const detail = await readBoard(boardId);
-        if (!active) return;
-        setBoardTitle(detail.title);
-        await current.setBoardAccess(detail.effectiveRole, detail.archivedAt !== null);
-        await cacheBoardSummary(
-          { deploymentOrigin: origin, userId, boardId, graphSchemaVersion: GRAPH_SCHEMA_VERSION },
-          detail,
-        ).catch(() => undefined);
-        if (active) await current.startSync();
-      } catch (error) {
-        if (!active) return;
-        if (serverUnavailable(error)) {
-          if (!(await openCached())) {
-            setSession(null);
-            await current?.close();
-          }
-        } else {
-          current.denyBoardAccess();
-        }
-      }
-    })();
-    return () => {
-      active = false;
-      void current?.close();
-    };
-  }, [
-    boardId,
-    currentUser.data,
-    currentUser.error,
-    currentUser.isError,
-    narrowScreen,
-    retryAttempt,
-    validBoardId,
-  ]);
-
   if (currentUser.isPending) return <SessionState state="loading" />;
   if (currentUser.isError && !serverUnavailable(currentUser.error))
     return <SessionState state="error" onRetry={() => void currentUser.refetch()} />;
   const retryOffline = () => {
-    if (offlineState === 'cache-error') setRetryAttempt((value) => value + 1);
-    else void currentUser.refetch();
+    setRetryAttempt((value) => value + 1);
+    void currentUser.refetch();
   };
   if (currentUser.isError && offlineState !== 'ready')
     return <OfflineBoardState state={offlineState} onRetry={retryOffline} />;
@@ -249,7 +133,7 @@ export function BoardEditorRoute() {
 
   return (
     <ReactFlowProvider>
-      {session === null || sessionBoardId !== boardId ? (
+      {session === null ? (
         <EditorShell
           boardTitle="Board"
           narrowScreen={narrowScreen}

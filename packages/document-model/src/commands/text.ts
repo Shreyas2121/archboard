@@ -87,9 +87,16 @@ export function resolveGraphText(document: Y.Doc, target: GraphTextTarget): Y.Te
   );
 }
 
-export function editGraphText(document: Y.Doc, target: GraphTextTarget, edit: TextEdit): void {
+export function editGraphText(
+  document: Y.Doc,
+  target: GraphTextTarget,
+  edit: TextEdit | readonly TextEdit[],
+): void {
   const text = resolveGraphText(document, target);
-  const value = editedValue(text.toString(), edit);
+  // Batch offsets refer to the result of the preceding edit. Validate the final
+  // value and every range before applying the batch in one local transaction.
+  const edits: readonly TextEdit[] = 'index' in edit ? [edit] : edit;
+  const value = edits.reduce(editedValue, text.toString());
   if (target.entity === 'node') validateNodeText(document, target, value);
   else if (target.entity === 'edge') {
     parseEdge({ ...liveEdge(document, target.id), [target.field]: value });
@@ -100,7 +107,9 @@ export function editGraphText(document: Y.Doc, target: GraphTextTarget, edit: Te
   }
 
   document.transact(() => {
-    if (edit.deleteCount > 0) text.delete(edit.index, edit.deleteCount);
-    if (edit.insert.length > 0) text.insert(edit.index, edit.insert);
+    for (const change of edits) {
+      if (change.deleteCount > 0) text.delete(change.index, change.deleteCount);
+      if (change.insert.length > 0) text.insert(change.index, change.insert);
+    }
   }, LOCAL_EDIT_ORIGIN);
 }

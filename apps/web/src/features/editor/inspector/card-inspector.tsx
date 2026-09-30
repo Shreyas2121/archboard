@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CODE_LANGUAGES,
   COLOR_TOKENS,
@@ -33,20 +33,27 @@ function ExternalUrlField({ node, session, disabled }: ExternalUrlFieldProps) {
   const id = `inspector-${node.id}-external-url`;
   const committed = node.content.externalUrl ?? '';
   const [draft, setDraft] = useState(committed);
-  const [dirty, setDirty] = useState(false);
+  const dirty = useRef(false);
+  const baseline = useRef<string | null>(node.content.externalUrl ?? null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!dirty) setDraft(committed);
-  }, [committed, dirty]);
+    if (!dirty.current) setDraft(committed);
+  }, [committed]);
 
   const cancel = (): void => {
     setDraft(committed);
-    setDirty(false);
+    dirty.current = false;
+    baseline.current = node.content.externalUrl ?? null;
     setError(null);
   };
   const commit = (): void => {
+    if (!dirty.current || disabled || !session.canEdit()) return;
     const externalUrl = draft.trim() || null;
+    if (externalUrl === baseline.current) {
+      cancel();
+      return;
+    }
     const candidate = {
       ...node,
       content: { ...node.content, externalUrl },
@@ -61,11 +68,15 @@ function ExternalUrlField({ node, session, disabled }: ExternalUrlFieldProps) {
       return;
     }
     try {
-      session.setComponentExternalUrl(node.id, externalUrl);
-      setDirty(false);
+      session.setComponentExternalUrl(node.id, externalUrl, baseline.current);
+      dirty.current = false;
+      baseline.current = externalUrl;
+      setDraft(externalUrl ?? '');
       setError(null);
     } catch {
-      setError('This URL could not be saved.');
+      setError(
+        'This URL could not be saved. A peer may have changed it; press Escape to load the current value.',
+      );
     }
   };
 
@@ -86,8 +97,9 @@ function ExternalUrlField({ node, session, disabled }: ExternalUrlFieldProps) {
         aria-describedby={error === null ? undefined : `${id}-error`}
         placeholder="https://example.com"
         onChange={(event) => {
+          if (!dirty.current) baseline.current = node.content.externalUrl ?? null;
           setDraft(event.target.value);
-          setDirty(true);
+          dirty.current = true;
           setError(null);
         }}
         onBlur={commit}

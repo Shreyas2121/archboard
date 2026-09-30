@@ -3,7 +3,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 
 import { EditorShell } from '@/app/editor/editor-shell';
 import { useNarrowScreen } from '@/app/hooks/use-narrow-screen';
-import { EditorSession, useEditorSession } from '@/features/editor/application';
+import { closeEditorSession, EditorSession, useEditorSession } from '@/features/editor/application';
 
 interface SessionEditorProps {
   readonly session: EditorSession;
@@ -27,7 +27,7 @@ export function DemoRoute() {
     setSession(current);
     void current.open();
     return () => {
-      void current.close();
+      void closeEditorSession(current);
     };
   }, [narrowScreen]);
 

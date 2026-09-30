@@ -11,6 +11,7 @@ import { loadWebConfig } from '@/platform/config';
 
 const API_ORIGIN = loadWebConfig(import.meta.env).apiOrigin;
 const HTTP_UNAUTHORIZED = 401;
+const HTTP_SERVER_ERROR = 500;
 
 export type ApiFailureKind = 'unauthenticated' | 'http' | 'network' | 'invalid-response';
 
@@ -24,6 +25,14 @@ export class ApiClientError extends Error {
     super(message);
     this.name = 'ApiClientError';
   }
+}
+
+export function serverUnavailable(error: unknown): boolean {
+  return (
+    error instanceof ApiClientError &&
+    (error.kind === 'network' ||
+      (error.kind === 'http' && (error.status ?? 0) >= HTTP_SERVER_ERROR))
+  );
 }
 
 type UnauthorizedListener = () => void;
@@ -74,10 +83,25 @@ export async function apiRequest<T>(
     );
   }
 
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    throw new ApiClientError(
+      response.ok ? 'network' : 'http',
+      response.status,
+      null,
+      'The API response could not be read.',
+    );
+  }
   let payload: unknown;
   try {
-    payload = await response.json();
+    payload = JSON.parse(body);
   } catch {
+    if (!response.ok) {
+      throw new ApiClientError('http', response.status, null, 'The API request failed.');
+    }
     throw new ApiClientError(
       'invalid-response',
       response.status,

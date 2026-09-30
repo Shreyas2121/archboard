@@ -35,6 +35,7 @@ export function CardNode({ data, selected }: NodeProps<CanvasNode>) {
         maxHeight={MAX_NODE_HEIGHT}
         handleClassName="!z-20 !size-3 !border-2 !border-background !bg-primary"
         lineClassName="!border-primary"
+        onResizeStart={() => data.onResizeStart?.(node.id)}
         onResizeEnd={(_event, rect) => data.onResizeEnd?.(node.id, rect)}
       />
       {card}
