@@ -9,6 +9,7 @@ const MAINTENANCE_INTERVAL_MS = 1_000;
 export class RoomMaintenanceService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | undefined;
   private running: Promise<void> | undefined;
+  private stopped = false;
 
   public constructor(
     @Inject(CollaborationRoomRegistry) private readonly rooms: CollaborationRoomRegistry,
@@ -26,11 +27,13 @@ export class RoomMaintenanceService implements OnModuleInit, OnModuleDestroy {
   }
 
   public async onModuleDestroy(): Promise<void> {
+    this.stopped = true;
     if (this.timer !== undefined) clearInterval(this.timer);
     await this.running?.catch(() => undefined);
   }
 
   public maintain(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
     if (this.running !== undefined) return this.running;
     const operation = this.rooms
       .compactDue(this.compactor)

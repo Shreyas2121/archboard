@@ -10,6 +10,7 @@ import {
 import { Worker } from 'node:worker_threads';
 import { existsSync } from 'node:fs';
 import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
+import { MAX_REPLAY_BYTES, MAX_REPLAY_RECORDS } from '../room/committed-graph.js';
 
 import {
   VALIDATION_FAILURE_KINDS,
@@ -24,6 +25,7 @@ import {
 export interface CandidateValidationInput {
   readonly acceptedState: Uint8Array;
   readonly update: Uint8Array;
+  readonly reconstruction?: ValidationWorkerRequest['reconstruction'];
 }
 
 export interface ValidationWorkerPoolOptions {
@@ -78,6 +80,12 @@ export class ValidationWorkerPool {
   private readonly workerUrl: URL;
   private readonly queue: ValidationJob[] = [];
   private readonly workers = new Set<Worker>();
+  private readonly cancelActive = new Map<Worker, () => void>();
+  private readonly finishedWorkers = new Map<
+    Worker,
+    { promise: Promise<void>; resolve: () => void }
+  >();
+  private closing?: Promise<void>;
   private nextDirective: ValidationWorkerDirective = VALIDATION_WORKER_DIRECTIVES.VALIDATE;
   private closed = false;
 
@@ -112,7 +120,16 @@ export class ValidationWorkerPool {
       !(input.acceptedState instanceof Uint8Array) ||
       !(input.update instanceof Uint8Array) ||
       input.acceptedState.byteLength > MAX_ENCODED_YJS_STATE_BYTES ||
-      input.update.byteLength > MAX_CLIENT_UPDATE_BYTES
+      input.update.byteLength > MAX_CLIENT_UPDATE_BYTES ||
+      (input.reconstruction !== undefined &&
+        (input.reconstruction.updates.length > MAX_REPLAY_RECORDS ||
+          input.reconstruction.updates.some(
+            (update) =>
+              !(update instanceof Uint8Array) || update.byteLength > MAX_CLIENT_UPDATE_BYTES,
+          ) ||
+          input.acceptedState.byteLength +
+            input.reconstruction.updates.reduce((bytes, update) => bytes + update.byteLength, 0) >
+            MAX_REPLAY_BYTES))
     ) {
       return Promise.reject(
         new ValidationWorkerError(
@@ -143,7 +160,18 @@ export class ValidationWorkerPool {
     return new Promise((resolve, reject) => {
       // Snapshot caller-owned buffers at admission, including jobs waiting in the queue.
       const job: ValidationJob = {
-        input: { acceptedState: input.acceptedState.slice(), update: input.update.slice() },
+        input: {
+          acceptedState: Uint8Array.from(input.acceptedState),
+          update: Uint8Array.from(input.update),
+          ...(input.reconstruction === undefined
+            ? {}
+            : {
+                reconstruction: {
+                  remap: input.reconstruction.remap,
+                  updates: input.reconstruction.updates.map((update) => Uint8Array.from(update)),
+                },
+              }),
+        },
         directive,
         resolve,
         reject,
@@ -153,11 +181,16 @@ export class ValidationWorkerPool {
     });
   }
 
-  public async close(): Promise<void> {
+  public close(): Promise<void> {
+    if (this.closing !== undefined) return this.closing;
     this.closed = true;
     const error = this.workerFailure('The validation worker pool is closed.');
     for (const job of this.queue.splice(0)) job.reject(error);
-    await Promise.all([...this.workers].map(async (worker) => worker.terminate()));
+    for (const cancel of this.cancelActive.values()) cancel();
+    this.closing = Promise.all(
+      [...this.finishedWorkers.values()].map((finished) => finished.promise),
+    ).then(() => undefined);
+    return this.closing;
   }
 
   private start(job: ValidationJob): void {
@@ -165,9 +198,23 @@ export class ValidationWorkerPool {
       acceptedState: job.input.acceptedState,
       update: job.input.update,
       directive: job.directive,
+      ...(job.input.reconstruction === undefined
+        ? {}
+        : { reconstruction: job.input.reconstruction }),
     };
-    const worker = new Worker(this.workerUrl, { workerData: request });
+    let worker: Worker;
+    try {
+      worker = new Worker(this.workerUrl, { workerData: request });
+    } catch {
+      job.reject(this.workerFailure());
+      return;
+    }
     this.workers.add(worker);
+    let resolveFinished!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      resolveFinished = resolve;
+    });
+    this.finishedWorkers.set(worker, { promise: finished, resolve: resolveFinished });
     let settled = false;
 
     const finish = (action: () => void): void => {
@@ -198,6 +245,9 @@ export class ValidationWorkerPool {
       );
     }, this.timeoutMs);
     timer.unref();
+    this.cancelActive.set(worker, () =>
+      finish(() => job.reject(this.workerFailure('The validation worker pool is closed.'))),
+    );
 
     worker.once('message', (response: ValidationWorkerResponse) => {
       finish(() => {
@@ -215,7 +265,7 @@ export class ValidationWorkerPool {
     });
     worker.once('error', () => finish(() => job.reject(this.workerFailure())));
     worker.once('exit', (code) => {
-      if (code !== 0) finish(() => job.reject(this.workerFailure()));
+      finish(() => job.reject(this.workerFailure(`The validation worker exited (${code}).`)));
     });
   }
 
@@ -229,6 +279,9 @@ export class ValidationWorkerPool {
 
   private finalize(worker: Worker, action: () => void): void {
     this.workers.delete(worker);
+    this.cancelActive.delete(worker);
+    this.finishedWorkers.get(worker)?.resolve();
+    this.finishedWorkers.delete(worker);
     action();
     this.drain();
   }

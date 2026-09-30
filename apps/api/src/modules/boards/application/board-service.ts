@@ -15,6 +15,7 @@ import {
   type ErrorCode,
   type PatchBoard,
 } from '@archboard/contracts';
+import type { BoardAccessNotification } from './board-access-notification.js';
 
 import {
   decideBoardPermission,
@@ -111,10 +112,7 @@ export class BoardService {
   public constructor(
     private readonly persistence: BoardPersistence,
     private readonly permissions: BoardPermissionService,
-    private readonly accessChanged: (
-      boardId: string,
-      userId?: string,
-    ) => Promise<void> = async () => undefined,
+    private readonly accessChanged: BoardAccessNotification = async () => undefined,
   ) {}
 
   public async create(

@@ -54,9 +54,16 @@ import {
 } from '../../application/room-registry.js';
 import { RoomLoadError } from '../room/postgres-room-loader.js';
 import { ValidationWorkerError } from '../validation-worker/index.js';
+import {
+  MAX_SOCKET_BUFFERED_BYTES,
+  MAX_PENDING_ACTIVATION_BYTES,
+  MAX_PENDING_ACTIVATION_FRAMES,
+} from '../../application/collaboration-limits.js';
 
 const CLOSE_POLICY_VIOLATION = 1008;
 const MILLISECONDS_PER_SECOND = 1_000;
+// Check every heartbeat and fail closed if the authority cannot answer within five seconds.
+const SESSION_LOOKUP_TIMEOUT_MS = 5_000;
 const READY_LIMITS = {
   maxClientUpdateBytes: MAX_CLIENT_UPDATE_BYTES,
   maxEncodedYjsStateBytes: MAX_ENCODED_YJS_STATE_BYTES,
@@ -89,6 +96,13 @@ interface ConnectionState extends AuthorizedBoardSocket {
   updateInFlight: boolean;
   updateTokens: number;
   updateRefillAt: number;
+  sessionCheck?: Promise<boolean>;
+  sessionDeadline?: NodeJS.Timeout;
+  cancelSessionCheck?: () => void;
+  accessChangedWhileJoining: boolean;
+  activation?: Promise<void>;
+  pendingActivationBytes: number;
+  pendingActivationFrames: number;
   reservation?: RoomReservation;
   unsubscribe?: () => void;
   deliverUpdate?: (update: { seq: string; updateBase64: string }) => void;
@@ -102,6 +116,8 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
 
   private readonly contexts = new WeakMap<IncomingMessage, AuthorizedBoardSocket>();
   private readonly connections = new Map<WebSocket, ConnectionState>();
+  private readonly operations = new Set<Promise<unknown>>();
+  private stopped = false;
 
   public constructor(
     @Inject(CollaborationRoomRegistry) private readonly rooms: CollaborationRoomRegistry,
@@ -116,6 +132,10 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     head: Buffer,
     context: AuthorizedBoardSocket,
   ): void {
+    if (this.stopped) {
+      socket.destroy();
+      return;
+    }
     this.contexts.set(request, context);
     this.server.handleUpgrade(request, socket, head, (websocket) => {
       this.server.emit('connection', websocket, request);
@@ -125,7 +145,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
   public handleConnection(websocket: WebSocket, request: IncomingMessage): void {
     const context = this.contexts.get(request);
     this.contexts.delete(request);
-    if (context === undefined) {
+    if (context === undefined || this.stopped) {
       websocket.terminate();
       return;
     }
@@ -138,10 +158,14 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       sessionHeaders: fromNodeHeaders(request.headers),
       helloDeadline,
       liveness: setInterval(() => {
-        if (Date.now() - state.lastPongAt > WS_PONG_TIMEOUT_MS) {
-          websocket.terminate();
+        if (
+          websocket.bufferedAmount > MAX_SOCKET_BUFFERED_BYTES ||
+          Date.now() - state.lastPongAt > WS_PONG_TIMEOUT_MS
+        ) {
+          this.terminate(websocket);
         } else if (websocket.readyState === WebSocket.OPEN) {
           websocket.ping();
+          void this.revalidateSession(websocket, state);
         }
       }, WS_PING_INTERVAL_MS),
       lastPongAt: Date.now(),
@@ -152,6 +176,9 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       updateInFlight: false,
       updateTokens: CONTENT_UPDATE_BURST,
       updateRefillAt: Date.now(),
+      accessChangedWhileJoining: false,
+      pendingActivationBytes: 0,
+      pendingActivationFrames: 0,
     };
     helloDeadline.unref();
     state.liveness.unref();
@@ -172,6 +199,8 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     state.closed = true;
     clearTimeout(state.helloDeadline);
     clearInterval(state.liveness);
+    clearTimeout(state.sessionDeadline);
+    state.cancelSessionCheck?.();
     state.unsubscribe?.();
     state.reservation?.release();
     this.connections.delete(websocket);
@@ -182,7 +211,11 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
   }
 
   /** Called after a board access transaction commits; the room queue orders socket state with updates. */
-  public async accessChanged(boardId: string, userId?: string): Promise<void> {
+  public accessChanged(boardId: string, userId?: string): Promise<void> {
+    return this.track(this.refreshAccess(boardId, userId));
+  }
+
+  private async refreshAccess(boardId: string, userId?: string): Promise<void> {
     const affected = [...this.connections].filter(
       ([, state]) => state.boardId === boardId && (userId === undefined || state.userId === userId),
     );
@@ -190,8 +223,9 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     try {
       await this.rooms.runIfActive(boardId, async () => {
         for (const [websocket, state] of affected) {
-          if (state.closed || !state.ready) continue;
+          if (!this.isOpen(websocket, state)) continue;
           const decision = await this.permissions.read(boardId, state.userId);
+          if (!this.isOpen(websocket, state)) continue;
           if (!decision.allowed) {
             reportCollaborationMetric('collaboration.access_reject', { count: 1 });
             this.send(websocket, {
@@ -199,7 +233,12 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
               data: { role: null, archived: false },
             });
             websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
+            this.handleDisconnect(websocket);
           } else {
+            if (!state.ready) {
+              state.accessChangedWhileJoining = true;
+              continue;
+            }
             this.send(websocket, {
               event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
               data: { role: decision.role, archived: decision.board.archivedAt !== null },
@@ -209,7 +248,10 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       });
     } catch {
       // A failed authority refresh must fail closed without changing the committed REST result.
-      for (const [websocket] of affected) websocket.terminate();
+      for (const [websocket] of affected) {
+        this.handleDisconnect(websocket);
+        websocket.terminate();
+      }
     }
   }
 
@@ -219,6 +261,28 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     raw: RawData,
     isBinary: boolean,
   ): void {
+    if (!this.isOpen(websocket, state)) return;
+    if (!state.ready && state.activation !== undefined) {
+      // Ready may reach the client while the final authority read is still pending.
+      const bytes = this.frameBytes(raw)?.byteLength ?? MAX_WS_FRAME_BYTES;
+      if (
+        state.pendingActivationFrames >= MAX_PENDING_ACTIVATION_FRAMES ||
+        state.pendingActivationBytes + bytes > MAX_PENDING_ACTIVATION_BYTES
+      ) {
+        this.terminate(websocket);
+        return;
+      }
+      state.pendingActivationFrames += 1;
+      state.pendingActivationBytes += bytes;
+      void state.activation
+        .then(() => {
+          state.pendingActivationFrames -= 1;
+          state.pendingActivationBytes -= bytes;
+          this.onMessage(websocket, state, raw, isBinary);
+        })
+        .catch(() => this.terminate(websocket));
+      return;
+    }
     const bytes = this.frameBytes(raw);
     if (isBinary || bytes === undefined) {
       websocket.close(CLOSE_POLICY_VIOLATION, 'Invalid client envelope');
@@ -241,7 +305,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       }
       state.joining = true;
       clearTimeout(state.helloDeadline);
-      void this.join(websocket, state);
+      void this.track(this.join(websocket, state));
       return;
     }
     if (message.event === CLIENT_EVENT_NAMES.HELLO) {
@@ -262,7 +326,9 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         return;
       }
       state.updateInFlight = true;
-      void this.acceptUpdate(websocket, state, message.data.updateId, message.data.updateBase64);
+      void this.track(
+        this.acceptUpdate(websocket, state, message.data.updateId, message.data.updateBase64),
+      );
       return;
     }
     this.sendError(websocket, ERROR_CODES.SERVER_BUSY, true);
@@ -342,30 +408,49 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
 
   private async join(websocket: WebSocket, state: ConnectionState): Promise<void> {
     try {
+      if (!(await this.revalidateSession(websocket, state))) return;
       const firstDecision = await this.permissions.read(state.boardId, state.userId);
+      if (!this.isOpen(websocket, state)) return;
       if (!firstDecision.allowed) {
         this.sendError(websocket, ERROR_CODES.NOT_FOUND, false);
         websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
+        this.handleDisconnect(websocket);
         return;
       }
       const reservation = await this.rooms.reserve(state.boardId);
+      // Ownership transfers only to a live connection. Disconnect may have run during loading.
+      if (!this.isOpen(websocket, state)) {
+        reservation.release();
+        return;
+      }
       state.reservation = reservation;
       await reservation.room.run(async () => {
-        if (state.closed) return;
+        if (!this.isOpen(websocket, state)) {
+          this.handleDisconnect(websocket);
+          return;
+        }
         const decision = await this.permissions.read(state.boardId, state.userId);
+        if (!this.isOpen(websocket, state)) {
+          this.handleDisconnect(websocket);
+          return;
+        }
         if (!decision.allowed) {
           this.sendError(websocket, ERROR_CODES.NOT_FOUND, false);
           websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
+          this.handleDisconnect(websocket);
           return;
         }
         const deliverUpdate = (update: { seq: string; updateBase64: string }) => {
+          if (!this.isOpen(websocket, state)) return;
           this.send(websocket, {
             event: SERVER_EVENT_NAMES.UPDATE,
             data: update,
           });
         };
         state.deliverUpdate = deliverUpdate;
-        const subscription = reservation.room.subscribe(deliverUpdate);
+        const subscription = reservation.room.subscribe(deliverUpdate, () =>
+          this.terminate(websocket),
+        );
         state.unsubscribe = subscription.unsubscribe;
         const snapshotBase64 = Buffer.from(
           Y.encodeStateAsUpdate(reservation.room.document),
@@ -380,33 +465,60 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
             limits: READY_LIMITS,
           },
         });
-        websocket.send(JSON.stringify(ready), (error) => {
-          if (error != null || state.closed) {
+        this.send(websocket, ready, (error) => {
+          if (error != null || !this.isOpen(websocket, state)) {
+            this.handleDisconnect(websocket);
             websocket.terminate();
             return;
           }
-          state.ready = true;
-          reportCollaborationMetric('collaboration.connections', {
-            activeSockets: this.connections.size,
-            activeRooms: this.rooms.activeRoomCount,
-          });
-          subscription.activate();
-          for (const peer of this.connections.values()) {
-            if (
-              peer !== state &&
-              peer.boardId === state.boardId &&
-              peer.presence !== undefined &&
-              Date.parse(peer.presence.data.expiresAt) > Date.now()
-            ) {
-              this.send(websocket, peer.presence);
-            }
-          }
-          if (decision.board.archivedAt !== null) {
-            this.send(websocket, {
-              event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
-              data: { role: decision.role, archived: true },
-            });
-          }
+          // Do not hold the queue while waiting for network delivery. Final activation rejoins
+          // the queue and reads current authority before flushing any buffered graph updates.
+          state.activation = this.track(
+            reservation.room
+              .run(async () => {
+                if (!this.isOpen(websocket, state)) return;
+                const current = await this.permissions.read(state.boardId, state.userId);
+                if (!this.isOpen(websocket, state)) return;
+                if (!current.allowed) {
+                  this.handleDisconnect(websocket);
+                  websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
+                  return;
+                }
+                state.ready = true;
+                reportCollaborationMetric('collaboration.connections', {
+                  activeSockets: this.connections.size,
+                  activeRooms: this.rooms.activeRoomCount,
+                });
+                if (
+                  state.accessChangedWhileJoining ||
+                  current.role !== decision.role ||
+                  current.board.archivedAt !== null
+                ) {
+                  this.send(websocket, {
+                    event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
+                    data: { role: current.role, archived: current.board.archivedAt !== null },
+                  });
+                }
+                subscription.activate();
+                for (const peer of this.connections.values()) {
+                  if (
+                    peer !== state &&
+                    peer.boardId === state.boardId &&
+                    peer.presence !== undefined &&
+                    Date.parse(peer.presence.data.expiresAt) > Date.now()
+                  ) {
+                    this.send(websocket, peer.presence);
+                  }
+                }
+              })
+              .catch(() => {
+                this.handleDisconnect(websocket);
+                websocket.terminate();
+              })
+              .finally(() => {
+                delete state.activation;
+              }),
+          );
         });
       });
     } catch (error) {
@@ -421,7 +533,52 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         code === ERROR_CODES.SERVER_BUSY || code === ERROR_CODES.ROOM_FULL,
       );
       websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
+      this.handleDisconnect(websocket);
     }
+  }
+
+  private isOpen(websocket: WebSocket, state: ConnectionState): boolean {
+    return !this.stopped && !state.closed && websocket.readyState === WebSocket.OPEN;
+  }
+
+  private revalidateSession(websocket: WebSocket, state: ConnectionState): Promise<boolean> {
+    if (!this.isOpen(websocket, state)) return Promise.resolve(false);
+    if (state.sessionCheck !== undefined) return state.sessionCheck;
+    const fail = () => {
+      this.handleDisconnect(websocket);
+      websocket.close(CLOSE_POLICY_VIOLATION, 'Session unavailable');
+    };
+    const timeout = new Promise<null>((resolve) => {
+      state.cancelSessionCheck = () => resolve(null);
+      state.sessionDeadline = setTimeout(() => {
+        fail();
+        resolve(null);
+      }, SESSION_LOOKUP_TIMEOUT_MS);
+      state.sessionDeadline.unref();
+    });
+    state.sessionCheck = Promise.race([
+      Promise.resolve().then(() => this.sessions.lookup(state.sessionHeaders)),
+      timeout,
+    ])
+      .then((session) => {
+        if (!this.isOpen(websocket, state)) return false;
+        if (session === null || session.userId !== state.userId) {
+          fail();
+          return false;
+        }
+        return true;
+      })
+      .catch(() => {
+        fail();
+        return false;
+      })
+      .finally(() => {
+        clearTimeout(state.sessionDeadline);
+        delete state.sessionDeadline;
+        delete state.cancelSessionCheck;
+        delete state.sessionCheck;
+      });
+    return state.sessionCheck;
   }
 
   private async acceptUpdate(
@@ -435,7 +592,9 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       const room = state.reservation?.room;
       if (room === undefined) throw new Error('Room reservation missing.');
       await room.run(async () => {
+        if (!this.isOpen(websocket, state)) return;
         const session = await this.sessions.lookup(state.sessionHeaders);
+        if (!this.isOpen(websocket, state)) return;
         if (session === null || session.userId !== state.userId) {
           throw new DurableUpdateRejectedError(ERROR_CODES.UNAUTHENTICATED, 'Session unavailable.');
         }
@@ -476,16 +635,54 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         code === ERROR_CODES.SERVER_BUSY || code === ERROR_CODES.PERSISTENCE_FAILED,
         updateId,
       );
-      if (code === ERROR_CODES.UNAUTHENTICATED)
+      if (code === ERROR_CODES.UNAUTHENTICATED) {
         websocket.close(CLOSE_POLICY_VIOLATION, 'Session unavailable');
+        this.handleDisconnect(websocket);
+      }
     } finally {
       state.updateInFlight = false;
     }
   }
 
-  private send(websocket: WebSocket, message: unknown): void {
-    if (websocket.readyState !== WebSocket.OPEN) return;
-    websocket.send(JSON.stringify(serverMessageSchema.parse(message)));
+  private send(websocket: WebSocket, message: unknown, delivered?: (error?: Error) => void): void {
+    const state = this.connections.get(websocket);
+    if (state === undefined || !this.isOpen(websocket, state)) return;
+    try {
+      const payload = JSON.stringify(serverMessageSchema.parse(message));
+      if (
+        websocket.bufferedAmount + Buffer.byteLength(payload, 'utf8') >
+        MAX_SOCKET_BUFFERED_BYTES
+      ) {
+        this.terminate(websocket);
+        return;
+      }
+      websocket.send(payload, (error) => {
+        if (error != null) this.terminate(websocket);
+        delivered?.(error ?? undefined);
+      });
+    } catch {
+      this.terminate(websocket);
+    }
+  }
+
+  private terminate(websocket: WebSocket): void {
+    this.handleDisconnect(websocket);
+    websocket.terminate();
+  }
+
+  private track<T>(operation: Promise<T>): Promise<T> {
+    this.operations.add(operation);
+    void operation.finally(() => this.operations.delete(operation)).catch(() => undefined);
+    return operation;
+  }
+
+  public stopAdmission(): void {
+    this.stopped = true;
+    for (const websocket of this.connections.keys()) this.terminate(websocket);
+  }
+
+  public async drain(): Promise<void> {
+    while (this.operations.size > 0) await Promise.allSettled([...this.operations]);
   }
 
   private sendError(

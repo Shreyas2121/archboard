@@ -15,6 +15,7 @@ import {
 
 import type { BoardPermissionService, BoardPermissionTransaction } from './permissions/index.js';
 import { BoardServiceError } from './board-service.js';
+import type { BoardAccessNotification } from './board-access-notification.js';
 
 export interface InviteCandidate {
   readonly id: string;
@@ -84,6 +85,7 @@ export class InviteService {
   public constructor(
     private readonly persistence: InvitePersistence,
     private readonly permissions: BoardPermissionService,
+    private readonly accessChanged: BoardAccessNotification = async () => undefined,
   ) {}
 
   public async create(
@@ -185,7 +187,8 @@ export class InviteService {
   }
 
   public async accept(actorUserId: string, token: string): Promise<InviteAcceptance> {
-    return this.persistence.run(async (scope) => {
+    let membershipChanged = false;
+    const result = await this.persistence.run(async (scope) => {
       const candidate = await scope.candidate(token);
       if (!candidate) unavailable();
       const board = await scope.board(candidate.boardId, true);
@@ -203,12 +206,16 @@ export class InviteService {
       }
       if (invite.expiresAt <= (await scope.now()))
         throw new BoardServiceError(ERROR_CODES.INVITE_EXPIRED, 'Invitation expired.');
+      const previousRole = await scope.effectiveRole(board, actorUserId);
       const role =
         actorUserId === board.ownerUserId
           ? BOARD_ROLES.OWNER
           : await scope.applyMembership(board.id, actorUserId, invite.role);
       await scope.markAccepted(board.id, invite.id, actorUserId);
+      membershipChanged = previousRole !== role;
       return { boardId: board.id, effectiveRole: role };
     });
+    if (membershipChanged) await this.accessChanged(result.boardId, actorUserId);
+    return result;
   }
 }

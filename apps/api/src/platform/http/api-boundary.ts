@@ -5,9 +5,6 @@ import { ERROR_CODES, apiErrorEnvelopeSchema, type ErrorCode } from '@archboard/
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { ZodError } from 'zod';
 
-import { BoardServiceError } from '../../modules/boards/application/board-service.js';
-import { IdempotencyConflictError } from '../../modules/boards/infrastructure/idempotency.js';
-
 interface RequestContext {
   requestId: string;
   actorId?: string;
@@ -75,17 +72,5 @@ export function validate<T>(schema: { parse(value: unknown): T }, value: unknown
       fail(ERROR_CODES.VALIDATION_ERROR, 'Invalid request.');
     }
     throw error;
-  }
-}
-
-export async function safe<T>(work: () => Promise<T>): Promise<T> {
-  try {
-    return await work();
-  } catch (error) {
-    if (error instanceof HttpException) throw error;
-    if (error instanceof BoardServiceError) fail(error.code, error.message);
-    if (error instanceof IdempotencyConflictError)
-      fail(ERROR_CODES.IDEMPOTENCY_CONFLICT, error.message);
-    fail(ERROR_CODES.TEMPORARILY_UNAVAILABLE, 'Service temporarily unavailable.');
   }
 }

@@ -66,6 +66,26 @@ afterEach(async () => {
 });
 
 describe('validation-worker', () => {
+  it.each([false, true])(
+    'reconstructs committed Buffer records in a real worker with remap=%s',
+    async (remap) => {
+      const fixture = createTypicalValidationFixture();
+      const result = await pool().validate({
+        acceptedState: Buffer.from(fixture.acceptedState),
+        update: new Uint8Array(),
+        reconstruction: { updates: [Buffer.from(fixture.update)], remap },
+      });
+      const document = new Y.Doc();
+      try {
+        Y.applyUpdate(document, result.candidateState);
+        validateGraphDocument(document);
+        const projection = projectGraphDocument(document);
+        expect(projection.nodes.length).toBeGreaterThan(0);
+      } finally {
+        document.destroy();
+      }
+    },
+  );
   it('uses the named operational bounds by default', () => {
     const created = pool();
     expect(created.timeoutMs).toBe(VALIDATION_TIMEOUT_MS);
@@ -182,20 +202,57 @@ describe('validation-worker', () => {
     await expect(created.validate(input)).resolves.toMatchObject({ ok: true });
   });
 
-  it('preserves a queued update snapshot if its caller changes the buffer', async () => {
-    const input = createTypicalValidationFixture();
-    const created = pool({
-      maxWorkers: 1,
-      maxQueueDepth: 1,
-      timeoutMs: FAULT_INJECTION_TIMEOUT_MS,
-    });
+  it.each(['Uint8Array', 'Buffer', 'sliced Buffer', 'subarray'] as const)(
+    'preserves queued %s bytes if the caller mutates both inputs',
+    async (kind) => {
+      const input = createTypicalValidationFixture();
+      const created = pool({
+        maxWorkers: 1,
+        maxQueueDepth: 1,
+        timeoutMs: FAULT_INJECTION_TIMEOUT_MS,
+      });
+      created.injectNextWorkerDirective(VALIDATION_WORKER_DIRECTIVES.HANG);
+      const hanging = created.validate(input);
+      const fixture = createTypicalValidationFixture();
+      const bytes = (value: Uint8Array): Uint8Array => {
+        if (kind === 'Buffer') return Buffer.from(value);
+        if (kind === 'sliced Buffer')
+          return Buffer.concat([Buffer.from([0]), Buffer.from(value), Buffer.from([0])]).subarray(
+            1,
+            value.length + 1,
+          );
+        if (kind === 'subarray')
+          return Uint8Array.from([0, ...value, 0]).subarray(1, value.length + 1);
+        return Uint8Array.from(value);
+      };
+      const queuedInput = {
+        acceptedState: bytes(fixture.acceptedState),
+        update: bytes(fixture.update),
+      };
+      const queued = created.validate(queuedInput);
+      queuedInput.update.fill(0);
+      queuedInput.acceptedState.fill(0);
+      await expect(hanging).rejects.toMatchObject({ kind: VALIDATION_FAILURE_KINDS.TIMEOUT });
+      await expect(queued).resolves.toMatchObject({ ok: true });
+    },
+  );
+
+  it('settles running and queued jobs before idempotent close completes', async () => {
+    const created = pool({ maxWorkers: 1, maxQueueDepth: 1 });
     created.injectNextWorkerDirective(VALIDATION_WORKER_DIRECTIVES.HANG);
-    const hanging = created.validate(input);
-    const queuedInput = createTypicalValidationFixture();
-    const queued = created.validate(queuedInput);
-    queuedInput.update.fill(0);
-    await expect(hanging).rejects.toMatchObject({ kind: VALIDATION_FAILURE_KINDS.TIMEOUT });
-    await expect(queued).resolves.toMatchObject({ ok: true });
+    const results = Promise.allSettled([
+      created.validate(createTypicalValidationFixture()),
+      created.validate(createTypicalValidationFixture()),
+    ]);
+    const firstClose = created.close();
+    expect(created.close()).toBe(firstClose);
+    await firstClose;
+    expect((await results).map((result) => result.status)).toEqual(['rejected', 'rejected']);
+    expect(created.activeWorkerCount).toBe(0);
+    expect(created.queueDepth).toBe(0);
+    await expect(created.validate(createTypicalValidationFixture())).rejects.toBeInstanceOf(
+      ValidationWorkerError,
+    );
   });
 
   it('accepts a causally complete concurrent move after an independent title edit', async () => {

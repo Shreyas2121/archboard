@@ -7,6 +7,7 @@ import { BetterAuthRequestActor } from './infrastructure/better-auth-request-act
 import { BetterAuthSessionLookup } from './infrastructure/better-auth-session-lookup.js';
 import { BetterAuthRuntime } from './infrastructure/better-auth.runtime.js';
 import { MeController } from './me.controller.js';
+import { AuthenticatedSessionGuard } from './authenticated-session.js';
 
 @Module({})
 export class AuthModule {
@@ -15,6 +16,7 @@ export class AuthModule {
       module: AuthModule,
       controllers: [MeController],
       providers: [
+        AuthenticatedSessionGuard,
         {
           provide: BetterAuthRuntime,
           useFactory: () => new BetterAuthRuntime(config),
@@ -29,7 +31,12 @@ export class AuthModule {
           useClass: BetterAuthRequestActor,
         },
       ],
-      exports: [BetterAuthRuntime, AUTH_SESSION_LOOKUP, AUTH_REQUEST_ACTOR],
+      exports: [
+        BetterAuthRuntime,
+        AUTH_SESSION_LOOKUP,
+        AUTH_REQUEST_ACTOR,
+        AuthenticatedSessionGuard,
+      ],
     };
   }
 }

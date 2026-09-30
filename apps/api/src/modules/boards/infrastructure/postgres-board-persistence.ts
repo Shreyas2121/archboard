@@ -1,19 +1,15 @@
 import { In, type DataSource, type QueryRunner } from 'typeorm';
 
+import { ERROR_CODES, GRAPH_SCHEMA_VERSION, type BoardListQuery } from '@archboard/contracts';
 import {
-  ERROR_CODES,
-  GRAPH_SCHEMA_VERSION,
-  MAX_ENCODED_YJS_STATE_BYTES,
-  type BoardListQuery,
-} from '@archboard/contracts';
+  CommittedGraphError,
+  readCommittedGraph,
+  requireCommittedRecords,
+} from '../../collaboration/infrastructure/room/committed-graph.js';
 import {
-  DocumentValidationError,
-  hydrateGraphDocument,
-  projectGraphDocument,
-  remapGraphProjection,
-  validateGraphDocument,
-} from '@archboard/document-model';
-import * as Y from 'yjs';
+  ValidationWorkerError,
+  ValidationWorkerPool,
+} from '../../collaboration/infrastructure/validation-worker/index.js';
 
 import type { BoardPersistence, BoardView, BoardWriteScope } from '../application/board-service.js';
 import { BoardServiceError } from '../application/board-service.js';
@@ -39,13 +35,14 @@ interface CountRow {
   count: number;
 }
 
-const SEQUENCE_INCREMENT = 1n;
-
 export class PostgresBoardPersistence implements BoardPersistence {
   private readonly transactions: BoardTransaction;
   private readonly idempotency: IdempotencyService;
 
-  public constructor(dataSource: DataSource) {
+  public constructor(
+    dataSource: DataSource,
+    private readonly workers = new ValidationWorkerPool(),
+  ) {
     this.transactions = new BoardTransaction(dataSource);
     this.idempotency = new IdempotencyService(dataSource);
   }
@@ -107,43 +104,25 @@ export class PostgresBoardPersistence implements BoardPersistence {
           byteLength: updateBytes.byteLength,
         }),
       loadCommittedGraph: async (boardId, latestSeq) => {
-        const graph = await new CommittedGraphRepository(runner).load(boardId, latestSeq);
-        if (
-          !graph ||
-          graph.snapshot.schemaVersion !== GRAPH_SCHEMA_VERSION ||
-          BigInt(graph.snapshot.throughSeq) > BigInt(latestSeq) ||
-          graph.snapshot.byteLength !== graph.snapshot.updateBytes.byteLength
-        )
-          throw new BoardServiceError(
-            ERROR_CODES.DOCUMENT_INVALID,
-            'Committed board content is invalid.',
-          );
-        const document = new Y.Doc();
         try {
-          Y.applyUpdate(document, graph.snapshot.updateBytes);
-          let expected = BigInt(graph.snapshot.throughSeq);
-          for (const update of graph.updates) {
-            expected += SEQUENCE_INCREMENT;
-            if (BigInt(update.sequence) !== expected)
-              throw new Error('Committed graph sequence has a gap.');
-            Y.applyUpdate(document, update.updateBytes);
-          }
-          if (expected !== BigInt(latestSeq))
-            throw new Error('Committed graph sequence is incomplete.');
-          validateGraphDocument(document);
-          const copy = hydrateGraphDocument(remapGraphProjection(projectGraphDocument(document)));
-          validateGraphDocument(copy);
-          const bytes = Y.encodeStateAsUpdate(copy);
-          if (bytes.byteLength > MAX_ENCODED_YJS_STATE_BYTES)
-            throw new BoardServiceError(
-              ERROR_CODES.DOCUMENT_LIMIT,
-              'Duplicated board content exceeds the size limit.',
-            );
-          return bytes;
+          const graph = await readCommittedGraph(runner.manager, boardId);
+          requireCommittedRecords(graph, latestSeq);
+          const result = await this.workers.validate({
+            acceptedState: graph.snapshot.updateBytes,
+            update: new Uint8Array(),
+            reconstruction: {
+              updates: graph.updates.map((update) => update.updateBytes),
+              remap: true,
+            },
+          });
+          return result.candidateState;
         } catch (error) {
           if (error instanceof BoardServiceError) throw error;
-          if (error instanceof DocumentValidationError)
-            throw new BoardServiceError(error.code, 'Committed board content is invalid.');
+          if (error instanceof CommittedGraphError || error instanceof ValidationWorkerError)
+            throw new BoardServiceError(
+              error.code === ERROR_CODES.CAUSAL_GAP ? ERROR_CODES.DOCUMENT_INVALID : error.code,
+              'Committed board content is invalid.',
+            );
           throw new BoardServiceError(
             ERROR_CODES.DOCUMENT_INVALID,
             'Committed board content is invalid.',

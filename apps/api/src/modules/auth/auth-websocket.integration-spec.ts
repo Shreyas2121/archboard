@@ -19,10 +19,12 @@ import {
   ROOM_IDLE_EVICTION_MS,
   PROTOCOL_VERSION,
   SERVER_EVENT_NAMES,
+  WS_PING_INTERVAL_MS,
   serverMessageSchema,
 } from '@archboard/contracts';
 import {
   createEdge,
+  createGraphDocument,
   createNode,
   editGraphText,
   hydrateGraphDocument,
@@ -47,6 +49,7 @@ import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300
 import { RetainCompactedUpdateReceipts1790426800000 } from '../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
 import { BoardEntity } from '../boards/infrastructure/entities/board.entity.js';
 import { BoardService } from '../boards/application/board-service.js';
+import { InviteService } from '../boards/application/invite-service.js';
 import { createEmptyBoardSnapshot } from '../boards/infrastructure/empty-board-snapshot.js';
 import { BoardSnapshotEntity } from '../collaboration/infrastructure/entities/board-snapshot.entity.js';
 import { BoardUpdateEntity } from '../collaboration/infrastructure/entities/board-update.entity.js';
@@ -54,6 +57,14 @@ import { UpdateReceiptEntity } from '../collaboration/infrastructure/entities/up
 import { CollaborationRoomRegistry } from '../collaboration/application/room-registry.js';
 import { PostgresRoomCompactor } from '../collaboration/infrastructure/room/postgres-room-compactor.js';
 import { PostgresRoomLoader } from '../collaboration/infrastructure/room/postgres-room-loader.js';
+import { CollaborationGateway } from '../collaboration/infrastructure/websocket/collaboration.gateway.js';
+import { MAX_SOCKET_BUFFERED_BYTES } from '../collaboration/application/collaboration-limits.js';
+import { CollaborationUpdateService } from '../collaboration/application/collaboration-update-service.js';
+import {
+  ValidationWorkerPool,
+  VALIDATION_WORKER_DIRECTIVES,
+} from '../collaboration/infrastructure/validation-worker/index.js';
+import { createTypicalValidationFixture } from '../collaboration/infrastructure/validation-worker/validation-worker.fixtures.js';
 import {
   DURABLE_UPDATE_FAILPOINTS,
   DurableUpdateFailpointController,
@@ -324,6 +335,7 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
   let viewerId: string;
   let boardId: string;
   let testEmail: string;
+  let applicationClosed = false;
 
   beforeAll(async () => {
     const directUrl = process.env.DATABASE_DIRECT_URL;
@@ -447,7 +459,7 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
 
   afterAll(async () => {
     try {
-      await application?.close();
+      if (!applicationClosed) await application?.close();
       if (database?.isInitialized) await database.destroy();
     } finally {
       if (admin) {
@@ -1543,6 +1555,217 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
     }
   });
 
+  it('promotes a connected viewer after committed invite acceptance without replay notifications', async () => {
+    application.get(CollaborationRoomRegistry).evictIdle(Date.now() + ROOM_IDLE_EVICTION_MS);
+    const board = await createUpdateBoard(true);
+    const viewer = await joinRoom(board.url, viewerCookie);
+    try {
+      const invites = application.get(InviteService);
+      const invite = await invites.create(ownerId, board.id, randomUUID(), { role: 'editor' });
+      const token = new URL(invite.inviteUrl!).pathname.split('/').at(-1)!;
+      const changed = waitForEvent(viewer.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+      expect(await invites.accept(viewerId, token)).toMatchObject({ effectiveRole: 'editor' });
+      expect(await changed).toMatchObject({ data: { role: 'editor', archived: false } });
+      const unexpected: unknown[] = [];
+      viewer.socket.on('message', (raw) => {
+        const message = serverMessageSchema.parse(JSON.parse(raw.toString()));
+        if (message.event === SERVER_EVENT_NAMES.ACCESS_CHANGED) unexpected.push(message);
+      });
+      await invites.accept(viewerId, token);
+      const unchanged = await invites.create(ownerId, board.id, randomUUID(), { role: 'viewer' });
+      await invites.accept(viewerId, new URL(unchanged.inviteUrl!).pathname.split('/').at(-1)!);
+      const { bytes } = makeNodeUpdate(viewer.ready.snapshotBase64, 'Promoted editor');
+      expect(await sendUpdate(viewer.socket, randomUUID(), bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+      });
+      expect(unexpected).toEqual([]);
+    } finally {
+      await closeWebSocket(viewer.socket);
+    }
+  });
+
+  it('disconnects a slow outbound socket while healthy peers receive a commit and reconnect recovers it', async () => {
+    application.get(CollaborationRoomRegistry).evictIdle(Date.now() + ROOM_IDLE_EVICTION_MS);
+    const board = await createUpdateBoard(true);
+    const owner = await joinRoom(board.url, sessionCookie);
+    const gateway = application.get(CollaborationGateway);
+    const previousEndpoints = new Set(gateway.server.clients);
+    const slow = await joinRoom(board.url, viewerCookie);
+    const overloaded = [...gateway.server.clients].find((socket) => !previousEndpoints.has(socket));
+    const healthy = await joinRoom(board.url, sessionCookie);
+    try {
+      // Only the server endpoint sending ready to this viewer gets the synthetic ws backlog.
+      if (overloaded === undefined) throw new Error('Server endpoint missing.');
+      Object.defineProperty(overloaded, 'bufferedAmount', {
+        configurable: true,
+        get: () => MAX_SOCKET_BUFFERED_BYTES,
+      });
+      const removed = waitForClose(slow.socket);
+      const received = waitForEvent(healthy.socket, SERVER_EVENT_NAMES.UPDATE);
+      const { bytes, nodeId } = makeNodeUpdate(owner.ready.snapshotBase64, 'Recover slow reader');
+      expect(await sendUpdate(owner.socket, randomUUID(), bytes)).toMatchObject({
+        event: SERVER_EVENT_NAMES.ACK,
+        data: { seq: '1' },
+      });
+      expect(await received).toMatchObject({ data: { seq: '1' } });
+      await removed;
+      const reconnected = await joinRoom(board.url, viewerCookie);
+      const recovered = createGraphDocument();
+      try {
+        Y.applyUpdate(recovered, Buffer.from(reconnected.ready.snapshotBase64, 'base64'));
+        expect(reconnected.ready.latestSeq).toBe('1');
+        expect(projectGraphDocument(recovered).nodes.some((node) => node.id === nodeId)).toBe(true);
+      } finally {
+        recovered.destroy();
+        await closeWebSocket(reconnected.socket);
+      }
+    } finally {
+      await Promise.all([
+        closeWebSocket(owner.socket),
+        closeWebSocket(slow.socket),
+        closeWebSocket(healthy.socket),
+      ]);
+    }
+  });
+
+  it.each(['demote', 'archive', 'remove'] as const)(
+    'orders %s through BoardService while ready delivery is pending',
+    async (transition) => {
+      application.get(CollaborationRoomRegistry).evictIdle(Date.now() + ROOM_IDLE_EVICTION_MS);
+      const board = await createUpdateBoard(true);
+      const boards = application.get(BoardService);
+      await boards.changeMemberRole(ownerId, board.id, viewerId, { role: 'editor' });
+      const owner = await joinRoom(board.url, sessionCookie);
+      const originalSend = WebSocket.prototype.send;
+      let releaseReady: (() => void) | undefined;
+      const spy = jest.spyOn(WebSocket.prototype, 'send').mockImplementation(function (
+        this: WebSocket,
+        data: Parameters<WebSocket['send']>[0],
+        optionsOrCallback?: Parameters<WebSocket['send']>[1] | ((error?: Error) => void),
+        callback?: (error?: Error) => void,
+      ) {
+        const ready =
+          typeof data === 'string'
+            ? (JSON.parse(data) as { event?: string; data?: { role?: string } })
+            : null;
+        if (
+          ready?.event === SERVER_EVENT_NAMES.READY &&
+          ready.data?.role === 'editor' &&
+          typeof optionsOrCallback === 'function'
+        ) {
+          originalSend.call(this, data, {}, (error?: Error) => {
+            releaseReady = () => optionsOrCallback(error);
+          });
+          return;
+        }
+        if (typeof optionsOrCallback === 'function')
+          originalSend.call(this, data, {}, optionsOrCallback);
+        else originalSend.call(this, data, optionsOrCallback ?? {}, callback);
+      });
+      let editor: Awaited<ReturnType<typeof joinRoom>> | undefined;
+      try {
+        editor = await joinRoom(board.url, viewerCookie);
+        const updates: string[] = [];
+        editor.socket.on('message', (raw) => {
+          const message = serverMessageSchema.parse(JSON.parse(raw.toString()));
+          if (message.event === SERVER_EVENT_NAMES.UPDATE) updates.push(message.data.seq);
+        });
+        const changed = waitForEvent(editor.socket, SERVER_EVENT_NAMES.ACCESS_CHANGED);
+        const closed = transition === 'remove' ? waitForClose(editor.socket) : undefined;
+        if (transition === 'demote')
+          await boards.changeMemberRole(ownerId, board.id, viewerId, { role: 'viewer' });
+        else if (transition === 'archive')
+          await boards.archive(ownerId, board.id, { expectedVersion: 1 });
+        else await boards.removeMember(ownerId, board.id, viewerId);
+        releaseReady?.();
+        expect(await changed).toMatchObject({
+          data: {
+            role: transition === 'remove' ? null : transition === 'demote' ? 'viewer' : 'editor',
+            archived: transition === 'archive',
+          },
+        });
+        if (closed !== undefined) {
+          expect(await closed).toBe(CLOSE_POLICY_VIOLATION);
+          const { bytes } = makeNodeUpdate(owner.ready.snapshotBase64, 'After removal');
+          expect(await sendUpdate(owner.socket, randomUUID(), bytes)).toMatchObject({
+            event: SERVER_EVENT_NAMES.ACK,
+          });
+          expect(updates).toEqual([]);
+        }
+      } finally {
+        releaseReady?.();
+        spy.mockRestore();
+        await closeWebSocket(owner.socket);
+        if (editor !== undefined) await closeWebSocket(editor.socket);
+      }
+    },
+  );
+
+  it.each(['expire', 'revoke'] as const)(
+    'disconnects a read-only responsive socket after Better Auth sessions %s',
+    async (transition) => {
+      application.get(CollaborationRoomRegistry).evictIdle(Date.now() + ROOM_IDLE_EVICTION_MS);
+      // Better Auth deletes expired sessions during lookup; each scenario needs its own session.
+      const users = (await database.query('SELECT email FROM "user" WHERE id = $1', [
+        viewerId,
+      ])) as { email: string }[];
+      const signedIn = await fetch(`${authUrl}/api/auth/sign-in/email`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: ALLOWED_FRONTEND_ORIGIN },
+        body: JSON.stringify({ email: users[0]!.email, password: 'correct-horse-battery-staple' }),
+      });
+      expect(signedIn.status).toBe(HTTP_OK);
+      const readerCookie = signedIn.headers
+        .getSetCookie()
+        .find((header) => header.includes('.session_token='))!
+        .split(';', 1)[0]!;
+      const board = await createUpdateBoard(true);
+      const owner = await joinRoom(board.url, sessionCookie);
+      const viewer = await joinRoom(board.url, readerCookie);
+      const updates: string[] = [];
+      viewer.socket.on('message', (raw) => {
+        const message = serverMessageSchema.parse(JSON.parse(raw.toString()));
+        if (message.event === SERVER_EVENT_NAMES.UPDATE) updates.push(message.data.seq);
+      });
+      try {
+        const closed = new Promise<number>((resolve, reject) => {
+          const deadline = setTimeout(
+            () => reject(new Error('Reader session was not revalidated.')),
+            WS_PING_INTERVAL_MS + CLIENT_EVENT_TIMEOUT_MS,
+          );
+          viewer.socket.once('close', (code) => {
+            clearTimeout(deadline);
+            resolve(code);
+          });
+        });
+        if (transition === 'expire') {
+          await database.query('UPDATE "session" SET "expiresAt" = $1 WHERE "userId" = $2', [
+            new Date(0),
+            viewerId,
+          ]);
+        } else {
+          const response = await fetch(`${authUrl}/api/auth/sign-out`, {
+            method: 'POST',
+            headers: { cookie: readerCookie, origin: ALLOWED_FRONTEND_ORIGIN },
+          });
+          expect(response.status).toBe(HTTP_OK);
+        }
+        expect(await closed).toBe(CLOSE_POLICY_VIOLATION);
+        const { bytes } = makeNodeUpdate(
+          owner.ready.snapshotBase64,
+          'After reader session invalidation',
+        );
+        expect(await sendUpdate(owner.socket, randomUUID(), bytes)).toMatchObject({
+          event: SERVER_EVENT_NAMES.ACK,
+        });
+        expect(updates).toEqual([]);
+        expect(application.get(CollaborationRoomRegistry).connectionCount(board.id)).toBe(1);
+      } finally {
+        await Promise.all([closeWebSocket(owner.socket), closeWebSocket(viewer.socket)]);
+      }
+    },
+  );
+
   it('rejects a write when the session expires after ready', async () => {
     const board = await createUpdateBoard();
     const owner = await joinRoom(board.url, sessionCookie);
@@ -1563,6 +1786,77 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
       expect(rows[0]!.seq).toBe('0');
     } finally {
       await closeWebSocket(owner.socket);
+    }
+  });
+
+  it('closes Nest with running validations and a transaction pending after validation', async () => {
+    const board = await createUpdateBoard();
+    const rooms = application.get(CollaborationRoomRegistry);
+    const reservation = await rooms.reserve(board.id);
+    const appDatabase = application.get(DataSource);
+    const workers = application.get(ValidationWorkerPool);
+    const snapshotBase64 = Buffer.from(Y.encodeStateAsUpdate(reservation.room.document)).toString(
+      'base64',
+    );
+    const { bytes } = makeNodeUpdate(snapshotBase64, 'Commit during shutdown');
+    let release!: () => void;
+    let reached!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    application
+      .get(DurableUpdateFailpointController)
+      .arm(DURABLE_UPDATE_FAILPOINTS.AFTER_VALIDATION_BEFORE_TRANSACTION, async () => {
+        reached();
+        await held;
+        expect(appDatabase.isInitialized).toBe(true);
+      });
+    const update = reservation.room.run(() =>
+      application.get(CollaborationUpdateService).accept(reservation.room, {
+        actorUserId: ownerId,
+        updateId: randomUUID(),
+        updateBytes: bytes,
+      }),
+    );
+    await barrier;
+    workers.injectNextWorkerDirective(VALIDATION_WORKER_DIRECTIVES.HANG);
+    const running = workers.validate(createTypicalValidationFixture());
+    workers.injectNextWorkerDirective(VALIDATION_WORKER_DIRECTIVES.HANG);
+    const otherRunning = workers.validate(createTypicalValidationFixture());
+    const queued = workers.validate(createTypicalValidationFixture());
+    const results = Promise.allSettled([running, otherRunning, queued]);
+    let destroyed = false;
+    reservation.room.document.on('destroy', () => {
+      destroyed = true;
+    });
+    const closing = application.close();
+    try {
+      expect((await results).map((result) => result.status)).toEqual([
+        'rejected',
+        'rejected',
+        'rejected',
+      ]);
+      expect(appDatabase.isInitialized).toBe(true);
+      expect(destroyed).toBe(false);
+      release();
+      expect(await update).toMatchObject({ sequence: '1', duplicate: false });
+      reservation.release();
+      await closing;
+      applicationClosed = true;
+      expect(workers.activeWorkerCount).toBe(0);
+      expect(rooms.activeRoomCount).toBe(0);
+      expect(destroyed).toBe(true);
+      expect(appDatabase.isInitialized).toBe(false);
+      expect(
+        (await database.getRepository(BoardEntity).findOneByOrFail({ id: board.id })).latestSeq,
+      ).toBe('1');
+    } finally {
+      release();
+      await closing;
+      applicationClosed = true;
     }
   });
 });

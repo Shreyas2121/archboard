@@ -7,6 +7,7 @@ import {
 import { DocumentValidationError, validateGraphDocument } from '@archboard/document-model';
 import { parentPort, workerData } from 'node:worker_threads';
 import * as Y from 'yjs';
+import { CommittedGraphError, reconstructGraphBytes } from '../room/committed-graph.js';
 
 import {
   assertCausallyComplete,
@@ -31,6 +32,14 @@ function failure(
 }
 
 function mapFailure(error: unknown): ValidationWorkerResponse {
+  if (error instanceof CommittedGraphError)
+    return failure(
+      error.code,
+      error.code === ERROR_CODES.DOCUMENT_LIMIT
+        ? VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT
+        : VALIDATION_FAILURE_KINDS.DOCUMENT_INVALID,
+      error.message,
+    );
   if (error instanceof CausallyIncompleteUpdateError) {
     return failure(
       ERROR_CODES.CAUSAL_GAP,
@@ -73,6 +82,19 @@ function validate(request: ValidationWorkerRequest): ValidationWorkerResponse {
   const accepted = new Y.Doc();
   const candidate = new Y.Doc();
   try {
+    if (request.reconstruction !== undefined) {
+      const candidateState = reconstructGraphBytes(
+        request.acceptedState,
+        request.reconstruction.updates,
+        request.reconstruction.remap,
+      );
+      return {
+        ok: true,
+        candidateState,
+        elapsedMs: performance.now() - startedAt,
+        heapUsedBytes: process.memoryUsage().heapUsed,
+      };
+    }
     Y.applyUpdate(accepted, request.acceptedState);
     assertCausallyComplete(accepted);
     validateGraphDocument(accepted);

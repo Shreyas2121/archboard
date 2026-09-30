@@ -9,6 +9,7 @@ import {
   type ServerSequence,
 } from '@archboard/contracts';
 import * as Y from 'yjs';
+import { MAX_PENDING_ROOM_UPDATE_BYTES, MAX_PENDING_ROOM_UPDATES } from './collaboration-limits.js';
 
 export interface BufferedRoomUpdate {
   readonly seq: ServerSequence;
@@ -19,6 +20,8 @@ interface RoomSubscriber {
   readonly deliver: (update: BufferedRoomUpdate) => void;
   readonly pending: BufferedRoomUpdate[];
   active: boolean;
+  pendingBytes: number;
+  readonly failed: () => void;
 }
 
 export interface LoadedRoom {
@@ -53,6 +56,7 @@ export class CollaborationRoom {
   private currentSequence: ServerSequence;
   private compactedSequence: ServerSequence;
   private lastCompactedAt: number;
+  private closing = false;
 
   public constructor(
     public readonly boardId: string,
@@ -90,6 +94,7 @@ export class CollaborationRoom {
   }
 
   public run<T>(work: () => Promise<T>): Promise<T> {
+    if (this.closing) return Promise.reject(new RoomAdmissionError(ERROR_CODES.SERVER_BUSY));
     this.queued += 1;
     const operation = this.tail.then(work);
     this.tail = operation.then(
@@ -142,21 +147,44 @@ export class CollaborationRoom {
     this.subscribers.clear();
   }
 
+  public stopAdmission(): void {
+    this.closing = true;
+  }
+
+  public async drain(): Promise<void> {
+    await this.tail;
+  }
+
   /** Register before sending ready; activate only after ready is handed to the socket. */
-  public subscribe(deliver: (update: BufferedRoomUpdate) => void): {
+  public subscribe(
+    deliver: (update: BufferedRoomUpdate) => void,
+    failed: () => void = () => undefined,
+  ): {
     activate(): void;
     unsubscribe(): void;
   } {
-    const subscriber: RoomSubscriber = { deliver, pending: [], active: false };
+    const subscriber: RoomSubscriber = {
+      deliver,
+      failed,
+      pending: [],
+      pendingBytes: 0,
+      active: false,
+    };
     this.subscribers.add(subscriber);
     return {
       activate: () => {
         if (!this.subscribers.has(subscriber)) return;
         subscriber.active = true;
-        for (const update of subscriber.pending.splice(0)) subscriber.deliver(update);
+        const pending = subscriber.pending.splice(0);
+        subscriber.pendingBytes = 0;
+        for (const update of pending) {
+          if (!this.subscribers.has(subscriber)) break;
+          this.deliver(subscriber, update);
+        }
       },
       unsubscribe: () => {
         subscriber.pending.length = 0;
+        subscriber.pendingBytes = 0;
         this.subscribers.delete(subscriber);
       },
     };
@@ -169,8 +197,38 @@ export class CollaborationRoom {
   ): void {
     for (const subscriber of this.subscribers) {
       if (subscriber.deliver === except) continue;
-      if (subscriber.active) subscriber.deliver(update);
-      else subscriber.pending.push(update);
+      if (subscriber.active) this.deliver(subscriber, update);
+      else {
+        const bytes = Buffer.byteLength(JSON.stringify(update), 'utf8');
+        if (
+          subscriber.pending.length >= MAX_PENDING_ROOM_UPDATES ||
+          subscriber.pendingBytes + bytes > MAX_PENDING_ROOM_UPDATE_BYTES
+        ) {
+          this.detachFailed(subscriber);
+        } else {
+          subscriber.pending.push(update);
+          subscriber.pendingBytes += bytes;
+        }
+      }
+    }
+  }
+
+  private deliver(subscriber: RoomSubscriber, update: BufferedRoomUpdate): void {
+    try {
+      subscriber.deliver(update);
+    } catch {
+      this.detachFailed(subscriber);
+    }
+  }
+
+  private detachFailed(subscriber: RoomSubscriber): void {
+    subscriber.pending.length = 0;
+    subscriber.pendingBytes = 0;
+    this.subscribers.delete(subscriber);
+    try {
+      subscriber.failed();
+    } catch {
+      /* Isolate teardown failures from healthy peers. */
     }
   }
 
@@ -193,6 +251,8 @@ export class CollaborationRoomRegistry {
   private readonly rooms = new Map<string, CollaborationRoom>();
   private readonly opening = new Map<string, Promise<CollaborationRoom>>();
   private readonly compacting = new Set<CollaborationRoom>();
+  private stopped = false;
+  private closing?: Promise<void>;
 
   public constructor(
     private readonly loader: RoomLoader,
@@ -209,11 +269,13 @@ export class CollaborationRoomRegistry {
 
   /** Queue a committed access transition only when a room is already open. */
   public async runIfActive(boardId: string, work: () => Promise<void>): Promise<void> {
+    if (this.stopped) return;
     const room = this.rooms.get(boardId) ?? (await this.opening.get(boardId));
     if (room !== undefined) await room.run(work);
   }
 
   public async reserve(boardId: string): Promise<RoomReservation> {
+    if (this.stopped) throw new RoomAdmissionError(ERROR_CODES.SERVER_BUSY);
     let room = this.rooms.get(boardId);
     if (room === undefined) {
       let pending = this.opening.get(boardId);
@@ -242,6 +304,7 @@ export class CollaborationRoomRegistry {
       }
       room = await pending;
     }
+    if (this.stopped) throw new RoomAdmissionError(ERROR_CODES.SERVER_BUSY);
     room.reserve(this.now());
     let released = false;
     return {
@@ -266,6 +329,7 @@ export class CollaborationRoomRegistry {
   }
 
   public async compactDue(compactor: RoomCompactor): Promise<number> {
+    if (this.stopped) return 0;
     const now = this.now();
     const tasks: Promise<void>[] = [];
     for (const room of this.rooms.values()) {
@@ -285,5 +349,24 @@ export class CollaborationRoomRegistry {
     const failed = results.find((result) => result.status === 'rejected');
     if (failed?.status === 'rejected') throw failed.reason;
     return tasks.length;
+  }
+
+  public stopAdmission(): void {
+    this.stopped = true;
+    for (const room of this.rooms.values()) room.stopAdmission();
+  }
+
+  public close(): Promise<void> {
+    if (this.closing !== undefined) return this.closing;
+    this.stopAdmission();
+    this.closing = (async () => {
+      await Promise.allSettled([...this.opening.values()]);
+      const rooms = [...this.rooms.values()];
+      for (const room of rooms) room.stopAdmission();
+      await Promise.all(rooms.map(async (room) => room.drain()));
+      for (const room of rooms) room.destroy();
+      this.rooms.clear();
+    })();
+    return this.closing;
   }
 }

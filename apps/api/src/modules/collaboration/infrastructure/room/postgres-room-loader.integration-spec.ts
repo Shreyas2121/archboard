@@ -7,6 +7,7 @@ import {
   COMPONENT_CATEGORIES,
   ERROR_CODES,
   GRAPH_SCHEMA_VERSION,
+  MAX_CLIENT_UPDATE_BYTES,
   type GraphNode,
 } from '@archboard/contracts';
 import { createNode, projectGraphDocument } from '@archboard/document-model';
@@ -30,6 +31,8 @@ import {
   PostgresRoomCompactor,
 } from './postgres-room-compactor.js';
 import { PostgresRoomLoader } from './postgres-room-loader.js';
+import { PostgresBoardPersistence } from '../../../boards/infrastructure/postgres-board-persistence.js';
+import { createCausalGapFixtures } from '../yjs-compatibility/causal-gap.fixtures.js';
 
 const SCHEMA = `archboard_p402_${process.pid}`;
 const OWNER = 'room-owner';
@@ -39,6 +42,7 @@ const NODE_HEIGHT = 140;
 const NEXT_SEQUENCE = '1';
 const GAP_SEQUENCE = '2';
 const SHA256_BYTES = 32;
+const RETAINED_RECEIPT_COUNT = 1_000;
 
 jest.setTimeout(TEST_TIMEOUT_MS);
 
@@ -145,6 +149,30 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
     });
   });
 
+  it('destroys the reconstructed live document if the read transaction cannot commit', async () => {
+    const original = dataSource.driver.createQueryRunner.bind(dataSource.driver);
+    const runners = jest.spyOn(dataSource.driver, 'createQueryRunner');
+    const destroy = jest.spyOn(Y.Doc.prototype, 'destroy');
+    runners.mockImplementation((mode) => {
+      const runner = original(mode);
+      jest
+        .spyOn(runner, 'commitTransaction')
+        .mockRejectedValue(new Error('Injected read commit failure'));
+      return runner;
+    });
+    try {
+      await expect(new PostgresRoomLoader(dataSource).load(boardId)).rejects.toMatchObject({
+        code: ERROR_CODES.SERVER_BUSY,
+      });
+      // Worker documents live in a separate isolate; only the untransferred live document is observed here.
+      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(await dataSource.getRepository(BoardUpdateEntity).countBy({ boardId })).toBe(1);
+    } finally {
+      runners.mockRestore();
+      destroy.mockRestore();
+    }
+  });
+
   afterAll(async () => {
     if (dataSource?.isInitialized) await dataSource.destroy();
     if (admin?.isInitialized) {
@@ -152,6 +180,38 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
       await admin.destroy();
     }
   });
+
+  afterEach(() => {
+    expected?.destroy();
+  });
+
+  it.each(['sequence gap', 'malformed bytes', 'causal gap', 'oversized update'] as const)(
+    'both reconstruction paths reject %s',
+    async (failure) => {
+      const repository = dataSource.getRepository(BoardUpdateEntity);
+      if (failure === 'sequence gap') await repository.delete({ boardId });
+      else
+        await repository.update(
+          { boardId },
+          {
+            updateBytes:
+              failure === 'malformed bytes'
+                ? Buffer.from([0])
+                : failure === 'causal gap'
+                  ? Buffer.from(createCausalGapFixtures()[0]!.dependentUpdate)
+                  : Buffer.alloc(MAX_CLIENT_UPDATE_BYTES + 1),
+          },
+        );
+      await expect(new PostgresRoomLoader(dataSource).load(boardId)).rejects.toMatchObject({
+        code: ERROR_CODES.DOCUMENT_INVALID,
+      });
+      await expect(
+        new PostgresBoardPersistence(dataSource).run((scope) =>
+          scope.loadCommittedGraph(boardId, NEXT_SEQUENCE),
+        ),
+      ).rejects.toMatchObject({ code: ERROR_CODES.DOCUMENT_INVALID });
+    },
+  );
 
   it('reconstructs the exact committed graph and decimal sequence across loader restart', async () => {
     const first = await new PostgresRoomLoader(dataSource).load(boardId);
@@ -162,6 +222,8 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
     expect(Y.encodeStateAsUpdate(restarted.document)).toEqual(
       Y.encodeStateAsUpdate(first.document),
     );
+    first.document.destroy();
+    restarted.document.destroy();
   });
 
   it('loads committed content for an archived board that remains readable to members', async () => {
@@ -169,6 +231,7 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
     const room = await new PostgresRoomLoader(dataSource).load(boardId);
     expect(room.latestSeq).toBe(NEXT_SEQUENCE);
     expect(projectGraphDocument(room.document)).toEqual(projectGraphDocument(expected));
+    room.document.destroy();
   });
 
   it('blocks a missing update or malformed snapshot without serving partial state', async () => {
@@ -257,6 +320,9 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
       schemaVersion: GRAPH_SCHEMA_VERSION,
       updateBytes: Buffer.from(Y.encodeStateAsUpdate(expected)),
     });
+    const receiptsBefore = await dataSource
+      .getRepository(UpdateReceiptEntity)
+      .find({ where: { boardId }, order: { updateId: 'ASC' } });
     const before = await new PostgresRoomLoader(dataSource).load(boardId);
     const compactor = new PostgresRoomCompactor(dataSource, new CompactionFailpointController());
     await compactor.compact(boardId, NEXT_SEQUENCE, Y.encodeStateAsUpdate(before.document));
@@ -267,6 +333,11 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
     expect(snapshot.byteLength).toBe(snapshot.updateBytes.byteLength);
     expect(await dataSource.getRepository(BoardUpdateEntity).countBy({ boardId })).toBe(0);
     expect(await dataSource.getRepository(UpdateReceiptEntity).countBy({ boardId })).toBe(1);
+    expect(
+      await dataSource
+        .getRepository(UpdateReceiptEntity)
+        .find({ where: { boardId }, order: { updateId: 'ASC' } }),
+    ).toEqual(receiptsBefore);
     expect(await dataSource.getRepository(CheckpointEntity).countBy({ boardId })).toBe(1);
     const restarted = await new PostgresRoomLoader(dataSource).load(boardId);
     expect(restarted.compactedSeq).toBe(NEXT_SEQUENCE);
@@ -280,6 +351,17 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
   it.each([COMPACTION_FAILPOINTS.AFTER_SNAPSHOT_WRITE, COMPACTION_FAILPOINTS.AFTER_UPDATE_DELETE])(
     'reconstructs the old snapshot/log pair after rollback at %s',
     async (stage) => {
+      const update = await dataSource.getRepository(BoardUpdateEntity).findOneByOrFail({ boardId });
+      await dataSource.getRepository(UpdateReceiptEntity).insert({
+        boardId,
+        updateId: update.updateId,
+        actorUserId: OWNER,
+        payloadHash: Buffer.alloc(SHA256_BYTES),
+        sequence: NEXT_SEQUENCE,
+      });
+      const receiptsBefore = await dataSource
+        .getRepository(UpdateReceiptEntity)
+        .findBy({ boardId });
       const failpoints = new CompactionFailpointController();
       failpoints.arm(stage, async () => {
         throw new Error('Injected compaction stop.');
@@ -293,6 +375,9 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
         .findOneByOrFail({ boardId });
       expect(snapshot.throughSeq).toBe('0');
       expect(await dataSource.getRepository(BoardUpdateEntity).countBy({ boardId })).toBe(1);
+      expect(await dataSource.getRepository(UpdateReceiptEntity).findBy({ boardId })).toEqual(
+        receiptsBefore,
+      );
       const restarted = await new PostgresRoomLoader(dataSource).load(boardId);
       expect(restarted.compactedSeq).toBe('0');
       expect(Y.encodeStateAsUpdate(restarted.document)).toEqual(Y.encodeStateAsUpdate(expected));
@@ -319,33 +404,46 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
     restarted.document.destroy();
   });
 
-  it('rolls back compaction if an unmigrated receipt cascade would delete receipts', async () => {
-    const update = await dataSource.getRepository(BoardUpdateEntity).findOneByOrFail({ boardId });
-    await dataSource.getRepository(UpdateReceiptEntity).insert({
-      boardId,
-      updateId: update.updateId,
-      actorUserId: OWNER,
-      payloadHash: Buffer.alloc(SHA256_BYTES),
-      sequence: NEXT_SEQUENCE,
+  it('preserves exact receipt fields across compaction with a large retained history and no receipt queries', async () => {
+    const repository = dataSource.getRepository(UpdateReceiptEntity);
+    await repository.insert(
+      Array.from({ length: RETAINED_RECEIPT_COUNT }, () => ({
+        boardId,
+        updateId: randomUUID(),
+        actorUserId: OWNER,
+        payloadHash: Buffer.alloc(SHA256_BYTES),
+        sequence: NEXT_SEQUENCE,
+      })),
+    );
+    const before = await repository.find({ where: { boardId }, order: { updateId: 'ASC' } });
+    const observed: string[] = [];
+    const original = dataSource.driver.createQueryRunner.bind(dataSource.driver);
+    const query = jest.spyOn(dataSource.driver, 'createQueryRunner');
+    query.mockImplementation((mode) => {
+      const runner = original(mode);
+      const execute = runner.query.bind(runner);
+      jest
+        .spyOn(runner, 'query')
+        .mockImplementation(
+          (sql: string, parameters?: Parameters<typeof runner.query>[1], structured?: boolean) => {
+            observed.push(sql);
+            return structured ? execute(sql, parameters, true) : execute(sql, parameters);
+          },
+        );
+      return runner;
     });
-    const runner = dataSource.createQueryRunner();
-    await runner.connect();
-    const migration = new RetainCompactedUpdateReceipts1790426800000();
     try {
-      await migration.down(runner);
-      const compactor = new PostgresRoomCompactor(dataSource, new CompactionFailpointController());
-      await expect(
-        compactor.compact(boardId, NEXT_SEQUENCE, Y.encodeStateAsUpdate(expected)),
-      ).rejects.toThrow('Compaction would remove durable update receipts.');
-      expect(
-        (await dataSource.getRepository(BoardSnapshotEntity).findOneByOrFail({ boardId }))
-          .throughSeq,
-      ).toBe('0');
-      expect(await dataSource.getRepository(BoardUpdateEntity).countBy({ boardId })).toBe(1);
-      expect(await dataSource.getRepository(UpdateReceiptEntity).countBy({ boardId })).toBe(1);
+      await new PostgresRoomCompactor(dataSource, new CompactionFailpointController()).compact(
+        boardId,
+        NEXT_SEQUENCE,
+        Y.encodeStateAsUpdate(expected),
+      );
     } finally {
-      await migration.up(runner);
-      await runner.release();
+      query.mockRestore();
     }
+    expect(observed.some((sql) => sql.includes('update_receipts'))).toBe(false);
+    expect(await repository.find({ where: { boardId }, order: { updateId: 'ASC' } })).toEqual(
+      before,
+    );
   });
 });

@@ -71,12 +71,25 @@ export class PostgresInvitePersistence implements InvitePersistence {
       permissionTransaction: runner,
       create: async (boardId, actorUserId, role) => {
         const { token, digest } = createInviteToken();
-        const rows = (await runner.query(
-          `INSERT INTO board_invites (board_id, token_hash, role, created_by, expires_at)
-           VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP + $5 * INTERVAL '1 day')
-           RETURNING id, role, created_at, expires_at`,
-          [boardId, digest, role, actorUserId, INVITE_LIFETIME_DAYS],
-        )) as { id: string; role: CreateInvite['role']; created_at: Date; expires_at: Date }[];
+        const inserted = await repository
+          .createQueryBuilder()
+          .insert()
+          .values({
+            boardId,
+            tokenHash: digest,
+            role,
+            createdBy: actorUserId,
+            expiresAt: () => "CURRENT_TIMESTAMP + :lifetime * INTERVAL '1 day'",
+          })
+          .setParameter('lifetime', INVITE_LIFETIME_DAYS)
+          .returning(['id', 'role', 'createdAt', 'expiresAt'])
+          .execute();
+        const rows = inserted.raw as {
+          id: string;
+          role: CreateInvite['role'];
+          created_at: Date;
+          expires_at: Date;
+        }[];
         const created = rows[0];
         if (!created) throw new Error('Invitation insert returned no row.');
         const actor = await this.user(runner, actorUserId);
@@ -93,21 +106,39 @@ export class PostgresInvitePersistence implements InvitePersistence {
         };
       },
       list: async (boardId, limit, cursor) => {
-        const rows = (await runner.query(
-          `SELECT invite.id AS invite_id, invite.role, invite.created_at, invite.expires_at,
-             to_char(invite.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_cursor,
-             CASE WHEN invite.accepted_at IS NOT NULL THEN 'accepted'
+        const query = repository
+          .createQueryBuilder('invite')
+          .select('invite.id', 'invite_id')
+          .addSelect('invite.role', 'role')
+          .addSelect('invite.created_at', 'created_at')
+          .addSelect('invite.expires_at', 'expires_at')
+          .addSelect(
+            `to_char(invite.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
+            'created_at_cursor',
+          )
+          .addSelect(
+            `CASE WHEN invite.accepted_at IS NOT NULL THEN 'accepted'
                WHEN invite.revoked_at IS NOT NULL THEN 'revoked'
                WHEN invite.expires_at <= clock_timestamp() THEN 'expired'
-               ELSE 'active' END AS status,
-             creator.id, creator.name, creator.image
-           FROM board_invites invite JOIN "user" creator ON creator.id = invite.created_by
-           WHERE invite.board_id = $1
-             AND ($3::timestamptz IS NULL OR (invite.created_at, invite.id) < ($3::timestamptz, $4::uuid))
-           ORDER BY invite.created_at DESC, invite.id DESC
-           LIMIT $2`,
-          [boardId, limit, cursor?.timestamp ?? null, cursor?.id ?? null],
-        )) as InviteListRow[];
+               ELSE 'active' END`,
+            'status',
+          )
+          .addSelect('creator.id', 'id')
+          .addSelect('creator.name', 'name')
+          .addSelect('creator.image', 'image')
+          .innerJoin('user', 'creator', 'creator.id = invite.created_by')
+          .where('invite.board_id = :boardId', { boardId });
+        // Keep PostgreSQL microsecond precision in cursor comparison and serialization.
+        if (cursor)
+          query.andWhere(
+            '(invite.created_at, invite.id) < (CAST(:timestamp AS timestamptz), CAST(:id AS uuid))',
+            cursor,
+          );
+        const rows = await query
+          .orderBy('invite.created_at', 'DESC')
+          .addOrderBy('invite.id', 'DESC')
+          .limit(limit)
+          .getRawMany<InviteListRow>();
         return rows.map((row): InviteListItem => ({
           invite: {
             id: row.invite_id,
@@ -129,10 +160,15 @@ export class PostgresInvitePersistence implements InvitePersistence {
         return invite ? this.state(invite) : null;
       },
       revoke: async (boardId, inviteId) => {
-        await runner.query(
-          'UPDATE board_invites SET revoked_at = clock_timestamp() WHERE board_id = $1 AND id = $2 AND revoked_at IS NULL',
-          [boardId, inviteId],
-        );
+        await repository
+          .createQueryBuilder()
+          .update()
+          .set({ revokedAt: () => 'clock_timestamp()' })
+          .where('board_id = :boardId AND id = :inviteId AND revoked_at IS NULL', {
+            boardId,
+            inviteId,
+          })
+          .execute();
       },
       candidate: async (token) => {
         const digest = digestInviteToken(token);
@@ -178,6 +214,7 @@ export class PostgresInvitePersistence implements InvitePersistence {
       },
       inviterName: async (userId) => (await this.user(runner, userId)).name,
       now: async () => {
+        // Acceptance requires wall-clock time after waiting for a board lock, not transaction start.
         const rows = (await runner.query('SELECT clock_timestamp() AS now')) as { now: Date }[];
         return rows[0]!.now;
       },
@@ -190,6 +227,7 @@ export class PostgresInvitePersistence implements InvitePersistence {
         return member?.role ?? null;
       },
       applyMembership: async (boardId, userId, role): Promise<BoardRole> => {
+        // PostgreSQL's conditional conflict update atomically keeps the stronger role and returns it.
         const rows = (await runner.query(
           `INSERT INTO board_members (board_id, user_id, role) VALUES ($1, $2, $3)
            ON CONFLICT (board_id, user_id) DO UPDATE SET role =
@@ -201,11 +239,15 @@ export class PostgresInvitePersistence implements InvitePersistence {
         return rows[0].role;
       },
       markAccepted: async (boardId, inviteId, userId) => {
-        await runner.query(
-          `UPDATE board_invites SET accepted_by = $3, accepted_at = clock_timestamp()
-           WHERE board_id = $1 AND id = $2 AND accepted_by IS NULL`,
-          [boardId, inviteId, userId],
-        );
+        await repository
+          .createQueryBuilder()
+          .update()
+          .set({ acceptedBy: userId, acceptedAt: () => 'clock_timestamp()' })
+          .where('board_id = :boardId AND id = :inviteId AND accepted_by IS NULL', {
+            boardId,
+            inviteId,
+          })
+          .execute();
       },
     };
   }
@@ -223,10 +265,15 @@ export class PostgresInvitePersistence implements InvitePersistence {
   }
 
   private async user(runner: QueryRunner, userId: string): Promise<SafeUserRow> {
-    const rows = (await runner.query('SELECT id, name, image FROM "user" WHERE id = $1', [
-      userId,
-    ])) as SafeUserRow[];
-    if (!rows[0]) throw new Error('Invitation user is missing.');
-    return rows[0];
+    const user = await runner.manager
+      .createQueryBuilder()
+      .select('actor.id', 'id')
+      .addSelect('actor.name', 'name')
+      .addSelect('actor.image', 'image')
+      .from('user', 'actor')
+      .where('actor.id = :userId', { userId })
+      .getRawOne<SafeUserRow>();
+    if (!user) throw new Error('Invitation user is missing.');
+    return user;
   }
 }

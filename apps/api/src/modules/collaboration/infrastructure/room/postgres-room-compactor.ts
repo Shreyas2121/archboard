@@ -7,7 +7,6 @@ import { BoardTransaction } from '../../../boards/infrastructure/board-transacti
 import { BoardEntity } from '../../../boards/infrastructure/entities/board.entity.js';
 import { BoardSnapshotEntity } from '../entities/board-snapshot.entity.js';
 import { BoardUpdateEntity } from '../entities/board-update.entity.js';
-import { UpdateReceiptEntity } from '../entities/update-receipt.entity.js';
 import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
 
 export const COMPACTION_FAILPOINTS = {
@@ -71,9 +70,6 @@ export class PostgresRoomCompactor {
       if (!snapshot || BigInt(snapshot.throughSeq) > BigInt(throughSeq)) {
         throw new Error('Room snapshot is missing or ahead of the room.');
       }
-      const receiptsBefore = await runner.manager
-        .getRepository(UpdateReceiptEntity)
-        .countBy({ boardId });
       await runner.manager.getRepository(BoardSnapshotEntity).update(
         { boardId },
         {
@@ -91,12 +87,6 @@ export class PostgresRoomCompactor {
         .where('board_id = :boardId', { boardId })
         .andWhere('seq <= CAST(:throughSeq AS bigint)', { throughSeq })
         .execute();
-      const receiptsAfter = await runner.manager
-        .getRepository(UpdateReceiptEntity)
-        .countBy({ boardId });
-      if (receiptsAfter !== receiptsBefore) {
-        throw new Error('Compaction would remove durable update receipts.');
-      }
       await this.failpoints.reach(COMPACTION_FAILPOINTS.AFTER_UPDATE_DELETE);
     });
     await this.failpoints.reach(COMPACTION_FAILPOINTS.AFTER_COMMIT);

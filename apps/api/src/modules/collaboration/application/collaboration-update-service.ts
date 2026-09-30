@@ -2,14 +2,11 @@ import { createHash } from 'node:crypto';
 
 import { ERROR_CODES, type ServerSequence } from '@archboard/contracts';
 import { Injectable } from '@nestjs/common';
-import type { DataSource, EntityManager } from 'typeorm';
 import * as Y from 'yjs';
 
 import type { BoardPermissionService } from '../../boards/application/index.js';
-import { BoardEntity } from '../../boards/infrastructure/entities/board.entity.js';
-import { BoardTransaction } from '../../boards/infrastructure/board-transaction.js';
-import { BoardUpdateEntity } from '../infrastructure/entities/board-update.entity.js';
-import { UpdateReceiptEntity } from '../infrastructure/entities/update-receipt.entity.js';
+import type { DurableUpdatePersistence } from './durable-update-persistence.js';
+import type { DurableUpdateReceipt } from './durable-update.js';
 import type { ValidationWorkerPool } from '../infrastructure/validation-worker/index.js';
 import {
   DURABLE_UPDATE_FAILPOINTS,
@@ -18,8 +15,6 @@ import {
 } from './durable-update.js';
 import type { CollaborationRoom } from './room-registry.js';
 import { reportCollaborationMetric } from './collaboration-metrics.js';
-
-const NEXT_SEQUENCE_INCREMENT = 1n;
 
 export interface RoomUpdateProposal {
   readonly actorUserId: string;
@@ -34,16 +29,12 @@ export interface RoomUpdateResult {
 
 @Injectable()
 export class CollaborationUpdateService {
-  private readonly transaction: BoardTransaction;
-
   public constructor(
-    private readonly dataSource: DataSource,
+    private readonly persistence: DurableUpdatePersistence,
     private readonly permissions: BoardPermissionService,
     private readonly validator: ValidationWorkerPool,
     private readonly failpoints = new DurableUpdateFailpointController(),
-  ) {
-    this.transaction = new BoardTransaction(dataSource);
-  }
+  ) {}
 
   /** The caller serializes this operation through the room queue. */
   public async accept(
@@ -56,11 +47,7 @@ export class CollaborationUpdateService {
 
     const exactBytes = Buffer.from(proposal.updateBytes);
     const payloadHash = createHash('sha256').update(exactBytes).digest();
-    const existing = await this.findReceipt(
-      this.dataSource.manager,
-      room.boardId,
-      proposal.updateId,
-    );
+    const existing = await this.persistence.findReceipt(room.boardId, proposal.updateId);
     if (existing !== null) {
       return {
         sequence: this.matchReceipt(existing, proposal.actorUserId, payloadHash),
@@ -104,12 +91,16 @@ export class CollaborationUpdateService {
   ): Promise<RoomUpdateResult> {
     const started = performance.now();
     try {
-      const result = await this.transaction.run(async (runner) => {
-        const decision = await this.permissions.editGraph(runner, boardId, actorUserId);
+      const result = await this.persistence.run(boardId, async (scope) => {
+        const decision = await this.permissions.editGraph(
+          scope.permissionTransaction,
+          boardId,
+          actorUserId,
+        );
         if (!decision.allowed)
           throw new DurableUpdateRejectedError(decision.code, 'Board write unavailable.');
 
-        const existing = await this.findReceipt(runner.manager, boardId, updateId);
+        const existing = await scope.findReceipt(updateId);
         if (existing !== null) {
           return {
             sequence: this.matchReceipt(existing, actorUserId, payloadHash),
@@ -117,28 +108,11 @@ export class CollaborationUpdateService {
           };
         }
 
-        const sequence = (
-          BigInt(decision.board.latestSeq) + NEXT_SEQUENCE_INCREMENT
-        ).toString() as ServerSequence;
-        await runner.manager
-          .getRepository(BoardEntity)
-          .update(
-            { id: boardId },
-            { latestSeq: sequence, contentUpdatedAt: () => 'CURRENT_TIMESTAMP' },
-          );
-        await runner.manager.getRepository(BoardUpdateEntity).insert({
-          boardId,
-          sequence,
+        const sequence = await scope.append(decision.board.latestSeq as ServerSequence, {
           updateId,
           actorUserId,
           updateBytes: exactBytes,
-        });
-        await runner.manager.getRepository(UpdateReceiptEntity).insert({
-          boardId,
-          updateId,
-          actorUserId,
           payloadHash,
-          sequence,
         });
         await this.failpoints.reach(DURABLE_UPDATE_FAILPOINTS.DATABASE_COMMIT);
         return { sequence, duplicate: false };
@@ -157,20 +131,15 @@ export class CollaborationUpdateService {
     }
   }
 
-  private findReceipt(
-    manager: EntityManager,
-    boardId: string,
-    updateId: string,
-  ): Promise<UpdateReceiptEntity | null> {
-    return manager.getRepository(UpdateReceiptEntity).findOneBy({ boardId, updateId });
-  }
-
   private matchReceipt(
-    receipt: UpdateReceiptEntity,
+    receipt: DurableUpdateReceipt,
     actorUserId: string,
     payloadHash: Buffer,
   ): ServerSequence {
-    if (receipt.actorUserId !== actorUserId || !receipt.payloadHash.equals(payloadHash)) {
+    if (
+      receipt.actorUserId !== actorUserId ||
+      !Buffer.from(receipt.payloadHash).equals(payloadHash)
+    ) {
       throw new DurableUpdateRejectedError(ERROR_CODES.UPDATE_ID_REUSED, 'Update ID reused.');
     }
     return receipt.sequence as ServerSequence;

@@ -25,6 +25,7 @@ export interface ValidationWorkerRequest {
   readonly acceptedState: Uint8Array;
   readonly update: Uint8Array;
   readonly directive: ValidationWorkerDirective;
+  readonly reconstruction?: { readonly updates: readonly Uint8Array[]; readonly remap: boolean };
 }
 
 export interface ValidationWorkerSuccess {

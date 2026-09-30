@@ -11,6 +11,7 @@ import {
 import { createGraphDocument } from '@archboard/document-model';
 
 import { CollaborationRoomRegistry, type LoadedRoom, type RoomLoader } from './room-registry.js';
+import { MAX_PENDING_ROOM_UPDATE_BYTES, MAX_PENDING_ROOM_UPDATES } from './collaboration-limits.js';
 
 const TWO_RESERVATIONS = 2;
 
@@ -19,6 +20,86 @@ function loaded(): LoadedRoom {
 }
 
 describe('bounded collaboration room registry', () => {
+  it.each(['bytes', 'count'] as const)(
+    'bounds inactive subscriber %s and isolates a throwing teardown',
+    async (limit) => {
+      const registry = new CollaborationRoomRegistry({ load: async () => loaded() });
+      const reservation = await registry.reserve(randomUUID());
+      const delivered: string[] = [];
+      let failed = 0;
+      const inactive = reservation.room.subscribe(
+        () => {
+          throw new Error('Must stay inactive');
+        },
+        () => {
+          failed += 1;
+          throw new Error('Teardown failed');
+        },
+      );
+      const healthy = reservation.room.subscribe((update) => delivered.push(update.seq));
+      healthy.activate();
+      const updateBase64 = limit === 'bytes' ? 'A'.repeat(MAX_PENDING_ROOM_UPDATE_BYTES) : 'AQ==';
+      const count = limit === 'bytes' ? 1 : MAX_PENDING_ROOM_UPDATES + 1;
+      for (let index = 0; index < count; index += 1)
+        reservation.room.publishCommittedUpdate({ seq: String(index + 1), updateBase64 });
+      expect(failed).toBe(1);
+      expect(delivered).toHaveLength(count);
+      expect(() => inactive.activate()).not.toThrow();
+      reservation.release();
+      await registry.close();
+    },
+  );
+
+  it.each([true, false])('isolates delivery failures with active=%s', async (active) => {
+    const registry = new CollaborationRoomRegistry({ load: async () => loaded() });
+    const reservation = await registry.reserve(randomUUID());
+    let failures = 0;
+    const bad = reservation.room.subscribe(
+      () => {
+        throw new Error('Failed send');
+      },
+      () => {
+        failures += 1;
+      },
+    );
+    const received: string[] = [];
+    const good = reservation.room.subscribe((update) => received.push(update.seq));
+    good.activate();
+    if (active) bad.activate();
+    reservation.room.publishCommittedUpdate({ seq: '1', updateBase64: 'AQ==' });
+    if (!active) bad.activate();
+    reservation.room.publishCommittedUpdate({ seq: '2', updateBase64: 'AQ==' });
+    expect(failures).toBe(1);
+    expect(received).toEqual(['1', '2']);
+    reservation.release();
+    await registry.close();
+  });
+
+  it('drains a late loader and destroys its document without admitting reservations after close', async () => {
+    let resolve!: (value: LoadedRoom) => void;
+    const registry = new CollaborationRoomRegistry({
+      load: () =>
+        new Promise((finish) => {
+          resolve = finish;
+        }),
+    });
+    const admitted = registry.reserve(randomUUID());
+    const rejected = expect(admitted).rejects.toMatchObject({ code: ERROR_CODES.SERVER_BUSY });
+    const closing = registry.close();
+    const room = loaded();
+    let destroyed = false;
+    room.document.on('destroy', () => {
+      destroyed = true;
+    });
+    resolve(room);
+    await Promise.all([closing, rejected]);
+    expect(destroyed).toBe(true);
+    expect(registry.activeRoomCount).toBe(0);
+    expect(registry.close()).toBe(closing);
+    await expect(registry.reserve(randomUUID())).rejects.toMatchObject({
+      code: ERROR_CODES.SERVER_BUSY,
+    });
+  });
   it('loads a board once for concurrent reservations and releases exactly once', async () => {
     let finish: ((room: LoadedRoom) => void) | undefined;
     let loads = 0;

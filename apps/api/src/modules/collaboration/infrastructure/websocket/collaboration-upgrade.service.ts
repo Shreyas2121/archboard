@@ -37,6 +37,9 @@ class HandshakeTimeoutError extends Error {}
 @Injectable()
 export class CollaborationUpgradeService implements OnApplicationBootstrap, OnApplicationShutdown {
   private httpServer: HttpServer | undefined;
+  private stopped = false;
+  private readonly operations = new Set<Promise<void>>();
+  private readonly sockets = new Set<Duplex>();
 
   public constructor(
     @Inject(HttpAdapterHost) private readonly httpAdapterHost: HttpAdapterHost,
@@ -54,7 +57,17 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
   }
 
   public onApplicationShutdown(): void {
+    this.stopAdmission();
+  }
+
+  public stopAdmission(): void {
+    this.stopped = true;
     this.httpServer?.off('upgrade', this.handleUpgrade);
+    for (const socket of this.sockets) socket.destroy();
+  }
+
+  public async drain(): Promise<void> {
+    await Promise.allSettled([...this.operations]);
   }
 
   private readonly handleUpgrade = (
@@ -62,8 +75,18 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
     socket: Duplex,
     head: Buffer,
   ): void => {
-    void this.authenticateUpgrade(request, socket, head).catch(() => {
+    if (this.stopped) {
+      socket.destroy();
+      return;
+    }
+    this.sockets.add(socket);
+    const operation = this.authenticateUpgrade(request, socket, head).catch(() => {
       this.rejectUpgrade(socket, HTTP_INTERNAL_SERVER_ERROR);
+    });
+    this.operations.add(operation);
+    void operation.finally(() => {
+      this.operations.delete(operation);
+      this.sockets.delete(socket);
     });
   };
 
@@ -115,6 +138,7 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
       this.rejectUpgrade(socket, HTTP_NOT_FOUND);
       return;
     }
+    if (this.stopped || socket.destroyed) return;
     this.gateway.acceptUpgrade(request, socket, head, {
       boardId,
       userId: session.userId,

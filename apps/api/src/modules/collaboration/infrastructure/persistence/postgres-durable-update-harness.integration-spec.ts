@@ -202,6 +202,11 @@ describe('durable PostgreSQL update acceptance', () => {
     }
   });
 
+  afterEach(async () => {
+    await harness?.close();
+    accepted?.destroy();
+  });
+
   it('serializes accepted updates and exposes ACK and broadcast eligibility after commit', async () => {
     const firstNode = node('First durable node');
     const secondNode = node('Second durable node');

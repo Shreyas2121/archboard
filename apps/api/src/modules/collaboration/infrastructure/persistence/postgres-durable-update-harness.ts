@@ -49,8 +49,13 @@ function rejection(code: ErrorCode, message: string): DurableUpdateRejectedError
 
 function cloneDocument(source: Y.Doc): Y.Doc {
   const clone = new Y.Doc();
-  Y.applyUpdate(clone, Y.encodeStateAsUpdate(source));
-  return clone;
+  try {
+    Y.applyUpdate(clone, Y.encodeStateAsUpdate(source));
+    return clone;
+  } catch (error) {
+    clone.destroy();
+    throw error;
+  }
 }
 
 function hashUpdate(updateBytes: Uint8Array): Buffer {
@@ -68,9 +73,11 @@ function receiptFromRow(boardId: string, updateId: string, row: ReceiptRow): Dur
   });
 }
 
+/** Legacy compatibility evidence only; production acceptance uses CollaborationUpdateService. */
 export class PostgresDurableUpdateHarness {
   private acceptedDocument: Y.Doc;
   private acceptanceTail: Promise<void> = Promise.resolve();
+  private closing?: Promise<void>;
 
   public constructor(
     private readonly boardId: string,
@@ -85,6 +92,7 @@ export class PostgresDurableUpdateHarness {
   }
 
   public accept(proposal: ProposedDurableUpdate): Promise<DurableUpdateAcceptance> {
+    if (this.closing) return Promise.reject(new Error('Durable compatibility harness is closed.'));
     const operation = this.acceptanceTail.then(() => this.acceptSerialized(proposal));
     this.acceptanceTail = operation.then(
       () => undefined,
@@ -95,6 +103,11 @@ export class PostgresDurableUpdateHarness {
 
   public acceptedStateAsUpdate(): Uint8Array {
     return Y.encodeStateAsUpdate(this.acceptedDocument);
+  }
+
+  public close(): Promise<void> {
+    this.closing ??= this.acceptanceTail.then(() => this.acceptedDocument.destroy());
+    return this.closing;
   }
 
   private async acceptSerialized(
@@ -118,36 +131,46 @@ export class PostgresDurableUpdateHarness {
     }
 
     const candidate = cloneDocument(this.acceptedDocument);
+    let installed = false;
     try {
-      Y.applyUpdate(candidate, exactBytes);
-      assertCausallyComplete(candidate);
-      validateGraphDocument(candidate, this.acceptedDocument);
-    } catch (error) {
-      if (error instanceof CausallyIncompleteUpdateError) {
-        throw rejection(ERROR_CODES.CAUSAL_GAP, error.message);
+      try {
+        Y.applyUpdate(candidate, exactBytes);
+        assertCausallyComplete(candidate);
+        validateGraphDocument(candidate, this.acceptedDocument);
+      } catch (error) {
+        if (error instanceof CausallyIncompleteUpdateError) {
+          throw rejection(ERROR_CODES.CAUSAL_GAP, error.message);
+        }
+        if (error instanceof DocumentValidationError) {
+          throw rejection(ERROR_CODES.DOCUMENT_INVALID, error.message);
+        }
+        if (error instanceof YjsCausalCompatibilityError) throw error;
+        throw rejection(ERROR_CODES.DOCUMENT_INVALID, 'The Yjs update could not be applied.');
       }
-      if (error instanceof DocumentValidationError) {
-        throw rejection(ERROR_CODES.DOCUMENT_INVALID, error.message);
+
+      await this.failpoints.reach(DURABLE_UPDATE_FAILPOINTS.AFTER_VALIDATION_BEFORE_TRANSACTION);
+      const persisted = await this.persistCandidate(
+        proposal.updateId,
+        actor.userId,
+        exactBytes,
+        payloadHash,
+      );
+      if (!persisted.duplicate) {
+        const previous = this.acceptedDocument;
+        this.acceptedDocument = candidate;
+        installed = true;
+        previous.destroy();
       }
-      if (error instanceof YjsCausalCompatibilityError) throw error;
-      throw rejection(ERROR_CODES.DOCUMENT_INVALID, 'The Yjs update could not be applied.');
+
+      await this.failpoints.reach(DURABLE_UPDATE_FAILPOINTS.AFTER_COMMIT_BEFORE_ACK);
+      return Object.freeze({
+        receipt: persisted.receipt,
+        acknowledgementEligible: true,
+        broadcastEligible: !persisted.duplicate,
+      });
+    } finally {
+      if (!installed) candidate.destroy();
     }
-
-    await this.failpoints.reach(DURABLE_UPDATE_FAILPOINTS.AFTER_VALIDATION_BEFORE_TRANSACTION);
-    const persisted = await this.persistCandidate(
-      proposal.updateId,
-      actor.userId,
-      exactBytes,
-      payloadHash,
-    );
-    if (!persisted.duplicate) this.acceptedDocument = candidate;
-
-    await this.failpoints.reach(DURABLE_UPDATE_FAILPOINTS.AFTER_COMMIT_BEFORE_ACK);
-    return Object.freeze({
-      receipt: persisted.receipt,
-      acknowledgementEligible: true,
-      broadcastEligible: !persisted.duplicate,
-    });
   }
 
   private async persistCandidate(
@@ -157,9 +180,9 @@ export class PostgresDurableUpdateHarness {
     payloadHash: Buffer,
   ): Promise<TransactionResult> {
     const runner = this.dataSource.createQueryRunner();
-    await runner.connect();
-    await runner.startTransaction();
     try {
+      await runner.connect();
+      await runner.startTransaction();
       await this.requireGraphAuthority(actorUserId, runner);
       const existing = await this.findReceipt(runner, updateId);
       if (existing !== undefined) {
@@ -208,7 +231,7 @@ export class PostgresDurableUpdateHarness {
         duplicate: false,
       };
     } catch (error) {
-      if (runner.isTransactionActive) await runner.rollbackTransaction();
+      if (runner.isTransactionActive) await runner.rollbackTransaction().catch(() => undefined);
       if (error instanceof DurableUpdateRejectedError) throw error;
       throw rejection(ERROR_CODES.PERSISTENCE_FAILED, 'The update transaction did not commit.');
     } finally {

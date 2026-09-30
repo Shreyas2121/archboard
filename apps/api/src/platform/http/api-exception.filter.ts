@@ -4,7 +4,9 @@ import { ERROR_CODES, apiErrorEnvelopeSchema, type ErrorCode } from '@archboard/
 import { Catch, HttpException, HttpStatus } from '@nestjs/common';
 import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common';
 
-import { contextSnapshot, errorEnvelope } from './api-boundary.js';
+import { contextSnapshot, errorEnvelope, errorStatus } from './api-boundary.js';
+import { BoardServiceError } from '../../modules/boards/application/board-service.js';
+import { IdempotencyConflictError } from '../../modules/boards/infrastructure/idempotency.js';
 
 interface ApiResponse {
   locals: Record<string, unknown>;
@@ -28,6 +30,19 @@ const statusCode: Record<number, ErrorCode> = {
 export class ApiExceptionFilter implements ExceptionFilter {
   public catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<ApiResponse>();
+    // Only documented feature errors expose their safe messages. Unknown exceptions
+    // (including response-schema failures) keep the standard unavailable envelope.
+    const featureCode =
+      exception instanceof BoardServiceError
+        ? exception.code
+        : exception instanceof IdempotencyConflictError
+          ? ERROR_CODES.IDEMPOTENCY_CONFLICT
+          : undefined;
+    if (featureCode !== undefined && exception instanceof Error) {
+      response.locals.errorCode = featureCode;
+      response.status(errorStatus(featureCode)).json(errorEnvelope(featureCode, exception.message));
+      return;
+    }
     const parserStatus =
       typeof exception === 'object' && exception !== null && 'status' in exception
         ? exception.status

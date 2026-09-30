@@ -1,15 +1,14 @@
-import type { IncomingMessage } from 'node:http';
-
 import {
   ERROR_CODES,
   inviteAcceptanceResponseSchema,
   invitePreviewResponseSchema,
   inviteTokenRequestSchema,
 } from '@archboard/contracts';
-import { Body, Controller, HttpCode, HttpStatus, Inject, Post, Req } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Inject, Post, UseGuards } from '@nestjs/common';
 
-import { AUTH_REQUEST_ACTOR, type RequestActor } from '../auth/application/index.js';
-import { fail, safe, validate } from '../../platform/http/api-boundary.js';
+import type { AuthenticatedSession } from '../auth/application/index.js';
+import { AuthenticatedSessionGuard, CurrentSession } from '../auth/authenticated-session.js';
+import { fail, validate } from '../../platform/http/api-boundary.js';
 import { InviteService } from './application/invite-service.js';
 
 function tokenRequest(body: unknown): { token: string } {
@@ -26,32 +25,24 @@ function tokenRequest(body: unknown): { token: string } {
   return validate(inviteTokenRequestSchema, body);
 }
 
+@UseGuards(AuthenticatedSessionGuard)
 @Controller('api/v1/invites')
 export class InvitesController {
-  public constructor(
-    @Inject(AUTH_REQUEST_ACTOR) private readonly actor: RequestActor,
-    @Inject(InviteService) private readonly invites: InviteService,
-  ) {}
+  public constructor(@Inject(InviteService) private readonly invites: InviteService) {}
 
   @Post('preview')
   @HttpCode(HttpStatus.OK)
-  public async preview(@Req() request: IncomingMessage, @Body() body: unknown) {
-    await this.actor.require(request.headers);
-    return safe(async () => {
-      const { token } = tokenRequest(body);
-      return invitePreviewResponseSchema.parse({ data: await this.invites.preview(token) });
-    });
+  public async preview(@Body() body: unknown) {
+    const { token } = tokenRequest(body);
+    return invitePreviewResponseSchema.parse({ data: await this.invites.preview(token) });
   }
 
   @Post('accept')
   @HttpCode(HttpStatus.OK)
-  public async accept(@Req() request: IncomingMessage, @Body() body: unknown) {
-    const session = await this.actor.require(request.headers);
-    return safe(async () => {
-      const { token } = tokenRequest(body);
-      return inviteAcceptanceResponseSchema.parse({
-        data: await this.invites.accept(session.user.id, token),
-      });
+  public async accept(@CurrentSession() session: AuthenticatedSession, @Body() body: unknown) {
+    const { token } = tokenRequest(body);
+    return inviteAcceptanceResponseSchema.parse({
+      data: await this.invites.accept(session.user.id, token),
     });
   }
 }

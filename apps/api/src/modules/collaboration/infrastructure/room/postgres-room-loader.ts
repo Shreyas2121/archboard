@@ -1,38 +1,16 @@
-import {
-  ERROR_CODES,
-  GRAPH_SCHEMA_VERSION,
-  MAX_CLIENT_UPDATE_BYTES,
-  MAX_ENCODED_YJS_STATE_BYTES,
-  serverSequenceSchema,
-  type ErrorCode,
-  type ServerSequence,
-} from '@archboard/contracts';
-import { validateGraphDocument } from '@archboard/document-model';
-import { Injectable } from '@nestjs/common';
+import { ERROR_CODES, type ErrorCode, type ServerSequence } from '@archboard/contracts';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import type { DataSource, QueryRunner } from 'typeorm';
+import type { DataSource } from 'typeorm';
 import * as Y from 'yjs';
 
 import type { LoadedRoom, RoomLoader } from '../../application/room-registry.js';
-import { assertCausallyComplete } from '../yjs-compatibility/index.js';
-
-interface BoardRow {
-  readonly latestSeq: string;
-}
-
-interface SnapshotRow {
-  readonly schemaVersion: number;
-  readonly throughSeq: string;
-  readonly updateBytes: Buffer;
-  readonly byteLength: number;
-}
-
-interface UpdateRow {
-  readonly sequence: string;
-  readonly updateBytes: Buffer;
-}
-
-const SEQUENCE_INCREMENT = 1n;
+import {
+  CommittedGraphError,
+  readCommittedGraph,
+  requireCommittedRecords,
+} from './committed-graph.js';
+import { ValidationWorkerError, ValidationWorkerPool } from '../validation-worker/index.js';
 
 export class RoomLoadError extends Error {
   public constructor(public readonly code: ErrorCode) {
@@ -43,107 +21,57 @@ export class RoomLoadError extends Error {
 
 @Injectable()
 export class PostgresRoomLoader implements RoomLoader {
-  public constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  public constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @Inject(ValidationWorkerPool) private readonly workers = new ValidationWorkerPool(),
+  ) {}
 
   public async load(boardId: string): Promise<LoadedRoom> {
     const runner = this.dataSource.createQueryRunner();
+    let document: Y.Doc | undefined;
+    let transferred = false;
     try {
       await runner.connect();
-      // All three reads observe the same committed board version even as another transaction writes.
+      // Every batched read sees the same committed version even while updates/compaction commit.
       await runner.startTransaction('REPEATABLE READ');
-      const loaded = await this.read(runner, boardId);
+      const board = await runner.manager
+        .createQueryBuilder()
+        .select('board.latest_seq::text', 'latestSeq')
+        .from('boards', 'board')
+        .where('board.id = :boardId', { boardId })
+        .getRawOne<{ latestSeq: string }>();
+      if (!board) throw new RoomLoadError(ERROR_CODES.NOT_FOUND);
+      const graph = await readCommittedGraph(runner.manager, boardId);
+      requireCommittedRecords(graph, board.latestSeq);
+      const result = await this.workers.validate({
+        acceptedState: graph.snapshot.updateBytes,
+        update: new Uint8Array(),
+        reconstruction: {
+          updates: graph.updates.map((update) => update.updateBytes),
+          remap: false,
+        },
+      });
+      document = new Y.Doc();
+      Y.applyUpdate(document, result.candidateState);
       await runner.commitTransaction();
-      return loaded;
+      transferred = true;
+      return {
+        document,
+        latestSeq: board.latestSeq as ServerSequence,
+        compactedSeq: graph.snapshot.throughSeq as ServerSequence,
+      };
     } catch (error) {
       if (runner.isTransactionActive) await runner.rollbackTransaction().catch(() => undefined);
       if (error instanceof RoomLoadError) throw error;
+      if (error instanceof CommittedGraphError) throw new RoomLoadError(error.code);
+      if (error instanceof ValidationWorkerError)
+        throw new RoomLoadError(
+          error.code === ERROR_CODES.CAUSAL_GAP ? ERROR_CODES.DOCUMENT_INVALID : error.code,
+        );
       throw new RoomLoadError(ERROR_CODES.SERVER_BUSY);
     } finally {
+      if (!transferred) document?.destroy();
       await runner.release().catch(() => undefined);
-    }
-  }
-
-  private async read(runner: QueryRunner, boardId: string): Promise<LoadedRoom> {
-    const board = (await runner.manager
-      .createQueryBuilder()
-      .select('board.latest_seq::text', 'latestSeq')
-      .from('boards', 'board')
-      .where('board.id = :boardId', { boardId })
-      .getRawOne()) as BoardRow | undefined;
-    if (board === undefined) throw new RoomLoadError(ERROR_CODES.NOT_FOUND);
-    const latestSeq = this.sequence(board.latestSeq);
-
-    const snapshot = (await runner.manager
-      .createQueryBuilder()
-      .select('snapshot.schema_version', 'schemaVersion')
-      .addSelect('snapshot.through_seq::text', 'throughSeq')
-      .addSelect('snapshot.update_bytes', 'updateBytes')
-      .addSelect('snapshot.byte_length', 'byteLength')
-      .from('board_snapshots', 'snapshot')
-      .where('snapshot.board_id = :boardId', { boardId })
-      .getRawOne()) as SnapshotRow | undefined;
-    if (
-      snapshot === undefined ||
-      snapshot.schemaVersion !== GRAPH_SCHEMA_VERSION ||
-      !Buffer.isBuffer(snapshot.updateBytes) ||
-      snapshot.updateBytes.byteLength === 0 ||
-      snapshot.byteLength !== snapshot.updateBytes.byteLength ||
-      snapshot.byteLength > MAX_ENCODED_YJS_STATE_BYTES
-    ) {
-      throw new RoomLoadError(ERROR_CODES.DOCUMENT_INVALID);
-    }
-    const throughSeq = this.sequence(snapshot.throughSeq);
-    if (BigInt(throughSeq) > BigInt(latestSeq))
-      throw new RoomLoadError(ERROR_CODES.DOCUMENT_INVALID);
-
-    const updates = (await runner.manager
-      .createQueryBuilder()
-      .select('entry.seq::text', 'sequence')
-      .addSelect('entry.update_bytes', 'updateBytes')
-      .from('board_updates', 'entry')
-      .where('entry.board_id = :boardId', { boardId })
-      .andWhere('entry.seq > CAST(:throughSeq AS bigint)', { throughSeq })
-      .orderBy('entry.seq', 'ASC')
-      .getRawMany()) as UpdateRow[];
-
-    const document = new Y.Doc();
-    try {
-      Y.applyUpdate(document, snapshot.updateBytes);
-      assertCausallyComplete(document);
-      let expected = BigInt(throughSeq);
-      for (const update of updates) {
-        expected += SEQUENCE_INCREMENT;
-        if (
-          this.sequence(update.sequence) !== expected.toString() ||
-          !Buffer.isBuffer(update.updateBytes) ||
-          update.updateBytes.byteLength === 0 ||
-          update.updateBytes.byteLength > MAX_CLIENT_UPDATE_BYTES
-        ) {
-          throw new RoomLoadError(ERROR_CODES.DOCUMENT_INVALID);
-        }
-        Y.applyUpdate(document, update.updateBytes);
-        assertCausallyComplete(document);
-        this.requireStateSize(document);
-      }
-      if (expected !== BigInt(latestSeq)) throw new RoomLoadError(ERROR_CODES.DOCUMENT_INVALID);
-      this.requireStateSize(document);
-      validateGraphDocument(document);
-    } catch (error) {
-      if (error instanceof RoomLoadError) throw error;
-      throw new RoomLoadError(ERROR_CODES.DOCUMENT_INVALID);
-    }
-    return { document, latestSeq, compactedSeq: throughSeq };
-  }
-
-  private sequence(value: unknown): ServerSequence {
-    const parsed = serverSequenceSchema.safeParse(value);
-    if (!parsed.success) throw new RoomLoadError(ERROR_CODES.DOCUMENT_INVALID);
-    return parsed.data;
-  }
-
-  private requireStateSize(document: Y.Doc): void {
-    if (Y.encodeStateAsUpdate(document).byteLength > MAX_ENCODED_YJS_STATE_BYTES) {
-      throw new RoomLoadError(ERROR_CODES.DOCUMENT_LIMIT);
     }
   }
 }
