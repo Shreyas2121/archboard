@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateInvite, InviteCreateResult } from '@archboard/contracts';
 import { ApiClientError } from '@/platform/api';
 import { createInvite, readInvites, revokeInvite } from './board-invites-api';
+import { readInBoardScope } from './board-request-lifecycle';
 import { boardResourceQueryKey, type BoardQueryScope } from './board-resource-refresh';
 import { canManageInvites } from './board-sharing-policy';
 import { canReconcileInvite, type InviteRequest } from './invite-request';
@@ -34,12 +35,20 @@ export function useBoardInvites(
   const list = useInfiniteQuery({
     queryKey,
     initialPageParam: null as string | null,
-    queryFn: ({ pageParam, signal }) => readInvites(scope.boardId, pageParam, signal),
+    queryFn: ({ pageParam, signal }) =>
+      readInBoardScope(
+        signal,
+        () => latest.current.sharing.canRead(),
+        () => readInvites(scope.boardId, pageParam, signal),
+      ),
     getNextPageParam: (page) => page.nextCursor ?? undefined,
     enabled:
       open && owner && sharing.authenticated && sharing.online && !sharing.authority.archived,
     retry: false,
+    staleTime: Infinity,
     networkMode: 'always',
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   useEffect(() => {
@@ -59,11 +68,15 @@ export function useBoardInvites(
       client.removeQueries({ queryKey });
     }
   }, [open, owner, sharing.authenticated, sharing.online, client, scope]);
+  useEffect(() => {
+    const access = latest.current.sharing;
+    if (list.error && access.canRead()) void access.refresh().catch(access.handleFailure);
+  }, [list.error]);
 
   function current() {
     return (
       active.current &&
-      latest.current.sharing.accountMatches &&
+      latest.current.sharing.isCurrent() &&
       latest.current.sharing.authority.role === 'owner' &&
       latest.current.sharing.authority.ownerId === scope.accountId &&
       !latest.current.sharing.authority.denied
@@ -72,6 +85,8 @@ export function useBoardInvites(
   async function refresh() {
     await sharing.refresh();
     latest.current.sharing.assertInviteAllowed();
+    if (!current() || !latest.current.sharing.canRead())
+      throw new Error('Current owner read access is unavailable.');
     await client.invalidateQueries({ queryKey, refetchType: 'none' });
     await list.refetch({ throwOnError: true });
   }

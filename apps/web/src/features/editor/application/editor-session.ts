@@ -635,9 +635,10 @@ export class EditorSession {
       }
       this.refresh();
     });
-    this.unsubscribeResources = this.syncClient.resourceEvents.subscribe((event) =>
-      this.resourceEvents.emit(event),
-    );
+    this.unsubscribeResources = this.syncClient.resourceEvents.subscribe((event) => {
+      if (event.kind === 'access' && event.role === null) this.denyBoardAccess();
+      this.resourceEvents.emit(event);
+    });
     this.refresh();
   }
 

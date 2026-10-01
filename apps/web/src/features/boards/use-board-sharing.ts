@@ -6,11 +6,13 @@ import {
   type BoardSummary,
   type ChangeMemberRole,
 } from '@archboard/contracts';
-import { readSelectedAccountMarker } from '@archboard/sync-client';
+import { readLocalSignOutPending, readSelectedAccountMarker } from '@archboard/sync-client';
 import type { EditorSession } from '@/features/editor/application';
 import { useCurrentUser } from '@/features/auth';
+import { CURRENT_USER_QUERY_KEY } from '@/features/auth/session-query-definitions';
 import { ApiClientError, serverUnavailable } from '@/platform/api';
 import { readBoard } from './board-api';
+import { readInBoardScope } from './board-request-lifecycle';
 import { changeMemberRole, readMembers, removeMember } from './board-members-api';
 import {
   BoardResourceRefresh,
@@ -50,26 +52,59 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
       selectedAccount === scope.accountId);
   const identity = useRef({ authenticated, accountMatches, online });
   identity.current = { authenticated, accountMatches, online };
+  const isCurrent = useCallback(() => {
+    try {
+      return (
+        active.current &&
+        identity.current.accountMatches &&
+        !session.getSnapshot().accessDenied &&
+        readLocalSignOutPending(scope.deploymentOrigin) === null &&
+        readSelectedAccountMarker(scope.deploymentOrigin) === scope.accountId
+      );
+    } catch {
+      return false;
+    }
+  }, [scope, session]);
+  const canRead = useCallback(() => {
+    const identityState = client.getQueryState<{ readonly id: string } | null>(
+      CURRENT_USER_QUERY_KEY,
+    );
+    return (
+      isCurrent() &&
+      identity.current.authenticated &&
+      navigator.onLine &&
+      identityState?.status === 'success' &&
+      identityState.fetchStatus === 'idle' &&
+      identityState.data?.id === scope.accountId
+    );
+  }, [isCurrent, client, scope.accountId]);
   const enabled = open && authenticated && online && !snapshot.accessDenied;
   const metadataKey = boardResourceQueryKey(scope, 'metadata');
   const membersKey = boardResourceQueryKey(scope, 'members');
   const metadata = useQuery({
     queryKey: metadataKey,
     queryFn: async ({ signal }) => {
-      const board = await readBoard(scope.boardId, signal);
+      const board = await readInBoardScope(signal, canRead, () => readBoard(scope.boardId, signal));
       if (board.id !== scope.boardId) throw new Error('The API returned a different board.');
       return board;
     },
     enabled,
     retry: false,
+    staleTime: Infinity,
     networkMode: 'always',
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const members = useQuery({
     queryKey: membersKey,
-    queryFn: ({ signal }) => readMembers(scope.boardId, signal),
+    queryFn: ({ signal }) =>
+      readInBoardScope(signal, canRead, () => readMembers(scope.boardId, signal)),
     enabled,
     retry: false,
+    staleTime: Infinity,
     networkMode: 'always',
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const authority = useCallback((): SharingAuthority => {
@@ -83,7 +118,8 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
       online: identity.current.online && navigator.onLine,
       denied: access.accessDenied,
       fresh:
-        active.current &&
+        isCurrent() &&
+        canRead() &&
         board?.id === scope.boardId &&
         boardState?.status === 'success' &&
         memberState?.status === 'success' &&
@@ -98,7 +134,7 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
       accountId: scope.accountId,
       ownerId: board?.owner.id ?? null,
     };
-  }, [client, scope, session]);
+  }, [client, scope, session, isCurrent, canRead]);
 
   const stopProtectedReads = useCallback(() => {
     session.denyBoardAccess();
@@ -107,7 +143,7 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
 
   const handleFailure = useCallback(
     (cause: unknown) => {
-      if (!active.current || !identity.current.accountMatches) return;
+      if (!isCurrent()) return;
       if (
         cause instanceof ApiClientError &&
         (cause.code === ERROR_CODES.NOT_FOUND || cause.kind === 'unauthenticated')
@@ -122,7 +158,7 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
         setError(cause instanceof Error ? cause.message : 'Board access could not be updated.');
       }
     },
-    [stopProtectedReads],
+    [stopProtectedReads, isCurrent],
   );
 
   useEffect(() => {
@@ -143,22 +179,25 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
     };
   }, [client, scope]);
   useEffect(() => {
+    if (!authenticated || !online || snapshot.accessDenied) {
+      request.current?.abort();
+      void client.cancelQueries({ queryKey: boardResourceQueryKey(scope) });
+    }
+    if (!accountMatches || snapshot.accessDenied)
+      new BoardResourceRefresh(client, scope).dispose(true);
+  }, [authenticated, accountMatches, online, snapshot.accessDenied, client, scope]);
+  useEffect(() => {
     if (metadata.error) handleFailure(metadata.error);
     else if (members.error) handleFailure(members.error);
   }, [metadata.error, members.error, handleFailure]);
 
   async function refresh(): Promise<void> {
-    if (
-      !active.current ||
-      !identity.current.authenticated ||
-      !navigator.onLine ||
-      session.getSnapshot().accessDenied
-    )
-      throw new Error('Reconnect and authenticate before refreshing board access.');
+    if (!canRead()) throw new Error('Reconnect and authenticate before refreshing board access.');
     await Promise.all([
       metadata.refetch({ throwOnError: true }),
       members.refetch({ throwOnError: true }),
     ]);
+    if (!canRead()) throw new Error('Board access changed while refreshing.');
   }
 
   function assertAllowed(userId: string, selfLeave: boolean) {
@@ -196,7 +235,7 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
       writeStarted = true;
       if (role === null) await removeMember(scope.boardId, userId, controller.signal);
       else await changeMemberRole(scope.boardId, userId, role, controller.signal);
-      if (!active.current || !identity.current.accountMatches) return;
+      if (!isCurrent()) return;
       if (selfLeave) {
         stopProtectedReads();
         setNotice('You left this board. Your local recovery copy and queued changes are retained.');
@@ -225,13 +264,12 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
         cause instanceof ApiClientError &&
         cause.code === ERROR_CODES.NOT_FOUND
       ) {
-        if (active.current && identity.current.accountMatches)
+        if (isCurrent())
           setError('This member is no longer available. Refreshing current board access.');
       } else handleFailure(cause);
       if (
         writeStarted &&
-        active.current &&
-        identity.current.accountMatches &&
+        isCurrent() &&
         (controller.signal.aborted ||
           (cause instanceof ApiClientError &&
             (cause.kind === 'network' || cause.kind === 'invalid-response')))
@@ -240,12 +278,7 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
           'The member action could not be confirmed. Refresh current access before retrying. Your local copy is retained.',
         );
       // Refresh uncertain, forbidden, archived and failed outcomes; never retry the write.
-      if (
-        active.current &&
-        identity.current.authenticated &&
-        navigator.onLine &&
-        !session.getSnapshot().accessDenied
-      ) {
+      if (canRead()) {
         const resources = new BoardResourceRefresh(client, scope);
         resources.mutationCommitted(['members', 'metadata']);
         await resources.whenIdle();
@@ -267,6 +300,8 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
     notice,
     error,
     authority: authority(),
+    isCurrent,
+    canRead,
     readAuthority: authority,
     assertAllowed,
     assertInviteAllowed: () => {

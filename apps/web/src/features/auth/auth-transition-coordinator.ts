@@ -84,12 +84,14 @@ export async function loadCurrentUser({
   const origin = window.location.origin;
   const startedAtEpoch = authEpoch;
   if (readLocalSignOutPending(origin) !== null) {
+    clearPrivateQueries();
     if (await invalidatePendingServerSession(origin)) forgetSelectedLocalAccount(origin);
     return null;
   }
   const user = await getCurrentUser(signal);
   if (startedAtEpoch !== authEpoch || readLocalSignOutPending(origin) !== null) return null;
   if (user === null) {
+    clearPrivateQueries();
     forgetSelectedLocalAccount(origin);
     return null;
   }

@@ -23,8 +23,7 @@ export function useDiscussionModeration(
   const [controller] = useState(
     () =>
       new DiscussionModeration({
-        isCurrent: () =>
-          latest.current.access.accountMatches && !latest.current.access.authority.denied,
+        isCurrent: () => latest.current.access.isCurrent(),
         authorize: async (action, signal) => {
           await latest.current.access.refresh();
           const authority = latest.current.access.readAuthority();

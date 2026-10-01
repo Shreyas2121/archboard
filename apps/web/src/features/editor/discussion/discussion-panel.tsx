@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useBoardSharing } from '@/features/boards/use-board-sharing';
+import { readInBoardScope } from '@/features/boards/board-request-lifecycle';
 import {
   BoardResourceRefresh,
   boardResourceQueryKey,
@@ -84,24 +85,39 @@ function ScopedDiscussion({
   const prefix = boardResourceQueryKey(scope, 'comments');
   const threads = useInfiniteQuery({
     queryKey: [...prefix, 'threads', resolved],
-    queryFn: ({ pageParam, signal }) => readThreads(scope.boardId, resolved, pageParam, signal),
+    queryFn: ({ pageParam, signal }) =>
+      readInBoardScope(
+        signal,
+        () => latestAccess.current.canRead(),
+        () => readThreads(scope.boardId, resolved, pageParam, signal),
+      ),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor,
     enabled,
     retry: false,
+    staleTime: Infinity,
     networkMode: 'always',
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const comments = useInfiniteQuery({
     queryKey: [...prefix, 'messages', threadId],
     queryFn: ({ pageParam, signal }) => {
       if (!threadId) throw new Error('Choose a discussion.');
-      return readComments(scope.boardId, threadId, pageParam, signal);
+      return readInBoardScope(
+        signal,
+        () => latestAccess.current.canRead(),
+        () => readComments(scope.boardId, threadId, pageParam, signal),
+      );
     },
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.nextCursor,
     enabled: enabled && threadId !== null,
     retry: false,
+    staleTime: Infinity,
     networkMode: 'always',
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const summaries = threads.data?.pages.flatMap((page) => page.data) ?? [];
   const selected = summaries.find(({ id }) => id === threadId);
@@ -199,7 +215,7 @@ function ScopedDiscussion({
         throw new Error('Reconnect and refresh your editing access before sending.');
       writeStarted = true;
       const result = await sendDiscussion(scope.boardId, logical, controller.signal);
-      if (!active.current || !latestAccess.current.accountMatches) return;
+      if (!active.current || !latestAccess.current.isCurrent()) return;
       setRequests((previous) => {
         const next = { ...previous };
         delete next[context];
@@ -213,9 +229,9 @@ function ScopedDiscussion({
       const refresh = new BoardResourceRefresh(client, scope);
       refresh.mutationCommitted(['comments']);
       await refresh.whenIdle();
-      if (active.current) setNotice('Message sent.');
+      if (active.current && latestAccess.current.isCurrent()) setNotice('Message sent.');
     } catch (cause) {
-      if (!active.current || !latestAccess.current.accountMatches) return;
+      if (!active.current || !latestAccess.current.isCurrent()) return;
       const definiteRejection =
         cause instanceof ApiClientError &&
         cause.kind === 'http' &&
@@ -249,7 +265,7 @@ function ScopedDiscussion({
         Discussion is unavailable for this account. Your local graph is retained.
       </p>
     );
-  const stale = !enabled || threads.isError || threads.isFetching;
+  const stale = !enabled || threads.isStale || threads.isError || threads.isFetching;
   return (
     <section className="grid gap-3 p-3" aria-label="Board discussion">
       <p className="text-xs text-muted-foreground">
@@ -397,15 +413,16 @@ function ScopedDiscussion({
             {selected ? anchorLabel(selected.anchor) : 'Selected discussion'}
           </h3>
           {comments.isFetching && <p role="status">Loading messages…</p>}
-          {comments.data && (!enabled || comments.isError || comments.isFetching) && (
-            <p className="text-xs" role="status">
-              Stale messages. Last fetched{' '}
-              <time dateTime={new Date(comments.dataUpdatedAt).toISOString()}>
-                {new Date(comments.dataUpdatedAt).toLocaleString()}
-              </time>
-              .
-            </p>
-          )}
+          {comments.data &&
+            (!enabled || comments.isStale || comments.isError || comments.isFetching) && (
+              <p className="text-xs" role="status">
+                Stale messages. Last fetched{' '}
+                <time dateTime={new Date(comments.dataUpdatedAt).toISOString()}>
+                  {new Date(comments.dataUpdatedAt).toLocaleString()}
+                </time>
+                .
+              </p>
+            )}
           {comments.isError && <p role="alert">Messages could not load. Refresh to retry.</p>}
           {!comments.data && !comments.isFetching && <p>Messages unavailable.</p>}
           {comments.data?.pages

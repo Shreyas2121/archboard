@@ -7,6 +7,7 @@ import {
   type BoardQueryScope,
 } from './board-resource-refresh';
 import { listBoards, readBoard } from './board-api';
+import { readInBoardScope } from './board-request-lifecycle';
 
 export async function refreshAcceptedBoard(
   client: QueryClient,
@@ -25,8 +26,10 @@ export async function refreshAcceptedBoard(
   const board = await client.fetchQuery({
     queryKey: boardResourceQueryKey(scope, 'metadata'),
     staleTime: 0,
-    queryFn: ({ signal: querySignal }) =>
-      readBoard(scope.boardId, AbortSignal.any([signal, querySignal])),
+    queryFn: ({ signal: querySignal }) => {
+      const combined = AbortSignal.any([signal, querySignal]);
+      return readInBoardScope(combined, current, () => readBoard(scope.boardId, combined));
+    },
   });
   assertCurrent();
   if (board.id !== scope.boardId) throw new Error('The board response was invalid.');
@@ -37,8 +40,10 @@ export async function refreshAcceptedBoard(
     ],
     initialPageParam: null as string | null,
     staleTime: 0,
-    queryFn: ({ pageParam, signal: querySignal }) =>
-      listBoards('', false, pageParam, AbortSignal.any([signal, querySignal])),
+    queryFn: ({ pageParam, signal: querySignal }) => {
+      const combined = AbortSignal.any([signal, querySignal]);
+      return readInBoardScope(combined, current, () => listBoards('', false, pageParam, combined));
+    },
     getNextPageParam: (page: BoardListResponse) => page.nextCursor,
   });
   assertCurrent();

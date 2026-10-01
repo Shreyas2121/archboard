@@ -57,6 +57,7 @@ export class BoardResourceRefresh {
   }
   public setOnline(online: boolean): void {
     this.online = online;
+    if (!online) void this.client.cancelQueries({ queryKey: boardResourceQueryKey(this.scope) });
     if (online) this.refresh(readableResources);
   }
   public async whenIdle(): Promise<void> {

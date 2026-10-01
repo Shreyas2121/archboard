@@ -73,6 +73,36 @@ it('discards a user response from before authenticated state was cleared', async
   expect(queryClient.getQueryData(CURRENT_USER_QUERY_KEY)).toBeNull();
 });
 
+it('an expired session clears protected relational queries while retaining the session query', async () => {
+  queryClient.setQueryData(
+    ['board-resources', 'origin', 'previous-user', 'board', 'comments'],
+    'cached',
+  );
+  queryClient.setQueryData(CURRENT_USER_QUERY_KEY, user);
+  mocks.me.mockResolvedValue(null);
+  expect(await loadCurrentUser(request())).toBeNull();
+  expect(
+    queryClient.getQueryData(['board-resources', 'origin', 'previous-user', 'board', 'comments']),
+  ).toBeUndefined();
+  expect(queryClient.getQueryData(CURRENT_USER_QUERY_KEY)).toEqual(user);
+  expect(mocks.forget).toHaveBeenCalled();
+});
+
+it('a pending local sign-out never restores a valid cookie or protected queries', async () => {
+  mocks.pending.mockReturnValue('next-user');
+  mocks.me.mockResolvedValue(user);
+  mocks.signOut.mockResolvedValue({ error: { status: 503 } });
+  queryClient.setQueryData(
+    ['board-resources', 'origin', 'next-user', 'board', 'members'],
+    'cached',
+  );
+  expect(await loadCurrentUser(request())).toBeNull();
+  expect(
+    queryClient.getQueryData(['board-resources', 'origin', 'next-user', 'board', 'members']),
+  ).toBeUndefined();
+  expect(mocks.selected).not.toHaveBeenCalled();
+});
+
 it('retains pending account-switch ownership and removes its listener on cleanup', () => {
   const changed = vi.fn();
   const unsubscribe = subscribePendingAccountSwitch(changed);

@@ -6,7 +6,12 @@ import {
   editGraphText,
   projectGraphDocument,
 } from '@archboard/document-model';
-import { WRITER_SESSION_PHASES } from '@archboard/sync-client';
+import {
+  OrderedSyncClient,
+  ResourceRefreshEvents,
+  WRITER_SESSION_PHASES,
+} from '@archboard/sync-client';
+import * as Y from 'yjs';
 
 import { EditorSession } from './editor-session';
 import { closeEditorSession } from './close-editor-session';
@@ -76,6 +81,7 @@ function harness() {
     }),
   };
   const sync = {
+    resourceEvents: new ResourceRefreshEvents(),
     getSnapshot: () => ({
       ready: false,
       phase: 'disconnected',
@@ -126,6 +132,28 @@ beforeEach(() => {
 });
 
 describe('editor text binding availability', () => {
+  it('socket removal denies protected access without changing retained graph bytes', async () => {
+    const state = harness();
+    try {
+      await state.session.open();
+      await state.session.setBoardAccess(BOARD_ROLES.EDITOR, false);
+      const bytes = Y.encodeStateAsUpdate(state.initial);
+      state.sync.resourceEvents.emit({
+        kind: 'access',
+        boardId: state.session.getStorageNamespace().boardId,
+        role: null,
+      });
+      expect(state.session.getSnapshot().accessDenied).toBe(true);
+      expect(state.session.getSnapshot().boardRole).toBeNull();
+      expect(state.session.accessText(state.target)).toBeNull();
+      expect(Y.encodeStateAsUpdate(state.initial)).toEqual(bytes);
+      const options = vi.mocked(OrderedSyncClient).mock.calls.at(-1)?.[0];
+      expect(options?.canSend?.()).toBe(false);
+    } finally {
+      await state.session.close();
+      state.initial.destroy();
+    }
+  });
   it('reuses projection across status changes and rebuilds after a document edit', async () => {
     const state = harness();
     try {

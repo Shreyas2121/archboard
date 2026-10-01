@@ -9,6 +9,7 @@ import {
   boardResourceQueryKey,
   boardListQueryKey,
 } from '../apps/web/src/features/boards/board-resource-refresh.ts';
+import { readInBoardScope } from '../apps/web/src/features/boards/board-request-lifecycle.ts';
 
 const ts = createRequire(new URL('../package.json', import.meta.url))('typescript');
 const { QueryClient } = createRequire(new URL('../apps/web/package.json', import.meta.url))(
@@ -365,6 +366,7 @@ test('actual accepted-board refresh invalidates relational resources and fetches
   const { refreshAcceptedBoard } = await load(
     '../apps/web/src/features/boards/refresh-accepted-board.ts',
     {
+      './board-request-lifecycle': { readInBoardScope },
       './board-resource-refresh': {
         BoardResourceRefresh,
         boardResourceQueryKey,

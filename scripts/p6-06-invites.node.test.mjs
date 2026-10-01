@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
+import { readInBoardScope } from '../apps/web/src/features/boards/board-request-lifecycle.ts';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { canManageInvites } from '../apps/web/src/features/boards/board-sharing-policy.ts';
@@ -149,6 +150,8 @@ async function hookHarness() {
     authenticated: true,
     online: true,
     busyMember: null,
+    isCurrent: () => sharing.accountMatches && !sharing.authority.denied,
+    canRead: () => sharing.isCurrent() && sharing.authenticated && sharing.online,
     refresh: async () => {
       calls.push(['authority']);
     },
@@ -182,6 +185,7 @@ async function hookHarness() {
   const hooks = await loadModule(
     '../apps/web/src/features/boards/use-board-invites.ts',
     {
+      './board-request-lifecycle': { readInBoardScope },
       react: {
         useState: (initial) => {
           const at = index++;

@@ -35,7 +35,7 @@ function SessionEditor({ session, boardTitle, narrowScreen }: SessionEditorProps
     session.resourceScope?.boardId === boardId
       ? (currentUser.data?.id ?? null)
       : null;
-  useBoardResourceRefresh(session.resourceEvents, resourceAccount, boardId);
+  useBoardResourceRefresh(session.resourceEvents, resourceAccount, boardId, snapshot.accessDenied);
   return (
     <EditorShell
       boardTitle={boardTitle}
