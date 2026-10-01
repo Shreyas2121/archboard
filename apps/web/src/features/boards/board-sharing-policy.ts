@@ -31,6 +31,14 @@ export function canManageMember(authority: SharingAuthority, targetId: string): 
   );
 }
 
+export function canManageInvites(authority: SharingAuthority): boolean {
+  return (
+    sharingWriteBlocker(authority) === null &&
+    authority.role === 'owner' &&
+    authority.ownerId === authority.accountId
+  );
+}
+
 export function canLeaveBoard(authority: SharingAuthority): boolean {
   return (
     sharingWriteBlocker(authority) === null &&

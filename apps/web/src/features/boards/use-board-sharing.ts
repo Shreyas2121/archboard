@@ -20,6 +20,7 @@ import {
 import {
   canLeaveBoard,
   canManageMember,
+  canManageInvites,
   sharingWriteBlocker,
   type SharingAuthority,
 } from './board-sharing-policy';
@@ -267,6 +268,11 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
     error,
     authority: authority(),
     assertAllowed,
+    assertInviteAllowed: () => {
+      const current = authority();
+      if (!canManageInvites(current))
+        throw new Error(sharingWriteBlocker(current) ?? 'Only the owner manages invitations.');
+    },
     refresh,
     mutate,
     handleFailure,

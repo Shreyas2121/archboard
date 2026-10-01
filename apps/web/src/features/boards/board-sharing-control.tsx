@@ -24,6 +24,8 @@ import {
 } from './board-sharing-policy';
 import { MemberLeave } from './member-leave';
 import { useBoardSharing } from './use-board-sharing';
+import { useBoardInvites } from './use-board-invites';
+import { BoardInviteControls } from './board-invite-controls';
 import type { BoardQueryScope } from './board-resource-refresh';
 
 interface BoardSharingControlProps {
@@ -46,6 +48,7 @@ function ScopedSharingControl({
   onOpenChange,
 }: BoardSharingControlProps & { readonly scope: BoardQueryScope }) {
   const sharing = useBoardSharing(session, scope, open);
+  const invites = useBoardInvites(scope, sharing, open);
   const latest = useRef(sharing);
   latest.current = sharing;
   const trigger = useRef<HTMLButtonElement>(null);
@@ -75,7 +78,10 @@ function ScopedSharingControl({
     return () => leave.dispose();
   }, [leave]);
   const busy =
-    sharing.busyMember !== null || leaving.phase === 'checking' || leaving.phase === 'leaving';
+    sharing.busyMember !== null ||
+    invites.busy ||
+    leaving.phase === 'checking' ||
+    leaving.phase === 'leaving';
   const protectedData = sharing.accountMatches && !session.getSnapshot().accessDenied;
   const board = protectedData ? sharing.metadata.data : undefined;
   const members = protectedData ? sharing.members.data : undefined;
@@ -128,7 +134,7 @@ function ScopedSharingControl({
         </DialogTrigger>
         <DialogContent
           ref={dialogContent}
-          className="sm:max-w-xl"
+          className="max-h-[85dvh] overflow-y-auto sm:max-w-xl"
           aria-busy={busy || loading}
           showCloseButton={!busy}
           onEscapeKeyDown={(event) => {
@@ -274,6 +280,10 @@ function ScopedSharingControl({
                   </p>
                 )
               )}
+              <BoardInviteControls
+                invites={invites}
+                blocked={sharing.busyMember !== null || leaving.phase !== 'idle'}
+              />
             </>
           )}
           {blocker && protectedData && (
