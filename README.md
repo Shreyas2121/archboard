@@ -4,10 +4,15 @@ Archboard is a local-first collaborative architecture editor. This repository is
 monorepo containing independently deployable web and API applications plus framework-independent
 shared packages.
 
-The current implementation scope includes Phase 5: the offline product boundary. Read
-[`phase5.md`](./phase5.md), the commit-by-commit [`guide4.md`](./guide4.md), and the
-[Phase 5 audit](./docs/phase-5-offline.md) before changing this scope. Earlier-phase
-evidence remains authoritative input.
+The current implementation scope includes Phase 6: board sharing and anchored discussion.
+Read [`phase6.md`](./phase6.md), the commit-by-commit [`guide5.md`](./guide5.md), and the
+[Phase 6 audit](./docs/phase-6-discussion-sharing.md). Its
+[evidence index](./docs/evidence/phase6/README.md) maps all tasks and the focused layout fix.
+Implementation is delivered; the full Phase 6 gate is **OPEN**. P6-11 recorded 430 passing
+Node/unit tests, with the implementation verifier failing on 32 inherited boundary findings.
+Current-tree database/session/socket/schema and browser/manual acceptance remain deferred.
+Phase 7 implementation may proceed under the existing verification policy; this handoff
+does not establish Phase 7/8 or release readiness. Earlier-phase evidence remains input.
 
 The Phase 5 exit gate is **open**. The [Phase 5 evidence index](./docs/evidence/phase5/README.md)
 links the implementation commits and distinguishes historical browser results from current-tree
@@ -96,8 +101,7 @@ unit/Node checks, format, lint, typecheck, builds, boundaries, and static scans.
 checks as **UNRUN (deferred by user)**; all required deferred proof remains necessary for
 phase/release PASS. Historical results remain unchanged. Follow the complete
 [verification policy](docs/verification-policy.md). The command table describes available
-commands, not a direction to run deferred ones. This documentation change leaves scripts
-unchanged except for the new database-free `pnpm phase6:verify --implementation` mode.
+commands, not a direction to run deferred ones.
 See [Phase 6 verification](docs/phase6-verification.md) for child commands, fail-propagating
 results, sanitized reports, independent synthetic fixtures and required human proof.
 
@@ -126,6 +130,17 @@ is complete; syntax checks do not establish browser acceptance. It creates/consu
 synthetic invitations and tests direct refresh, signed-out privacy, a two-account
 race, recorded-user retry, preview/revocation, caches and referrers without emitting
 private URLs or saving browser artifacts. It does not automate GitHub credentials.
+
+Sharing and discussion use server-owned records outside Y.Doc. Cached discussion is a
+previously downloaded view with stale/fetch-time labels, and offline REST mutations stay
+disabled. Drafts are memory-only, scoped to the account and board, and may be lost on
+navigation/reload. A version conflict retains unsent text and requires current-content review
+before explicit retry. An uncertain creation keeps its original payload/key for explicit
+retry during the conservative 23-hour window; after expiry, inspect visible results and
+acknowledge duplicate risk before starting a new submission. Reconnect performs reads,
+never automatic discussion or invitation acceptance. See the
+[Phase 6 run and recovery guidance](docs/phase-6-discussion-sharing.md#run-and-recovery)
+for role rules, pending graph preservation and API routes.
 
 `pnpm phase1:verify` runs the full Phase 1 command gate. It requires an ignored root `.env` with
 paired Neon pooled and direct URLs; it does not print credentials. The database integration test now
