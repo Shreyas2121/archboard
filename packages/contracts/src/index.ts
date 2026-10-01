@@ -6,4 +6,6 @@ export * from './graph/index.js';
 export * from './http/index.js';
 export * from './limits/index.js';
 export * from './pagination/index.js';
+export * from './portability/index.js';
+export * from './checkpoints/index.js';
 export * from './protocol/index.js';
