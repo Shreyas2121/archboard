@@ -81,6 +81,10 @@ try {
     documentResponse.headers()['referrer-policy'] === 'no-referrer',
     'Invite document referrer header is missing.',
   );
+  assert.ok(
+    documentResponse.headers()['cache-control']?.includes('no-store'),
+    'Invite document must be served with no-store.',
+  );
   await signedOut.getByRole('button', { name: 'Continue with GitHub', exact: true }).waitFor();
   assert.ok(!anonymousPreview, 'Signed-out preview request was sent.');
   assert.ok(
@@ -142,6 +146,10 @@ try {
     await navigator.serviceWorker.ready;
   });
   await reader.reload();
+  assert.ok(
+    await reader.evaluate(() => Boolean(navigator.serviceWorker.controller)),
+    'Runtime cache inspection requires an active controlling worker.',
+  );
   const surfaces = await reader.evaluate(async () => ({
     cacheUrls: (
       await Promise.all(
@@ -170,6 +178,10 @@ try {
       ({ referrer }) => !referrer.includes(invite.token) && !referrer.includes(revoked.token),
     ),
     'Bearer token entered a referrer.',
+  );
+  assert.ok(
+    requests.every(({ url }) => [web, api].includes(new URL(url).origin)),
+    'Invite document loaded a third-party resource.',
   );
   assert.ok(
     messages.every((value) => !value.includes(invite.token) && !value.includes(revoked.token)),

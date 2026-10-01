@@ -74,6 +74,9 @@ const SECOND_CHANGED_VERSION = 3;
 const FRACTIONAL_VERSION = 1.5;
 const EXPECTED_COMMENTS_HINTS = 6;
 const EXPECTED_EDGE_POSITION = { x: 320, y: 70 };
+const PLAN_THREADS = 300;
+const PLAN_MESSAGES = 500;
+const PLAN_PAGE_SIZE = 30;
 const SCHEMA = `archboard_p602_${process.pid}_${randomUUID().replaceAll('-', '').slice(0, SCHEMA_SUFFIX_LENGTH)}`;
 const point: ThreadAnchor = { type: 'point', position: { x: -25, y: 30 } };
 const submittedBody = '  Synthetic message\nwith formatting  ';
@@ -87,6 +90,12 @@ interface Counts {
   threads: number;
   comments: number;
   keys: number;
+}
+interface ObservedQueryPlan {
+  readonly 'Actual Rows': number;
+  readonly 'Node Type': string;
+  readonly 'Index Name'?: string;
+  readonly Plans?: ObservedQueryPlan[];
 }
 
 function deferred() {
@@ -2221,6 +2230,200 @@ describe('P6-02/P6-03 discussion HTTP, real sessions and PostgreSQL transactions
       HttpStatus.UNAUTHORIZED,
       ERROR_CODES.UNAUTHENTICATED,
     );
+  });
+
+  it('P6-11 denies cross-board discussion/member/invite targets through HTTP without changing any resource', async () => {
+    const source = await board();
+    const destination = await board();
+    const thread = await create(source.id);
+    const issued = await request(`/boards/${source.id}/invites`, 'owner', {
+      method: 'POST',
+      key: randomUUID(),
+      body: { role: 'viewer' },
+    });
+    expect(issued.status).toBe(HttpStatus.CREATED);
+    const invite = boardInviteResponseSchema.parse(await issued.json()).data;
+    // The editor belongs only to source; destination is otherwise readable by the owner.
+    await database.query('DELETE FROM board_members WHERE board_id=$1 AND user_id=$2', [
+      destination.id,
+      users.get('editor')!.id,
+    ]);
+    const unchanged = async () => ({
+      source: await counts(source.id),
+      destination: await counts(destination.id),
+      comment: await storedComment(thread.comment.id),
+      members: await database.query(
+        'SELECT board_id,user_id,role FROM board_members WHERE board_id IN ($1,$2) ORDER BY board_id,user_id',
+        [source.id, destination.id],
+      ),
+      invite: await database.query('SELECT revoked_at,accepted_by FROM board_invites WHERE id=$1', [
+        invite.id,
+      ]),
+      graph: await database.query(
+        'SELECT id,latest_seq,content_updated_at FROM boards WHERE id IN ($1,$2) ORDER BY id',
+        [source.id, destination.id],
+      ),
+    });
+    const before = await unchanged();
+    const requests = [
+      () => request(`/boards/${destination.id}/threads/${thread.thread.id}/comments`),
+      () => reply(destination.id, thread.thread.id),
+      () => edit(destination.id, thread.comment.id),
+      () => removeMessage(destination.id, thread.comment.id),
+      () => resolveThread(destination.id, thread.thread.id),
+      () =>
+        request(`/boards/${destination.id}/members/${users.get('editor')!.id}`, 'owner', {
+          method: 'PATCH',
+          body: { role: 'viewer' },
+        }),
+      () =>
+        request(`/boards/${destination.id}/members/${users.get('editor')!.id}`, 'owner', {
+          method: 'DELETE',
+        }),
+      () =>
+        request(`/boards/${destination.id}/invites/${invite.id}`, 'owner', { method: 'DELETE' }),
+    ];
+    for (const send of requests)
+      await expectError(await send(), HttpStatus.NOT_FOUND, ERROR_CODES.NOT_FOUND);
+    for (const resource of ['threads', 'members', 'invites']) {
+      const denied = await expectError(
+        await request(`/boards/${source.id}/${resource}`, 'outsider'),
+        HttpStatus.NOT_FOUND,
+        ERROR_CODES.NOT_FOUND,
+      );
+      expect(Object.keys(denied).sort()).toEqual(['code', 'message', 'requestId']);
+    }
+    expect(await unchanged()).toEqual(before);
+  });
+
+  it('P6-11 a reauthenticated socket and REST reader recover discussion committed during a disconnect', async () => {
+    const fixture = await board();
+    const first = await create(fixture.id);
+    const reader = await observeSocket(fixture.id);
+    const closed = reader.closed();
+    reader.socket.close();
+    await closed;
+    const graph = await database.query(
+      'SELECT latest_seq,content_updated_at FROM boards WHERE id=$1',
+      [fixture.id],
+    );
+    const committed = await reply(fixture.id, first.thread.id);
+    expect(committed.status).toBe(HttpStatus.CREATED);
+    const message = commentResponseSchema.parse(await committed.json()).data;
+    const resumed = await observeSocket(fixture.id);
+    try {
+      const response = await request(
+        `/boards/${fixture.id}/threads/${first.thread.id}/comments`,
+        'viewer',
+      );
+      expect(response.status).toBe(HttpStatus.OK);
+      const messages = commentListResponseSchema.parse(await response.json()).data;
+      expect(messages.map(({ id }) => id)).toContain(message.id);
+      expect(messages.find(({ id }) => id === message.id)?.version).toBe(message.version);
+      await resumed.flush();
+      expect(resumed.frames.some(({ event }) => event === 'ack' || event === 'update')).toBe(false);
+      expect(
+        await database.query('SELECT latest_seq,content_updated_at FROM boards WHERE id=$1', [
+          fixture.id,
+        ]),
+      ).toEqual(graph);
+    } finally {
+      resumed.socket.terminate();
+    }
+  });
+
+  it('P6-11 measures actual repository thread/filter/cursor/message query plans on representative synthetic rows', async () => {
+    const fixture = await board();
+    const first = await create(fixture.id);
+    await database.query(
+      `INSERT INTO comment_threads (board_id,anchor,created_by,created_at,resolved_at,resolved_by)
+      SELECT $1,$2::jsonb,$3,CURRENT_TIMESTAMP - make_interval(secs => n),
+        CASE WHEN n % 2 = 0 THEN CURRENT_TIMESTAMP ELSE NULL END,
+        CASE WHEN n % 2 = 0 THEN $3 ELSE NULL END FROM generate_series(1,$4) n`,
+      [fixture.id, JSON.stringify(point), users.get('owner')!.id, PLAN_THREADS],
+    );
+    await database.query(
+      `INSERT INTO comments (thread_id,author_user_id,body,created_at)
+      SELECT id,$2,'Synthetic query-plan row',created_at FROM comment_threads WHERE board_id=$1 AND id<>$3`,
+      [fixture.id, users.get('owner')!.id, first.thread.id],
+    );
+    await database.query(
+      `INSERT INTO comments (thread_id,author_user_id,body,created_at)
+      SELECT $1,$2,'Synthetic query-plan reply',CURRENT_TIMESTAMP + make_interval(secs => n)
+      FROM generate_series(1,$3) n`,
+      [first.thread.id, users.get('owner')!.id, PLAN_MESSAGES - 1],
+    );
+    await database.query('ANALYZE comment_threads');
+    await database.query('ANALYZE comments');
+    const runner = database.createQueryRunner();
+    await runner.connect();
+    try {
+      const repository = new DiscussionRepository(runner.manager);
+      const captured = jest.spyOn(runner, 'query');
+      const page = await repository.listThreads(fixture.id, PLAN_PAGE_SIZE, false);
+      const thread = page.at(-1)!;
+      const calls: { label: string; sql: string; parameters: unknown[] | undefined }[] = [];
+      const remember = (label: string) => {
+        const [sql, parameters] = captured.mock.calls.at(-1)!;
+        if (parameters !== undefined && !Array.isArray(parameters))
+          throw new Error('Expected positional query-plan parameters.');
+        calls.push({ label, sql, parameters });
+      };
+      remember('unresolved-first-page');
+      await repository.listThreads(fixture.id, PLAN_PAGE_SIZE, false, {
+        id: thread.id,
+        timestamp: thread.createdAt,
+      });
+      remember('unresolved-cursor-page');
+      await repository.listThreads(fixture.id, PLAN_PAGE_SIZE, true);
+      remember('resolved-first-page');
+      const messages = await repository.listComments(fixture.id, first.thread.id, PLAN_PAGE_SIZE);
+      remember('message-first-page');
+      const last = messages.at(-1)!;
+      await repository.listComments(fixture.id, first.thread.id, PLAN_PAGE_SIZE, {
+        id: last.id,
+        timestamp: last.createdAt,
+      });
+      remember('message-cursor-page');
+      captured.mockRestore();
+      for (const { label, sql, parameters } of calls) {
+        const plans = (await runner.query(
+          `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`,
+          parameters,
+        )) as { 'QUERY PLAN': { 'Execution Time': number; Plan: ObservedQueryPlan }[] }[];
+        const plan = plans[0]!['QUERY PLAN'][0]!;
+        expect(plan.Plan['Actual Rows']).toBe(PLAN_PAGE_SIZE);
+        expect(Number.isFinite(plan['Execution Time'])).toBe(true);
+        const operators = (
+          node: ObservedQueryPlan,
+        ): { type: string; discussionIndex: string | null }[] => [
+          {
+            type: node['Node Type'],
+            discussionIndex: [
+              'IDX_comment_threads_board_created_id',
+              'IDX_comments_thread_created_id',
+            ].includes(node['Index Name'] ?? '')
+              ? node['Index Name']!
+              : null,
+          },
+          ...(node.Plans?.flatMap(operators) ?? []),
+        ];
+        // Fixed operators/index names and numeric observations; no SQL/bind values/content.
+        console.log(
+          JSON.stringify({
+            phase: 'P6-11',
+            label,
+            threads: PLAN_THREADS + 1,
+            messages: PLAN_MESSAGES,
+            rows: plan.Plan['Actual Rows'],
+            executionMs: plan['Execution Time'],
+            operators: operators(plan.Plan),
+          }),
+        );
+      }
+    } finally {
+      await runner.release();
+    }
   });
 
   it('publishes all seven discussion routes with exact shared schemas, DELETE bodies and statuses', async () => {

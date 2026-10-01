@@ -53,31 +53,34 @@ Copy `.env.example` to `.env`, supply the real local database and authentication
 `pnpm dev` from the repository root. It builds the API and its workspace dependencies once, then
 starts the API compiler, API process, and Vite development server together. `Ctrl+C` stops all three.
 
-| Command                            | Purpose                                                           |
-| ---------------------------------- | ----------------------------------------------------------------- |
-| `pnpm install --frozen-lockfile`   | Reproduce the dependency graph                                    |
-| `pnpm dev`                         | Run the API and web development servers                           |
-| `pnpm format:check`                | Check formatting                                                  |
-| `pnpm lint`                        | Run ESLint                                                        |
-| `pnpm typecheck`                   | Run strict TypeScript checks                                      |
-| `pnpm test`                        | Full workspace units; deferred because it launches Chrome         |
-| `pnpm test:integration`            | DB tests; deferred until all Version 1 implementation is complete |
-| `pnpm test:browser`                | Browser-backed sync-client units; temporarily deferred            |
-| `pnpm boundary:check`              | Check package boundaries and negative fixtures                    |
-| `pnpm build`                       | Build applications and packages                                   |
-| `pnpm db:migration:generate`       | Generate a TypeORM migration after C08                            |
-| `pnpm db:migration:run`            | Apply TypeORM migrations after C08                                |
-| `pnpm db:migration:show`           | DB inspection; deferred until final Version 1 verification        |
-| `pnpm auth:schema:check`           | DB check; deferred until final Version 1 verification             |
-| `pnpm phase1:verify`               | Full Phase 1 gate; temporarily deferred                           |
-| `pnpm phase2:measure`              | Chrome measurement; temporarily deferred                          |
-| `pnpm phase2:verify`               | Full Phase 2 gate; temporarily deferred                           |
-| `pnpm phase3:verify`               | Full Phase 3 gate; temporarily deferred                           |
-| `pnpm phase4:quick`                | Includes Chrome package tests; temporarily deferred               |
-| `pnpm phase4:verify`               | Full Phase 4 browser/database gate; temporarily deferred          |
-| `pnpm phase4:verify:legacy`        | Full earlier-phase replay; temporarily deferred                   |
-| `pnpm phase5:verify --non-browser` | Contains DB tests; deferred until final Version 1 verification    |
-| `pnpm phase5:verify`               | Full Phase 5 browser gate; temporarily deferred                   |
+| Command                               | Purpose                                                                                     |
+| ------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `pnpm install --frozen-lockfile`      | Reproduce the dependency graph                                                              |
+| `pnpm dev`                            | Run the API and web development servers                                                     |
+| `pnpm format:check`                   | Check formatting                                                                            |
+| `pnpm lint`                           | Run ESLint                                                                                  |
+| `pnpm typecheck`                      | Run strict TypeScript checks                                                                |
+| `pnpm test`                           | Full workspace units; deferred because it launches Chrome                                   |
+| `pnpm test:integration`               | DB tests; deferred until all Version 1 implementation is complete                           |
+| `pnpm test:browser`                   | Browser-backed sync-client units; temporarily deferred                                      |
+| `pnpm boundary:check`                 | Check package boundaries and negative fixtures                                              |
+| `pnpm build`                          | Build applications and packages                                                             |
+| `pnpm db:migration:generate`          | Generate a TypeORM migration after C08                                                      |
+| `pnpm db:migration:run`               | Apply TypeORM migrations after C08                                                          |
+| `pnpm db:migration:show`              | DB inspection; deferred until final Version 1 verification                                  |
+| `pnpm auth:schema:check`              | DB check; deferred until final Version 1 verification                                       |
+| `pnpm phase1:verify`                  | Full Phase 1 gate; temporarily deferred                                                     |
+| `pnpm phase2:measure`                 | Chrome measurement; temporarily deferred                                                    |
+| `pnpm phase2:verify`                  | Full Phase 2 gate; temporarily deferred                                                     |
+| `pnpm phase3:verify`                  | Full Phase 3 gate; temporarily deferred                                                     |
+| `pnpm phase4:quick`                   | Includes Chrome package tests; temporarily deferred                                         |
+| `pnpm phase4:verify`                  | Full Phase 4 browser/database gate; temporarily deferred                                    |
+| `pnpm phase4:verify:legacy`           | Full earlier-phase replay; temporarily deferred                                             |
+| `pnpm phase5:verify --non-browser`    | Contains DB tests; deferred until final Version 1 verification                              |
+| `pnpm phase5:verify`                  | Full Phase 5 browser gate; temporarily deferred                                             |
+| `pnpm phase6:verify --implementation` | Database-free Phase 6 checks; full acceptance stays OPEN                                    |
+| `pnpm phase6:verify --non-browser`    | Includes DB/session/socket/schema checks; deferred until final Version 1 verification       |
+| `pnpm phase6:verify`                  | Full automated Phase 6 checks; browser/DB pauses and missing human proof keep the gate OPEN |
 
 **Version 1 test policy:** Defer all database checks/tests until the entire Version 1
 implementation (M00–M08) is complete, then run a consolidated final verification pass.
@@ -94,7 +97,9 @@ checks as **UNRUN (deferred by user)**; all required deferred proof remains nece
 phase/release PASS. Historical results remain unchanged. Follow the complete
 [verification policy](docs/verification-policy.md). The command table describes available
 commands, not a direction to run deferred ones. This documentation change leaves scripts
-unchanged; no database-free aggregate exists yet. Phase 6 plans an `--implementation` mode.
+unchanged except for the new database-free `pnpm phase6:verify --implementation` mode.
+See [Phase 6 verification](docs/phase6-verification.md) for child commands, fail-propagating
+results, sanitized reports, independent synthetic fixtures and required human proof.
 
 The browser-backed sync-client units use Playwright with an installed stable Google Chrome. Package
 installation does not download a second browser binary. The web application does not retain an

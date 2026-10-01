@@ -1,0 +1,332 @@
+﻿{
+  "mode": "implementation",
+  "results": [
+    {
+      "id": "frozen-install",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 2264,
+      "command": ["node", "\u003cpnpm\u003e", "install", "--frozen-lockfile"],
+      "cwd": "."
+    },
+    {
+      "id": "format",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 11378,
+      "command": ["node", "\u003cpnpm\u003e", "format:check"],
+      "cwd": "."
+    },
+    {
+      "id": "lint",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 11091,
+      "command": ["node", "\u003cpnpm\u003e", "lint"],
+      "cwd": "."
+    },
+    {
+      "id": "types",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 49728,
+      "command": ["node", "\u003cpnpm\u003e", "typecheck"],
+      "cwd": "."
+    },
+    {
+      "id": "workspace-build",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 44805,
+      "command": ["node", "\u003cpnpm\u003e", "build"],
+      "cwd": "."
+    },
+    {
+      "id": "contracts-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 113,
+      "durationMs": 2178,
+      "command": ["node", "../../node_modules/vitest/vitest.mjs", "run"],
+      "cwd": "packages/contracts"
+    },
+    {
+      "id": "fixtures-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 16,
+      "durationMs": 1482,
+      "command": ["node", "../../node_modules/vitest/vitest.mjs", "run"],
+      "cwd": "packages/fixtures"
+    },
+    {
+      "id": "document-model-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 51,
+      "durationMs": 4437,
+      "command": ["node", "../../node_modules/vitest/vitest.mjs", "run"],
+      "cwd": "packages/document-model"
+    },
+    {
+      "id": "API-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 139,
+      "durationMs": 47033,
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "../../node_modules/jest/bin/jest.js",
+        "--config",
+        "jest.config.cjs",
+        "--runInBand"
+      ],
+      "cwd": "apps/api"
+    },
+    {
+      "id": "web-Node-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 18,
+      "durationMs": 2292,
+      "command": [
+        "node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "--config",
+        "apps/web/vitest.node.config.ts",
+        "auth-transition-coordinator",
+        "editor-session",
+        "board-editor-loader",
+        "editor-status-policy"
+      ],
+      "cwd": "."
+    },
+    {
+      "id": "discussion-sharing-lifecycle",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 92,
+      "durationMs": 3138,
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "--test",
+        "scripts/p6-04-resources.node.test.mjs",
+        "scripts/p6-05-sharing.node.test.mjs",
+        "scripts/p6-06-invites.node.test.mjs",
+        "scripts/p6-07-invite-acceptance.node.test.mjs",
+        "scripts/p6-08-discussion.node.test.mjs",
+        "scripts/p6-09-discussion.node.test.mjs",
+        "scripts/p6-10-lifecycle.node.test.mjs",
+        "scripts/p6-11-verifier.node.test.mjs",
+        "scripts/p5-08-update-state.node.test.mjs",
+        "scripts/p5-09-storage-state.node.test.mjs"
+      ],
+      "cwd": "."
+    },
+    {
+      "id": "account-selection",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 1,
+      "durationMs": 578,
+      "command": ["node", "--test", "scripts/account-selection.node.test.mjs"],
+      "cwd": "packages/sync-client"
+    },
+    {
+      "id": "production-bundle",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 190,
+      "command": ["node", "scripts/check-web-bundle.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "generated-cache-policy",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 82,
+      "command": ["node", "scripts/check-phase5-cache-policy.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "public-secret-scan",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 1032,
+      "command": ["node", "\u003cpnpm\u003e", "--filter", "@archboard/api", "security:scan"],
+      "cwd": "."
+    },
+    {
+      "id": "evidence-secret-scan",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 76,
+      "command": ["node", "scripts/check-phase6-evidence.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "dependency-boundaries",
+      "boundary": "implementation",
+      "status": "FAIL",
+      "exitCode": 1,
+      "durationMs": 1582,
+      "command": ["node", "\u003cpnpm\u003e", "boundary:check"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p6-07-invite-acceptance.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 59,
+      "command": ["node", "--check", "scripts/p6-07-invite-acceptance.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p6-08-discussion.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 55,
+      "command": ["node", "--check", "scripts/p6-08-discussion.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p6-09-discussion.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 51,
+      "command": ["node", "--check", "scripts/p6-09-discussion.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p6-10-lifecycle.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 56,
+      "command": ["node", "--check", "scripts/p6-10-lifecycle.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p6-11-sharing-security.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 56,
+      "command": ["node", "--check", "scripts/p6-11-sharing-security.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "real-DB-session-HTTP-socket",
+      "boundary": "database",
+      "status": "UNRUN",
+      "reason": "deferred by user â€” until Version 1 implementation is complete",
+      "durationMs": 0
+    },
+    {
+      "id": "auth-schema",
+      "boundary": "database",
+      "status": "UNRUN",
+      "reason": "deferred by user â€” until Version 1 implementation is complete",
+      "durationMs": 0
+    },
+    {
+      "id": "configured-migrations",
+      "boundary": "database",
+      "status": "UNRUN",
+      "reason": "deferred by user â€” until Version 1 implementation is complete",
+      "durationMs": 0
+    },
+    {
+      "id": "native-browser-units",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p6-07-invite-acceptance.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p6-08-discussion.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p6-09-discussion.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p6-10-lifecycle.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p6-11-sharing-security.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "combined-A10-A24-and-spoken-accessibility",
+      "boundary": "manual",
+      "status": "UNRUN",
+      "reason": "Independent cross-tab pending graph export/account-switch and spoken screen-reader observations require reviewed human evidence; see docs/phase6-verification.md.",
+      "durationMs": 0
+    },
+    {
+      "id": "sanitized-report-secret-scan",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 66,
+      "command": [
+        "node",
+        "scripts/check-phase6-evidence.mjs",
+        "--report",
+        "\u003ctemporary sanitized report\u003e"
+      ],
+      "cwd": "."
+    }
+  ],
+  "fullGate": "OPEN",
+  "exitCode": 1,
+  "counts": {
+    "PASS": 22,
+    "FAIL": 1,
+    "UNRUN": 10
+  }
+}
