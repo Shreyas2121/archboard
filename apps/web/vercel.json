@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "headers": [
+    { "source": "/(.*)", "headers": [{ "key": "Referrer-Policy", "value": "no-referrer" }] },
+    { "source": "/invite/:path*", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
+  ],
+  "rewrites": [{ "source": "/invite/:path*", "destination": "/index.html" }]
+}

@@ -3,6 +3,7 @@ import { betterAuth } from 'better-auth';
 import { Pool } from 'pg';
 
 import type { ApiConfig } from '../../../platform/config/index.js';
+import { logAuthDiagnostic } from './auth-diagnostics.js';
 
 function createAuth(config: ApiConfig, pool: Pool) {
   return betterAuth({
@@ -24,6 +25,7 @@ function createAuth(config: ApiConfig, pool: Pool) {
         : {},
     emailAndPassword: { enabled: config.mode === 'test' },
     advanced: { database: { joins: true } },
+    logger: { log: logAuthDiagnostic },
   });
 }
 

@@ -8,6 +8,8 @@ import { NotFoundRoute } from './routes/not-found-route';
 import { RootLayout } from './routes/root-layout';
 import { RouteError } from './routes/route-error';
 import { safeReturnPath } from '@/features/auth';
+import type { AuthReturnPath } from '@/features/auth/return-path';
+import { InviteRoute } from './routes/invite-route';
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -18,7 +20,7 @@ const rootRoute = createRootRoute({
 const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  validateSearch: (search: Record<string, unknown>): { returnTo?: '/boards' } => {
+  validateSearch: (search: Record<string, unknown>): { returnTo?: AuthReturnPath } => {
     const returnTo = safeReturnPath(search.returnTo);
     return returnTo ? { returnTo } : {};
   },
@@ -43,12 +45,27 @@ const demoRoute = createRoute({
   component: DemoRoute,
 });
 
-const routeTree = rootRoute.addChildren([homeRoute, boardsRoute, boardEditorRoute, demoRoute]);
+const inviteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/invite/$token',
+  component: InviteRoute,
+});
+
+const routeTree = rootRoute.addChildren([
+  homeRoute,
+  boardsRoute,
+  boardEditorRoute,
+  demoRoute,
+  inviteRoute,
+]);
 
 export const router = createRouter({
   routeTree,
   defaultPreload: 'intent',
   scrollRestoration: true,
+  // Scroll restoration is durable. Exclude bearer paths and continuation queries from its keys.
+  getScrollRestorationKey: (location) =>
+    location.pathname.startsWith('/invite/') ? '/invite/:redacted' : location.pathname,
 });
 
 declare module '@tanstack/react-router' {

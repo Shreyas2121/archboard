@@ -340,6 +340,48 @@ describe('board invitations with real Better Auth cookies and PostgreSQL', () =>
     }
   });
 
+  it('rechecks expiry and revocation after a successful authenticated preview', async () => {
+    const board = await createBoard('Preview recheck');
+    for (const change of ['revoke', 'expire'] as const) {
+      const issued = await createInvite(board.id, 'viewer');
+      const preview = await request('/invites/preview', 'viewer', {
+        method: 'POST',
+        body: { token: issued.token },
+      });
+      expect(preview.status).toBe(HTTP_OK);
+      expect(preview.headers.get('referrer-policy')).toBe('no-referrer');
+      expect(preview.headers.get('cache-control')).toBe('no-store');
+      invitePreviewResponseSchema.parse(await preview.json());
+      if (change === 'revoke') {
+        expect(
+          (
+            await request(`/boards/${board.id}/invites/${issued.invite.id}`, 'owner', {
+              method: 'DELETE',
+            })
+          ).status,
+        ).toBe(HTTP_NO_CONTENT);
+      } else {
+        await database.query(
+          "UPDATE board_invites SET expires_at = clock_timestamp() - INTERVAL '1 second' WHERE id = $1",
+          [issued.invite.id],
+        );
+      }
+      const accepted = await request('/invites/accept', 'viewer', {
+        method: 'POST',
+        body: { token: issued.token },
+      });
+      expect(accepted.status).toBe(change === 'revoke' ? HTTP_NOT_FOUND : HTTP_GONE);
+      expect(apiErrorEnvelopeSchema.parse(await accepted.json()).error.code).toBe(
+        change === 'revoke' ? ERROR_CODES.INVITE_UNAVAILABLE : ERROR_CODES.INVITE_EXPIRED,
+      );
+      const rows = (await database.query(
+        'SELECT count(*)::integer AS count FROM board_members WHERE board_id = $1 AND user_id = $2',
+        [board.id, users.get('viewer')!.id],
+      )) as { count: number }[];
+      expect(rows[0]?.count).toBe(0);
+    }
+  });
+
   it('accepts once, upgrades without demotion, and records owner acceptance without a member row', async () => {
     const board = await createBoard('Acceptance roles');
     const viewerInvite = await createInvite(board.id, 'viewer');

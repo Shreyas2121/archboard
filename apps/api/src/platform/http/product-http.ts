@@ -47,6 +47,7 @@ export function configureProductHttp(application: NestExpressApplication): void 
     const started = performance.now();
     response.setHeader('x-request-id', requestId);
     response.setHeader('referrer-policy', 'no-referrer');
+    if (request.path.includes('/invites')) response.setHeader('cache-control', 'no-store');
     response.on('finish', () => {
       const route = request.route?.path;
       console.info(

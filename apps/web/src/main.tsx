@@ -19,7 +19,12 @@ if (!rootElement) {
   throw new Error('The application root element is missing.');
 }
 
-createRoot(rootElement).render(
+createRoot(rootElement, {
+  // React's default diagnostics serialize caught errors/component stacks, which may contain
+  // private route props. Feature boundaries show recovery UI; logs retain only a fixed event.
+  onCaughtError: () => console.error('Application view failed.'),
+  onUncaughtError: () => console.error('Application view failed.'),
+}).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>

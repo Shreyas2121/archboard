@@ -25,6 +25,9 @@ export function configureAuthHttp(
   const expressApplication = application.getHttpAdapter().getInstance() as ExpressRouteRegistrar;
   const authHandler = toNodeHandler(authRuntime.auth);
   expressApplication.all('/api/auth/*splat', (request, response) => {
+    // OAuth responses can carry the same-app invitation continuation.
+    response.setHeader('cache-control', 'no-store');
+    response.setHeader('referrer-policy', 'no-referrer');
     const origin = request.headers.origin;
     if (
       origin !== undefined &&

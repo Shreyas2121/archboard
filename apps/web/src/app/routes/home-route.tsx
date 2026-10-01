@@ -8,7 +8,8 @@ import { ArchitectureIllustration } from '@/app/components/architecture-illustra
 import { PageState } from '@/app/components/page-state';
 import { ThemeControl } from '@/app/components/theme-control';
 import { Button } from '@/components/ui/button';
-import { authClient, safeReturnPath, SessionState, useCurrentUser } from '@/features/auth';
+import { safeReturnPath, SessionState, useCurrentUser } from '@/features/auth';
+import { startSocialSignIn } from '@/features/auth/social-sign-in';
 
 const FEATURES = [
   {
@@ -39,7 +40,13 @@ export function HomeRoute() {
 
   useEffect(() => {
     if (session.isSuccess && session.data) {
-      void navigate({ to: returnTo ?? '/boards', replace: true });
+      if (returnTo?.startsWith('/invite/')) {
+        void navigate({
+          to: '/invite/$token',
+          params: { token: returnTo.slice('/invite/'.length) },
+          replace: true,
+        });
+      } else void navigate({ to: '/boards', replace: true });
     }
   }, [navigate, returnTo, session.data, session.isSuccess]);
 
@@ -47,11 +54,7 @@ export function HomeRoute() {
     setSigningIn(true);
     setSignInError(false);
     try {
-      const result = await authClient.signIn.social({
-        provider: 'github',
-        callbackURL: new URL(returnTo ?? '/boards', window.location.origin).toString(),
-      });
-      if (result.error) setSignInError(true);
+      if (!(await startSocialSignIn(returnTo ?? '/boards'))) setSignInError(true);
     } catch {
       setSignInError(true);
     } finally {

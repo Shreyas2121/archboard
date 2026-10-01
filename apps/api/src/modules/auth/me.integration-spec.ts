@@ -7,6 +7,7 @@ import {
   apiErrorEnvelopeSchema,
   currentUserResponseSchema,
   ERROR_CODES,
+  INVITE_TOKEN_CHARACTERS,
 } from '@archboard/contracts';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -179,6 +180,23 @@ describe('current user through real Better Auth cookies', () => {
       new Set(['read:user', 'user:email']),
     );
     expect(result.url).not.toContain('0123456789abcdef0123456789abcdef01234567');
+  });
+
+  it('keeps invitation OAuth continuations same-app and prevents auth response caching', async () => {
+    const syntheticToken = 'A'.repeat(INVITE_TOKEN_CHARACTERS);
+    const signIn = (callbackURL: string) =>
+      fetch(`${apiOrigin}/api/auth/sign-in/social`, {
+        method: 'POST',
+        headers: { origin: FRONTEND_ORIGIN, 'content-type': 'application/json' },
+        body: JSON.stringify({ provider: 'github', callbackURL }),
+      });
+    const allowed = await signIn(`${FRONTEND_ORIGIN}/invite/${syntheticToken}`);
+    expect(allowed.status).toBe(HTTP_OK);
+    expect(allowed.headers.get('cache-control')).toBe('no-store');
+    expect(allowed.headers.get('referrer-policy')).toBe('no-referrer');
+    const blocked = await signIn(`${UNTRUSTED_ORIGIN}/invite/${syntheticToken}`);
+    expect(blocked.status).not.toBe(HTTP_OK);
+    expect(blocked.headers.get('cache-control')).toBe('no-store');
   });
 
   it('invalidates a signed-out cookie and treats an expired database session as unauthenticated', async () => {

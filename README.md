@@ -102,6 +102,26 @@ automated frontend test suite; its feature evidence is recorded through manual s
 acceptance and production builds. When browser verification resumes, use
 `pnpm test:browser -- indexeddb outbox` to filter the sync-client units.
 
+Invitation documents require `Referrer-Policy: no-referrer`, `Cache-Control: no-store`,
+and an `/invite/*` SPA rewrite to `index.html`. `apps/web/vercel.json` supplies these
+rules when `apps/web` is the Vercel project root; Vite supplies the referrer header
+for development/preview, and HTML supplies an early referrer meta policy. Other
+hosts must apply the equivalent document rules. Keep bearer paths and OAuth
+continuations out of CDN/proxy access logs and telemetry; use `/invite/:redacted`.
+No token-bearing invitation navigation or API response belongs in a service-worker
+cache. Acceptance is explicit, and a lost response requires explicit confirmation
+for the same signed-in account; reconnect never submits acceptance automatically.
+
+The prepared `scripts/p6-07-invite-acceptance.browser.mjs` uses an active synthetic
+board and three independent synthetic storage-state files supplied via `P6_WEB_ORIGIN`,
+`P6_API_ORIGIN`, `P6_BOARD_ID`, `P6_OWNER_STATE`, `P6_RECIPIENT_ONE_STATE` and
+`P6_RECIPIENT_TWO_STATE`. Keep state files outside the repository. Its execution
+is deferred until browser verification is resumed and all Version 1 implementation
+is complete; syntax checks do not establish browser acceptance. It creates/consumes
+synthetic invitations and tests direct refresh, signed-out privacy, a two-account
+race, recorded-user retry, preview/revocation, caches and referrers without emitting
+private URLs or saving browser artifacts. It does not automate GitHub credentials.
+
 `pnpm phase1:verify` runs the full Phase 1 command gate. It requires an ignored root `.env` with
 paired Neon pooled and direct URLs; it does not print credentials. The database integration test now
 uses a temporary process-scoped schema rather than resetting `public`.

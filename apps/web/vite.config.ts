@@ -7,6 +7,8 @@ import { VitePWA } from 'vite-plugin-pwa';
 const MAX_PRECACHE_BYTES = 2_097_152;
 
 export default defineConfig({
+  server: { headers: { 'Referrer-Policy': 'no-referrer' } },
+  preview: { headers: { 'Referrer-Policy': 'no-referrer' } },
   envDir: fileURLToPath(new URL('../..', import.meta.url)),
   plugins: [
     react(),
