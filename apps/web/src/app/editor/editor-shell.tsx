@@ -89,6 +89,8 @@ export function EditorShell({
   session,
   sessionSnapshot,
   boardTitle,
+  sharing,
+  sharingOpen = false,
 }: EditorShellProps) {
   const paletteOpen = usePaletteOpen();
   const inspectorOpen = useInspectorOpen();
@@ -304,7 +306,7 @@ export function EditorShell({
     [actions, session, viewState.editable, viewport],
   );
   const editorCommands = useEditorCommands({
-    shortcutsBlocked: activeDialog !== null || storageOpen || serverReloadOpen,
+    shortcutsBlocked: activeDialog !== null || storageOpen || serverReloadOpen || sharingOpen,
     editable: viewState.editable,
     projection,
     selection,
@@ -397,6 +399,7 @@ export function EditorShell({
       data-phase={viewState.phase}
     >
       <EditorToolbar
+        sharing={sharing}
         boardMode={boardMode}
         boardTitle={boardTitle}
         viewState={viewState}

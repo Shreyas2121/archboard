@@ -16,11 +16,14 @@ import { downloadPendingWork } from './pending-work';
 
 interface PendingChangesDialogProps {
   readonly open: boolean;
-  readonly action: 'sign out' | 'switch accounts';
+  readonly action: 'sign out' | 'switch accounts' | 'leave this board';
   readonly boards: readonly PendingAccountBoard[];
   readonly onCancel: () => void;
   readonly onRetain: () => Promise<void>;
-  readonly onClear: () => Promise<void>;
+  readonly onClear?: () => Promise<void>;
+  readonly allowClear?: boolean;
+  readonly onDownload?: (boards: readonly PendingAccountBoard[]) => Promise<void>;
+  readonly onReturnFocus?: () => void;
 }
 
 export function PendingChangesDialog({
@@ -30,6 +33,9 @@ export function PendingChangesDialog({
   onCancel,
   onRetain,
   onClear,
+  allowClear = true,
+  onDownload = downloadPendingWork,
+  onReturnFocus,
 }: PendingChangesDialogProps) {
   const [busy, setBusy] = useState(false);
   const [exported, setExported] = useState(false);
@@ -55,7 +61,17 @@ export function PendingChangesDialog({
         if (!next && !busy) onCancel();
       }}
     >
-      <DialogContent showCloseButton={false} className="sm:max-w-lg" aria-busy={busy}>
+      <DialogContent
+        showCloseButton={false}
+        className="sm:max-w-lg"
+        aria-busy={busy}
+        onCloseAutoFocus={(event) => {
+          if (onReturnFocus) {
+            event.preventDefault();
+            onReturnFocus();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-start gap-2">
             <ShieldAlert className="mt-1 size-5 shrink-0 text-status-warning" aria-hidden="true" />
@@ -66,16 +82,20 @@ export function PendingChangesDialog({
             changes saved on this device without server receipts. Retaining leaves private board
             data on this device under the old account; another account cannot open it. Anyone with
             access to this browser profile may still be able to recover that local data.
+            {action === 'leave this board' &&
+              ' Leaving ends server access; queued changes will not upload after you leave.'}
           </DialogDescription>
         </DialogHeader>
         <section
           className="grid gap-3 rounded-lg border bg-surface-panel p-3"
-          aria-label="Recovery before clearing"
+          aria-label={allowClear ? 'Recovery before clearing' : 'Recovery before leaving'}
         >
           <p className="text-sm leading-5 text-muted-foreground">
             Download one recovery file containing the graphs and exact queued update bytes before
-            choosing to clear. Check that the download completed. Clearing deletes only these board
-            namespaces on this device.
+            {allowClear
+              ? 'choosing to clear. Clearing deletes only these board namespaces on this device.'
+              : 'leaving. Leaving retains the graph and queued bytes in the current account on this device.'}{' '}
+            Check that the download completed.
           </p>
           <Button
             type="button"
@@ -83,7 +103,7 @@ export function PendingChangesDialog({
             onClick={() =>
               void run(async () => {
                 setExported(false);
-                await downloadPendingWork(boards);
+                await onDownload(boards);
                 setExported(true);
               }, 'Recovery export failed. Local copies were retained.')
             }
@@ -103,7 +123,8 @@ export function PendingChangesDialog({
         {exported && (
           <p className="flex items-start gap-2 text-sm text-status-success" role="status">
             <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            Recovery download requested. Check the file before clearing.
+            Recovery download requested. Check the file before {allowClear ? 'clearing' : 'leaving'}
+            .
           </p>
         )}
         {busy && (
@@ -121,17 +142,19 @@ export function PendingChangesDialog({
             disabled={busy}
             onClick={() => void run(onRetain, 'Could not continue.')}
           >
-            Retain local copies
+            {action === 'leave this board' ? 'Leave and retain local copy' : 'Retain local copies'}
           </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            className="h-auto min-h-9 whitespace-normal sm:col-span-2"
-            disabled={busy || !exported}
-            onClick={() => void run(onClear, 'Local copies could not be cleared.')}
-          >
-            Clear copies and continue
-          </Button>
+          {allowClear && onClear && (
+            <Button
+              type="button"
+              variant="destructive"
+              className="h-auto min-h-9 whitespace-normal sm:col-span-2"
+              disabled={busy || !exported}
+              onClick={() => void run(onClear, 'Local copies could not be cleared.')}
+            >
+              Clear copies and continue
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

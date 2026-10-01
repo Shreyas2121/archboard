@@ -7,6 +7,7 @@ import { ThemeControl } from '@/app/components/theme-control';
 
 import type { EditorToolbarProps } from './editor-composition-types';
 export function EditorToolbar({
+  sharing,
   boardMode,
   boardTitle,
   viewState,
@@ -62,6 +63,7 @@ export function EditorToolbar({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5" aria-label="Board actions">
+          {sharing}
           <IconButton
             className="max-sm:hidden"
             label={`Undo (${shortcutModifier}+Z)`}

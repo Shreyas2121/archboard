@@ -11,6 +11,7 @@ import { loadWebConfig } from '@/platform/config';
 
 const API_ORIGIN = loadWebConfig(import.meta.env).apiOrigin;
 const HTTP_UNAUTHORIZED = 401;
+const HTTP_NO_CONTENT = 204;
 const HTTP_SERVER_ERROR = 500;
 
 export type ApiFailureKind = 'unauthenticated' | 'http' | 'network' | 'invalid-response';
@@ -80,6 +81,17 @@ export async function apiRequest<T>(
       response.status,
       ERROR_CODES.UNAUTHENTICATED,
       'Sign in to continue.',
+    );
+  }
+
+  if (response.status === HTTP_NO_CONTENT) {
+    const parsed = schema.safeParse(undefined);
+    if (parsed.success) return parsed.data;
+    throw new ApiClientError(
+      'invalid-response',
+      response.status,
+      null,
+      'The API returned an invalid response.',
     );
   }
 

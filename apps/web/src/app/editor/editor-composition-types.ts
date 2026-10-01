@@ -1,4 +1,4 @@
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import type { GraphProjection } from '@archboard/contracts';
 import type { EditorSession, EditorSessionSnapshot } from '@/features/editor/application';
 import type { EditorCommandActions } from '@/features/editor/history/history-types';
@@ -8,6 +8,7 @@ import type { EditorViewState } from './editor-view-state';
 type Actions = ReturnType<typeof useEditorUiActions>;
 type ButtonRef = RefObject<HTMLButtonElement | null>;
 export interface EditorToolbarProps {
+  readonly sharing?: ReactNode;
   readonly boardMode: boolean;
   readonly boardTitle: string | undefined;
   readonly viewState: EditorViewState;
@@ -65,6 +66,8 @@ export interface EditorDialogsProps {
 }
 
 export interface EditorShellProps {
+  readonly sharing?: ReactNode;
+  readonly sharingOpen?: boolean;
   readonly narrowScreen: boolean;
   readonly session: EditorSession | null;
   readonly sessionSnapshot: EditorSessionSnapshot | null;

@@ -131,6 +131,8 @@ export class EditorSession {
   private initializing = true;
   private updatePrepared = false;
   private updateStoppedSync = false;
+  private leavingBoard = false;
+  private leaveStoppedSync = false;
   private snapshot: EditorSessionSnapshot;
   private projectionGeneration = -1;
 
@@ -221,6 +223,7 @@ export class EditorSession {
   public canEdit(): boolean {
     if (this.closeRequested) return false;
     if (this.updatePrepared) return false;
+    if (this.leavingBoard) return false;
     if (!this.writerSession.getSnapshot().writable) return false;
     if (this.board === undefined) return true;
     if (!this.accessChecked) return false;
@@ -460,6 +463,7 @@ export class EditorSession {
   }
 
   public async prepareForUpdate(): Promise<void> {
+    if (this.leavingBoard) throw new Error('Finish or cancel leaving this board before updating.');
     this.updatePrepared = true;
     this.refresh();
     await this.opening;
@@ -474,23 +478,60 @@ export class EditorSession {
       throw new Error('Local changes have not finished saving. The update is still waiting.');
   }
 
+  /** Reuses the update preservation boundary without clearing this account's namespace. */
+  public async prepareForLeavingBoard(): Promise<void> {
+    if (this.updatePrepared || this.closeRequested)
+      throw new Error('Wait for the current board operation before leaving.');
+    this.leavingBoard = true;
+    this.refresh();
+    await this.opening;
+    if (!this.leavingBoard || this.closeRequested) return;
+    if (this.syncClient !== null) {
+      this.syncClient.stop();
+      this.leaveStoppedSync = true;
+      await this.syncClient.whenIdle();
+    }
+    await this.writerSession.whenIdle();
+    const writer = this.writerSession.getSnapshot();
+    const persistence = writer.persistence;
+    if (
+      (writer.writable && persistence === null) ||
+      (persistence !== null && (persistence.pendingWrites !== 0 || !persistence.savedOnDevice))
+    )
+      throw new Error('Local changes have not finished saving. Your local copy is retained.');
+  }
+
+  public cancelLeavingBoard(): void {
+    if (this.closePromise !== null) return;
+    this.leavingBoard = false;
+    if (this.leaveStoppedSync) {
+      this.leaveStoppedSync = false;
+      if (!this.updatePrepared) this.restartSync();
+    }
+    this.refresh();
+  }
+
   public cancelUpdatePreparation(): void {
     if (this.closePromise !== null) return;
     this.updatePrepared = false;
     if (this.updateStoppedSync) {
       this.updateStoppedSync = false;
-      this.unsubscribeSync?.();
-      this.unsubscribeSync = null;
-      this.unsubscribeResources?.();
-      this.unsubscribeResources = null;
-      this.syncClient = null;
-      const binding = this.writerSession.getWritableBinding();
-      if (binding !== null) {
-        this.attachSyncClient(binding);
-        void this.startSync().catch(() => undefined);
-      }
+      if (!this.leavingBoard) this.restartSync();
     }
     this.refresh();
+  }
+
+  private restartSync(): void {
+    this.unsubscribeSync?.();
+    this.unsubscribeSync = null;
+    this.unsubscribeResources?.();
+    this.unsubscribeResources = null;
+    this.syncClient = null;
+    const binding = this.writerSession.getWritableBinding();
+    if (binding !== null) {
+      this.attachSyncClient(binding);
+      void this.startSync().catch(() => undefined);
+    }
   }
 
   private executeMutation(mutate: Parameters<BrowserWriterSession['executeMutation']>[0]): void {
@@ -560,9 +601,9 @@ export class EditorSession {
       tabId: crypto.randomUUID(),
       webSocketOrigin: this.board.webSocketOrigin,
       persistence: binding.persistence,
-      canSend: () => !this.archived && !this.accessDenied,
+      canSend: () => !this.archived && !this.accessDenied && !this.leavingBoard,
       beforeDrain: async () => {
-        if (!this.archived && !this.accessDenied)
+        if (!this.archived && !this.accessDenied && !this.leavingBoard)
           await this.ensureBootstrap(this.syncClient?.getSnapshot().role ?? null);
       },
     });

@@ -15,6 +15,7 @@ import { serverUnavailable } from '@/platform/api';
 import { useBoardEditorLoader } from '@/app/editor/use-board-editor-loader';
 import type { BoardLoadStatus } from '@/app/editor/board-editor-loader';
 import { useBoardResourceRefresh } from '@/features/boards/use-board-resource-refresh';
+import { BoardSharingControl } from '@/features/boards/board-sharing-control';
 
 interface SessionEditorProps {
   readonly session: EditorSession;
@@ -24,6 +25,7 @@ interface SessionEditorProps {
 
 function SessionEditor({ session, boardTitle, narrowScreen }: SessionEditorProps) {
   const snapshot = useEditorSession(session);
+  const [sharingOpen, setSharingOpen] = useState(false);
   const currentUser = useCurrentUser();
   const { boardId } = useParams({ from: '/boards/$boardId' });
   const resourceAccount =
@@ -40,6 +42,10 @@ function SessionEditor({ session, boardTitle, narrowScreen }: SessionEditorProps
       narrowScreen={narrowScreen}
       session={session}
       sessionSnapshot={snapshot}
+      sharing={
+        <BoardSharingControl session={session} open={sharingOpen} onOpenChange={setSharingOpen} />
+      }
+      sharingOpen={sharingOpen}
     />
   );
 }
