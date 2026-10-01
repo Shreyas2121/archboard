@@ -41,8 +41,8 @@ export function projectPhysicalGraph(physical: PhysicalGraph): GraphProjection {
     .filter(({ id }) => !physical.deletedSteps.has(id))
     .map((step) => ({
       ...step,
-      nodeIds: step.nodeIds.filter((id) => liveNodeIds.has(id)),
-      edgeIds: step.edgeIds.filter((id) => liveEdgeIds.has(id)),
+      nodeIds: [...new Set(step.nodeIds.filter((id) => liveNodeIds.has(id)))],
+      edgeIds: [...new Set(step.edgeIds.filter((id) => liveEdgeIds.has(id)))],
     }))
     .sort(byStepOrderThenId);
 

@@ -191,26 +191,28 @@ export const boundarySchema = z.strictObject({
 
 const referenceListSchema = z.array(applicationIdSchema).max(MAX_STEP_REFERENCES);
 
-export const presentationStepSchema = z
-  .strictObject({
-    id: applicationIdSchema,
-    title: z.string().max(MAX_STEP_TITLE_CHARACTERS),
-    notes: z.string().max(MAX_STEP_NOTES_CHARACTERS),
-    order: z.number().int().min(MIN_STEP_ORDER).max(MAX_STEP_ORDER),
-    rect: rectSchema,
-    nodeIds: referenceListSchema,
-    edgeIds: referenceListSchema,
-  })
-  .superRefine((step, context) => {
-    const uniqueReferences = new Set([...step.nodeIds, ...step.edgeIds]);
-    if (uniqueReferences.size > MAX_STEP_REFERENCES) {
-      context.addIssue({
-        code: 'custom',
-        message: `A presentation step may reference at most ${MAX_STEP_REFERENCES} unique objects.`,
-        path: ['nodeIds'],
-      });
-    }
-  });
+// Field-only shape for strict partial/reorder command inputs. Complete steps must
+// use presentationStepSchema below to enforce the combined reference budget.
+export const presentationStepFieldsSchema = z.strictObject({
+  id: applicationIdSchema,
+  title: z.string().max(MAX_STEP_TITLE_CHARACTERS),
+  notes: z.string().max(MAX_STEP_NOTES_CHARACTERS),
+  order: z.number().int().min(MIN_STEP_ORDER).max(MAX_STEP_ORDER),
+  rect: rectSchema,
+  nodeIds: referenceListSchema,
+  edgeIds: referenceListSchema,
+});
+
+export const presentationStepSchema = presentationStepFieldsSchema.superRefine((step, context) => {
+  const uniqueReferences = new Set([...step.nodeIds, ...step.edgeIds]);
+  if (uniqueReferences.size > MAX_STEP_REFERENCES) {
+    context.addIssue({
+      code: 'custom',
+      message: `A presentation step may reference at most ${MAX_STEP_REFERENCES} unique objects.`,
+      path: ['nodeIds'],
+    });
+  }
+});
 
 function addDuplicateIdIssue(
   entities: readonly { readonly id: string }[],

@@ -17,6 +17,7 @@ export {
   nodeKindSchema,
   nodeSizeSchema,
   pointSchema,
+  presentationStepFieldsSchema,
   presentationStepSchema,
   rectSchema,
   type Boundary,
