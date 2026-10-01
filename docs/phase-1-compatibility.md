@@ -1,5 +1,12 @@
 # Archboard Phase 1 compatibility and exit report
 
+> Current verification timing (October 1, 2026): all database checks/tests, including
+> database-backed session/socket and schema/migration checks, are deferred until the
+> entire Version 1 implementation (M00–M08) is complete. Browser checks remain paused
+> independently. Follow the [shared policy](verification-policy.md); it overrides earlier
+> instructions to rerun these checks. Historical results below remain unchanged;
+> implementation may proceed with deferred acceptance gates OPEN.
+
 Status: **Passed** on 16 September 2026 (Asia/Calcutta). This is a foundation and risk-spike gate,
 not a version 1 product-release or deployment gate. The complete command gate passed against real
 Neon PostgreSQL, real Chrome IndexedDB/textarea behavior, and real cookie-authenticated HTTP and

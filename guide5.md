@@ -199,13 +199,23 @@ server because a relational mutation succeeded.
 
 ### 2.9 Coding, dependencies, and verification policy
 
-**Temporary browser-check pause (user direction):** Do not run native browser package tests,
+**Version 1 verification pause (user direction, October 1, 2026):** Defer all database
+checks/tests until the entire Version 1 implementation (M00–M08) is complete. Include
+database-backed HTTP/auth/session/socket tests, schema/migration inspections, and aggregates
+with database children, including `pnpm phase5:verify --non-browser`. Individual task or
+Phase 6 completion does not resume them. Prepare needed tests and fixtures without executing
+them; record **UNRUN (deferred by user — until Version 1 implementation is complete)**.
+The shared [verification policy](docs/verification-policy.md) governs every task below.
+
+The independent browser pause remains: do not run native browser package tests,
 Playwright, served-preview/browser scripts, or aggregate commands that launch them. This
 includes `pnpm test`, `pnpm test:browser`, `pnpm phase4:quick`, and full phase verifiers.
 Implement owned browser harnesses where needed, but leave execution **UNRUN (deferred by user)**.
-Run focused non-browser format, lint, types, builds, API, and real database checks. This rule
-overrides all browser-running completion/check instructions below until the user resumes them.
-The full Phase 6 gate remains OPEN; no API/build substitute establishes browser acceptance.
+Run focused database-free, non-browser format, lint, types, builds, boundaries, static scans,
+and API unit/Node checks. These pauses override database/browser execution and completion
+instructions below. Tasks and later phases may proceed with OPEN acceptance gates; no
+unit/build substitute establishes database or browser acceptance. Final database verification
+follows all Version 1 implementation; browser verification still requires user resumption.
 
 Read and follow `apps/web/AGENTS.md` before frontend work and `apps/api/AGENTS.md` before API
 work. Use the current Tailwind/shadcn/component system, existing feature boundaries, shared
@@ -229,8 +239,9 @@ Before P6-01:
 2. Inspect the approved branch/base, HEAD/status, manifests, migrations, existing discussion/
    share/invite routes, permission services, query keys, sync events, and account lifecycle.
    Preserve unexplained user changes and record inherited failures before editing.
-3. Record Phase 3's historical PASS and Phase 2/4/5's OPEN findings. Review configured migration
-   state and package boundaries without printing database credentials. Distinguish stale
+3. Record Phase 3's historical PASS and Phase 2/4/5's OPEN findings. Review migration source,
+   prior recorded configured state, and package boundaries without contacting a database.
+   Defer current migration inspection until final Version 1 verification. Distinguish stale
    observations from current checks and binding Phase 6 blockers from unrelated open gates.
 4. Ensure planning documents are committed or included in an approved planning commit, then
    create/switch safely to `phase-6-discussion-sharing` under implementation authorization.
@@ -245,11 +256,12 @@ Before each commit:
 
 1. Review the full diff and stage only the task's intended changes, preserving unrelated work.
 2. Run focused checks plus formatting, `pnpm lint`, and `pnpm typecheck`; build changed apps.
-   Record blocking baseline failures and run deferred non-browser checks at the first possible
-   downstream task. Do not hide a required failure in a successful aggregate.
-3. Rerun affected non-browser regressions after permission/auth/room-order/query-lifecycle/
-   migration/manifest changes. Prepare applicable browser regressions but do not execute them
-   during the pause.
+   Record blocking baseline failures. Keep database checks deferred until all Version 1
+   implementation is complete, even if a downstream task changes the same code.
+   Do not hide a required failure in a successful aggregate.
+3. Rerun affected database-free, non-browser regressions after permission/auth/room-order/
+   query-lifecycle/migration/manifest changes. Prepare applicable database/socket/browser
+   regressions but do not execute them during their respective pauses.
 4. Write `docs/evidence/phase6/P6-xx.md` with exact commands, PASS/FAIL/UNRUN, environment,
    transaction/API/socket results, deferred UI proof, gaps, and next dependency.
 5. Commit with the exact planned subject below and report commit/parent hashes. Do not amend
@@ -283,7 +295,10 @@ reviewable sequential history.
 
 ## 5. Canonical repository commands
 
-Preserve existing scripts. Add `phase6:verify` with full and `--non-browser` modes by P6-11.
+Preserve existing scripts. Add `phase6:verify` with full, `--non-browser`, and
+`--implementation` modes by P6-11. Implementation mode must exclude database/browser children
+and report required deferred proof as UNRUN with the full gate OPEN. The other modes retain
+their eventual real-boundary coverage and stay deferred when they include paused children.
 Those Phase 6 interfaces are planned, not existing commands at guide-writing time. On Windows,
 use `pnpm.cmd` when needed and record the exact command actually executed.
 
@@ -293,13 +308,15 @@ use `pnpm.cmd` when needed and record the exact command actually executed.
 | `pnpm format:check`                                    | Formatting                                                        |
 | `pnpm lint` / `pnpm typecheck`                         | Code and strict TypeScript checks                                 |
 | `pnpm --filter @archboard/api test`                    | Focused Node API units; select relevant suites as appropriate     |
-| `pnpm test:integration`                                | Real PostgreSQL/API tests; isolated migrated test schemas         |
-| `pnpm --filter @archboard/api test:integration`        | Same API integration boundary; avoid duplicating identical suites |
-| `pnpm auth:schema:check` / `pnpm db:migration:show`    | Auth and configured migration compatibility                       |
+| `pnpm test:integration`                                | DB tests; UNRUN until all Version 1 implementation is complete    |
+| `pnpm --filter @archboard/api test:integration`        | DB tests; UNRUN until all Version 1 implementation is complete    |
+| `pnpm auth:schema:check` / `pnpm db:migration:show`    | DB checks; UNRUN until all Version 1 implementation is complete   |
 | `pnpm --filter @archboard/web build`                   | Frontend types/production build                                   |
 | `pnpm --filter @archboard/api build` / `pnpm build`    | API/workspace builds                                              |
 | `pnpm boundary:check`                                  | Package/application ownership rules                               |
-| `pnpm phase6:verify --non-browser`                     | Future safe aggregate; add in P6-11                               |
+| `pnpm phase5:verify --non-browser`                     | Contains DB children; deferred until final Version 1 verification |
+| `pnpm phase6:verify --non-browser`                     | Future DB aggregate; deferred until final Version 1 verification  |
+| `pnpm phase6:verify --implementation`                  | Future database-free, browser-free checks; add in P6-11           |
 | `pnpm test` / `pnpm test:browser`                      | Browser-running; **UNRUN (deferred by user)**                     |
 | `pnpm --filter @archboard/sync-client test`            | Native browser suite; **UNRUN (deferred by user)**                |
 | Full `pnpm phase1:verify` through `pnpm phase6:verify` | Browser-running aggregates; **UNRUN (deferred by user)**          |
@@ -313,7 +330,8 @@ proofs instead of treating an unwired harness as success.
 
 Prepare focused harnesses for role matrix, invite races/states, anchor deletion, A20 conflicts,
 invalidation/reconnect, query isolation, cache/referrer inspection, and keyboard paths. Document
-actual names and defer browser execution. Use real Better Auth sessions, independent database
+actual names and defer database/browser execution under their respective pauses. At final
+Version 1 database verification, use real Better Auth sessions, independent database
 connections, and isolated migrated schemas for server proof; use independent authenticated
 browser contexts and a served production build when browser verification resumes. Active-worker
 and true-offline tests are required for cache/offline assertions. Stop test helpers reliably.
@@ -358,7 +376,8 @@ Non-goals: no comment service mutations, sharing UI, invite redesign, applied mi
 new notification protocol.
 
 Checks during pause: focused non-browser contract negatives, formatting, lint, types,
-`pnpm boundary:check`, auth/schema/migration inspection, and changed-package build if applicable.
+`pnpm boundary:check`, migration source review, and changed-package build if applicable.
+Auth/schema/configured migration checks remain UNRUN until all Version 1 implementation.
 
 Completion evidence: a baseline/service map and shared schemas cover Phase 6 with malformed-
 input proof and a concrete migration decision. Historical audit findings retain their status.
@@ -398,8 +417,9 @@ Required work:
 Non-goals: no edit/delete/resolve UI, message version lifecycle beyond creation, browser flows,
 or notification fanout before P6-04.
 
-Checks during pause: focused API units, real DB creation/rollback/cap/idempotency/anchor races,
-pagination and cross-board tests, API build, formatting, lint, types, migration and boundary checks.
+Checks during pause: focused database-free API units, API build, formatting, lint, types,
+and boundaries. Prepare real DB creation/rollback/cap/idempotency/anchor races, pagination,
+cross-board, and migration checks; execution remains UNRUN until all Version 1 implementation.
 
 Completion evidence: stored rows, counts, request keys, and trustworthy fallback context prove
 atomic bounded creation and denial. Record actual transaction ordering; no mock DB substitutes.
@@ -436,8 +456,9 @@ Required work:
 Non-goals: no full previous-body history, hard deletion, extra commenter role, message CRDT,
 or owner identity replacement.
 
-Checks during pause: API units, real DB A20/role/version-race tests, auth/session regressions,
-API build, formatting, lint, types, and boundaries. Rendered conflict/moderation proof is deferred.
+Checks during pause: database-free API units, API build, formatting, lint, types, and boundaries.
+Real DB A20/role/version-race and auth/session regressions remain UNRUN until all Version 1
+implementation. Rendered conflict/moderation proof remains deferred under the browser pause.
 
 Completion evidence: newer content survives stale writes, deletion remains a marker, and every
 role/archive/ownership case is enforced independently of hidden UI actions.
@@ -476,8 +497,9 @@ Required work:
 Non-goals: no durable notification log, standalone event server, presenter/checkpoint UI, or
 invalidation used as the authorization mechanism.
 
-Checks during pause: real socket/session/DB commit/rollback/revocation checks, focused Node event
-and query-key tests, API/web builds, formatting, lint, types, and boundaries. Independent-reader
+Checks during pause: database-free Node event/query-key tests, API units, API/web builds,
+formatting, lint, types, and boundaries. Prepare real socket/session/DB commit/rollback/revocation
+checks; execution remains UNRUN until all Version 1 implementation. Independent-reader
 rendered refresh and offline browser reconnect are **UNRUN (deferred by user)**.
 
 Completion evidence: authorized connections receive only post-commit hints and access changes
@@ -516,8 +538,9 @@ Required work:
 Non-goals: no invite creation/list/copy, owner transfer, email sharing, comment panel, or
 redesign of existing permission services.
 
-Checks during pause: relevant member/owner/self-leave API regressions, focused Node state checks
-where meaningful, web build, formatting, lint, types. Prepare rendered keyboard/role/pending-work
+Checks during pause: database-free member/owner/self-leave API units, focused Node state checks
+where meaningful, web build, formatting, lint, types. Real API/DB regressions remain UNRUN
+until all Version 1 implementation. Prepare rendered keyboard/role/pending-work
 cases and mark them **UNRUN (deferred by user)**.
 
 Completion evidence: raw API authority and implemented controls agree; later served-browser
@@ -556,8 +579,9 @@ Required work:
 Non-goals: no email service, public anonymous access, token re-display from lists, acceptance
 route, or redesign of Phase 3 token storage.
 
-Checks during pause: real API invite retry/redaction/revoke/role/archive cases, focused Node
-state checks, web build, formatting, lint, types. Copy/list/revoke rendered flows and actual
+Checks during pause: database-free invite API units, focused Node state checks, web build,
+formatting, lint, types. Real API invite retry/redaction/revoke/role/archive cases remain UNRUN
+until all Version 1 implementation. Copy/list/revoke rendered flows and actual
 browser cache/log inspection are **UNRUN (deferred by user)**.
 
 Completion evidence: API and source/build checks preserve token secrecy; later UI proof covers
@@ -598,8 +622,9 @@ Required work:
 Non-goals: no anonymous preview, open redirect, email notification, persistent raw-token cache,
 or alternative invite-consumption rules.
 
-Checks during pause: real API/DB A19 and token/member-state tests, auth/session regressions,
-header/cache-policy source/build inspection, web/API builds as changed, format, lint, types.
+Checks during pause: database-free units/Node checks, header/cache-policy source/build
+inspection, web/API builds as changed, format, lint, types. Real API/DB A19, token/member-state,
+and auth/session regressions remain UNRUN until all Version 1 implementation.
 Rendered invite route/redirect/referrer/cache proof is **UNRUN (deferred by user)**.
 
 Completion evidence: one atomic accepting user and safe repeat/upgrade/no-op rules are stored
@@ -639,8 +664,9 @@ Required work:
 Non-goals: no moderation/conflict review flows beyond basic failure preservation, presentation
 tab, rich HTML/Markdown, uploads, thread deletion, or durable offline mutation queue.
 
-Checks during pause: shared mapping/state checks where useful, relevant API anchor/pagination
-regressions, web build, formatting, lint, types, boundaries. All rendered anchor kinds, deleted-
+Checks during pause: database-free shared mapping/state and API unit checks where useful,
+web build, formatting, lint, types, boundaries. Real API anchor/pagination regressions remain
+UNRUN until all Version 1 implementation. All rendered anchor kinds, deleted-
 anchor navigation, viewer reads, keyboard actions, and live reader refresh are deferred.
 
 Completion evidence: the panel projects server-owned discussion and local anchor context;
@@ -680,8 +706,9 @@ Required work:
 Non-goals: no previous-body history, automatic conflict overwrite, offline sends, reactions,
 or cross-account draft transfer.
 
-Checks during pause: focused Node draft/conflict/uncertainty state tests, real API A20/role
-regressions if affected, web build, formatting, lint, types. Rendered conflict/moderation and
+Checks during pause: database-free Node draft/conflict/uncertainty state tests, API units,
+web build, formatting, lint, types. Real API A20/role regressions remain UNRUN until all
+Version 1 implementation. Rendered conflict/moderation and
 retry flows are **UNRUN (deferred by user)**.
 
 Completion evidence: non-browser state/DB proof demonstrates safe transitions; later UI proof
@@ -722,8 +749,9 @@ Required work:
 Non-goals: no second account store, new sign-out protocol, mandatory durable offline comment
 cache, graph outbox reset, or automatic draft resubmission.
 
-Checks during pause: meaningful Node lifecycle/query-scope tests, relevant real session/access/
-archive/API regressions, web/API builds as changed, format, lint, types, boundaries. Combined
+Checks during pause: database-free Node lifecycle/query-scope tests and API units,
+web/API builds as changed, format, lint, types, boundaries. Real session/access/archive/API
+regressions remain UNRUN until all Version 1 implementation. Combined
 A10/A24/A25 browser flows, cross-tab and true-offline/cache proof are deferred.
 
 Completion evidence: late responses and role/lifecycle events cannot cross accounts or discard
@@ -755,9 +783,11 @@ Required work:
 - Prepare independent authenticated browser sharing/discussion harnesses, keyboard/spot screen-
   reader checks, token/referrer/cache inspection, and relevant A10/A24/A25/A27 regressions.
   Do not execute browser children while the pause applies.
-- Add full and `--non-browser` modes. Safe mode runs only Node/static/build/API/real DB/socket
-  children; full mode includes wired browser proof and refuses to pass with missing required
-  harnesses/results. All child failures propagate; manual/unrun requirements remain explicit.
+- Add full, `--non-browser`, and `--implementation` modes. Implementation mode runs only
+  database-free Node/static/build/API-unit children and reports paused DB/socket/schema/browser
+  requirements as UNRUN with an OPEN full gate. Non-browser mode retains real DB/socket
+  coverage for final Version 1 verification; full mode also includes wired browser proof
+  after browser resumption. Required missing proof cannot yield full PASS; failures propagate.
 - Review inherited findings at their owner layer. Resolve binding defects with focused proof;
   list unrelated Phase 2/4/5 OPEN findings without claiming they were remeasured or closed.
 - Scan evidence/public bundles/safe logs for secrets. Mark actual browser cache/log/referrer
@@ -766,9 +796,10 @@ Required work:
 Non-goals: no Phase 7/8 features, global performance-budget revision, deployment, mock-backed
 gate substitution, or hiding unrun browser acceptance behind aggregate success.
 
-Checks during pause: frozen install and `pnpm phase6:verify --non-browser`, relevant focused
-regressions and builds. Full Phase 6/prior-phase browser modes and served harnesses are
-**UNRUN (deferred by user)**. Record actual child counts/durations and failed baseline checks.
+Checks during pause: frozen install and `pnpm phase6:verify --implementation` once added,
+relevant database-free Node/unit regressions and builds. Non-browser DB mode, all database
+checks, and full/browser modes remain UNRUN under their respective pauses. Record actual
+child counts/durations and failed baseline checks; do not execute new integration harnesses.
 
 Completion evidence: each matrix row identifies the exact boundary proved, missing, or failing;
 non-browser success is reported separately while the full Phase 6 gate stays OPEN.
@@ -804,7 +835,8 @@ Required work:
 - Verify API documentation and setup/run guidance agree with actual routes/script names.
   Include uncertainty/retry, draft reload limits, local preservation, and secret-handling guidance.
 - Mark full Phase 6 PASS only when all required and binding prerequisite proofs pass. During the
-  pause use OPEN with **UNRUN (deferred by user)** browser requirements and reproducible next steps.
+  pauses use OPEN with database/socket/schema and browser UNRUN requirements under their
+  respective deferrals and reproducible final-verification steps.
 - Hand off to Phase 7 with discussion/access records outside Y.Doc and excluded from graph
   export/import/copy/templates/checkpoint restore. Do not claim Phase 7/8 or release readiness.
 
@@ -812,9 +844,10 @@ Non-goals: no functional changes, migrations, dependency upgrades, test weakenin
 remote push, or deployment. Functional fixes land before this audit commit.
 
 Checks during pause: validate links/history/status and focused documentation formatting.
-Reference P6-11's exact-tree checks; rerun the non-browser aggregate only if code/config changes
-or unresolved results justify it. Record `git status --short`. Full/browser verifiers remain
-**UNRUN (deferred by user)**; do not rerun unrelated suites for documentation-only edits.
+Reference P6-11's exact-tree checks; rerun the implementation aggregate only if code/config
+changes or unresolved results justify it. Record `git status --short`. Database/socket/schema
+and full/browser verifiers remain UNRUN under their respective pauses; do not rerun unrelated
+suites for documentation-only edits. Phase 7/8 implementation may proceed with the gate OPEN.
 
 Completion evidence: audit/index/history agree, expose current blockers, and separate completed
 implementation/non-browser work from unrun integrated acceptance.
@@ -945,8 +978,9 @@ The branch is ready to close only when:
 - Binding prerequisite findings are resolved; separate Phase 2/4/5 OPEN audits remain visible
   unless closed under their own gates. No Phase 7/8 or version 1 readiness claim is made.
 
-While the browser pause applies, report **OPEN — browser checks UNRUN (deferred by user)** even
-if implementation and non-browser checks are complete. An emitted socket frame is not a reader
+While either verification pause applies, report **OPEN** and list the database/socket/schema
+and browser requirements as UNRUN under their respective deferrals, even if implementation
+and fast checks are complete. An emitted socket frame is not a reader
 UI re-fetch; an API conflict is not rendered draft recovery; source policy is not runtime
 referrer/cache proof. P6-12 reports these limits instead of changing the governing acceptance.
 

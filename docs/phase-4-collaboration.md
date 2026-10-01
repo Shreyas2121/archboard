@@ -1,5 +1,12 @@
 # Phase 4 collaboration audit and run guide
 
+> Current verification timing (October 1, 2026): all database checks/tests, including
+> database-backed session/socket and schema/migration checks, are deferred until the
+> entire Version 1 implementation (M00–M08) is complete. Browser checks remain paused
+> independently. Follow the [shared policy](verification-policy.md); it overrides earlier
+> instructions to rerun these checks. Historical results below remain unchanged;
+> implementation may proceed with deferred acceptance gates OPEN.
+
 Status: **OPEN**. P4-01 through P4-12 are implemented, but Phase 4 has failed and unrun mandatory exit proofs. This P4-13 audit records the state; it is not a release approval. The [evidence index](evidence/phase4/README.md) records the linear task and fix commits from base `353306913f59fd4470bb32463bae1a55a90f1c95`.
 
 Run one API writer process for each database. It holds a PostgreSQL session advisory lock for its lifetime; a second process fails startup, and loss of that session terminates the writer. Route readiness probes to `GET /health/ready`, which checks the lock, database, required tables, and unapplied migrations. `GET /health/live` only confirms that the process is responding. Do not route new traffic to a process whose readiness probe fails.
@@ -10,9 +17,9 @@ The API writes structured `collaboration.*` JSON events to stdout. Monitor `conn
 
 For a rejected or unsaved board, keep its local copy and use **Download recovery**. **Reload server version** is a deliberate last step for a connected writer: the confirmation explains that pending changes in this account/board/device namespace will be deleted. Download first if those changes matter. Cancel preserves the namespace. Confirmation stops sync, deletes that namespace while the Web Lock is owned, and opens a fresh server copy; other board/account namespaces remain.
 
-Temporary user direction for current implementation: skip browser-running checks. Do not run `pnpm phase4:quick`, `pnpm phase4:verify`, or `pnpm phase4:verify:legacy` while this pause applies; each can launch Chrome. Run focused non-browser format, lint, typecheck, build, unit, and integration commands instead. Record browser-dependent Phase 4 proofs as **UNRUN (deferred by user)**; Phase 4 remains OPEN. The full verifier is still the required later audit gate with ignored `.env` and `.env.local` containing paired database URLs. It runs each shared check once, creates isolated migrated schemas for database and served-browser exercises, and returns nonzero on any child failure or missed measurement target. These commands write detailed child output to a temporary log directory and print concise results; pass `-- --verbose` to a script for full output. See [P4-12 evidence](evidence/phase4/P4-12.md) for the observed gate status and acceptance matrix.
+Current user direction: skip browser-running checks and defer all database checks/tests until all Version 1 implementation is complete. Do not run `pnpm phase4:quick`, `pnpm phase4:verify`, or `pnpm phase4:verify:legacy` during the pauses; they include deferred children. Run focused database-free format, lint, typecheck, build, static, and unit commands instead. Record database/session/socket/schema checks as **UNRUN (deferred by user — until Version 1 implementation is complete)** and browser checks as **UNRUN (deferred by user)**; Phase 4 remains OPEN. The full verifier is still the required later audit gate after its database and browser resumption conditions are satisfied, with ignored `.env` and `.env.local` containing paired database URLs. It runs each shared check once, creates isolated migrated schemas for database and served-browser exercises, and returns nonzero on any child failure or missed measurement target. These commands write detailed child output to a temporary log directory and print concise results; pass `-- --verbose` to a script for full output. See [P4-12 evidence](evidence/phase4/P4-12.md) for the historical observed gate status and acceptance matrix.
 
-For a narrow edit during the pause, run a focused non-browser check such as `pnpm --filter @archboard/api test -- validation-worker`. `pnpm test:browser -- web-lock-broadcast-channel` remains available for the later browser audit. Do not run the full gate until browser verification resumes.
+For a narrow edit during the pauses, run a focused database-free check such as `pnpm --filter @archboard/api test -- validation-worker`. `pnpm test:browser -- web-lock-broadcast-channel` remains available for the later browser audit. Run the full gate only after all Version 1 implementation and browser verification resumption.
 
 ## Deliverables and evidence
 

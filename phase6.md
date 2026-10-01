@@ -29,15 +29,23 @@ Phase 4 and Phase 5 record **OPEN** gates; the Phase 2 editor audit is independe
 Phase 6 may build on those implementations, but it cannot relabel their missing or failing
 evidence as passed. Report current dependencies and affected regressions in the final audit.
 
-### Temporary verification pause
+### Version 1 implementation verification pause
 
 The user has deferred all browser-running checks during current implementation. Do not run
 Playwright, native browser package suites, served production-preview flows, or aggregate commands
 that launch them (`pnpm test`, `pnpm test:browser`, `pnpm phase4:quick`, and full phase
-verifiers). Run focused non-browser formatting, lint, types, builds, and relevant API/database
-checks. New evidence records browser cases as **UNRUN (deferred by user)**. Browser acceptance,
-the full Phase 6 exit gate, and version 1 release remain OPEN until the required checks resume.
-Historical results remain attached to their original builds and evidence boundaries.
+verifiers). All database checks/tests are additionally deferred until the entire Version 1
+implementation (M00–M08) is complete. This includes database-backed HTTP/auth/session/socket
+tests, auth schema and configured migration checks, and aggregates with database children,
+even in `--non-browser` mode. Finishing Phase 6 does not resume them.
+
+Run focused database-free, non-browser formatting, lint, types, builds, boundaries, static
+scans, and API unit/Node checks. Prepare database/session/socket tests but record them as
+**UNRUN (deferred by user — until Version 1 implementation is complete)**. Browser cases
+remain **UNRUN (deferred by user)** under the independent browser pause. The shared
+[verification policy](docs/verification-policy.md) overrides all check execution instructions
+below. Tasks and later phases may proceed with OPEN acceptance gates. Historical results
+remain attached to their original builds; full phase/release PASS requires final verification.
 
 ## 2. Phase outcome
 
@@ -575,14 +583,17 @@ result certifies offline completion, global performance, deployment, or version 
 
 ## 15. Required verification commands
 
-Add a fail-propagating `pnpm phase6:verify` and a documented `--non-browser` mode during
-implementation. These are intended new interfaces, not existing scripts at specification time.
+Add a fail-propagating `pnpm phase6:verify` with documented `--non-browser` and
+`--implementation` modes during implementation. These are intended new interfaces, not
+existing scripts at specification time. Implementation mode excludes database/browser
+children and reports deferred requirements as UNRUN with the full gate OPEN. Non-browser
+mode retains real database coverage for final verification and is deferred until then.
 Record actual commands, selected suites, test counts, durations, and child results in evidence.
 The non-browser mode must never spawn Chrome, Playwright, preview/browser harnesses, or native
 browser suites, and its success is not a full phase PASS.
 
-Run relevant non-browser checks for the owned changes; an aggregate should run shared checks
-once and use focused Node/API/database suites without hidden browser children:
+Run relevant database-free, non-browser checks for owned changes; an aggregate should run
+shared checks once and use focused Node/API units without hidden database/browser children:
 
 ```text
 pnpm install --frozen-lockfile
@@ -590,17 +601,27 @@ pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm --filter @archboard/api test
-pnpm test:integration
-pnpm auth:schema:check
-pnpm db:migration:show
 pnpm --filter @archboard/web build
 pnpm --filter @archboard/api build
 pnpm build
 pnpm boundary:check
-pnpm phase6:verify --non-browser  # once implemented
+pnpm phase6:verify --implementation  # once implemented; no DB/browser children
 ```
 
-Use isolated migrated PostgreSQL schemas/databases for transaction/race tests. Report configured
+Database commands remain **UNRUN (deferred by user — until Version 1 implementation is complete)**:
+
+```text
+pnpm test:integration
+pnpm --filter @archboard/api test:integration
+pnpm auth:schema:check
+pnpm db:migration:show
+pnpm phase5:verify --non-browser
+pnpm phase6:verify --non-browser  # once implemented; contains real DB/socket checks
+direct Node/Jest database-backed HTTP/auth/session/socket and migration wrappers
+```
+
+After all M00–M08 implementation, use isolated migrated PostgreSQL schemas/databases for
+the consolidated transaction/race verification pass. Report configured
 database migration state separately; an isolated test migration does not resolve an unapplied
 migration in another environment. Only apply forward migrations to a verified intended target
 under implementation authorization; this planning document performs none.
@@ -649,7 +670,7 @@ Phase 6 is complete only when these deliverables agree:
    preventing cross-account query/draft disclosure.
 9. Real A11/A19/A20 API/database/socket evidence, independent browser product proof when resumed,
    role-matrix negatives, and relevant inherited regressions.
-10. Full/non-browser Phase 6 verifier interfaces and updated local API/UI run guidance.
+10. Full/non-browser/implementation Phase 6 verifier interfaces and updated local API/UI run guidance.
 11. `docs/phase-6-discussion-sharing.md` final audit and per-task evidence/index under
     `docs/evidence/phase6/`.
 
@@ -682,8 +703,10 @@ Phase 6 passes when:
 - Binding prerequisite failures are resolved or remain explicit blockers; earlier phase audits
   retain their own status. No Phase 7/8 or version 1 readiness claim is made.
 
-While browser verification is paused, report implementation/non-browser progress and keep the
-full gate **OPEN — browser checks UNRUN (deferred by user)**. If a requirement fails, fix its
+While database or browser verification is paused, report implementation/fast-check progress
+and keep the full gate **OPEN**, listing each deferred boundary as UNRUN under its respective
+pause. Continue later implementation milestones without claiming phase/release PASS.
+If a requirement fails, fix its
 owning implementation or propose a targeted contract amendment with evidence and consequences.
 Do not treat a visible share button, successful API mock, or socket hint as an integrated feature.
 

@@ -1,5 +1,12 @@
 # Phase 4 evidence index
 
+> Current verification timing (October 1, 2026): all database checks/tests, including
+> database-backed session/socket and schema/migration checks, are deferred until the
+> entire Version 1 implementation (M00–M08) is complete. Browser checks remain paused
+> independently. Follow the [shared policy](../../verification-policy.md); it overrides earlier
+> instructions to rerun these checks. Historical results below remain unchanged;
+> implementation may proceed with deferred acceptance gates OPEN.
+
 Status: **OPEN**. All P4-01 through P4-12 implementation commits are present, but a completed implementation sequence is not a passing exit gate. The [Phase 4 audit](../../phase-4-collaboration.md) maps deliverables, real-boundary proof, measurements, and remaining work. P4-13 records that decision; it does not change runtime behavior.
 
 The branch `phase-4-durable-collaboration` started from Phase 3 `main` at `353306913f59fd4470bb32463bae1a55a90f1c95`. The history is linear. The planned tasks appear in dependency order, with one focused archived-read fix between P4-02 and P4-03 and one verifier-efficiency follow-up after P4-12.

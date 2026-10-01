@@ -1,5 +1,12 @@
 # Phase 2 evidence index
 
+> Current verification timing (October 1, 2026): all database checks/tests, including
+> database-backed session/socket and schema/migration checks, are deferred until the
+> entire Version 1 implementation (M00–M08) is complete. Browser checks remain paused
+> independently. Follow the [shared policy](../../verification-policy.md); it overrides earlier
+> instructions to rerun these checks. Historical results below remain unchanged;
+> implementation may proceed with deferred acceptance gates OPEN.
+
 Branch: `phase-2-local-editor`
 
 Phase 1 `main` base and branch merge-base: `6eaa4093750f430c4c9b269150eb9b2300f9b88d`

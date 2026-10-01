@@ -68,6 +68,11 @@ instructions take precedence; explain a necessary departure briefly.
 
 ## Tests and handoff
 
+- Follow the root [Version 1 verification policy](../../docs/verification-policy.md).
+  Until all Version 1 implementation is complete, run database-free unit/Node checks
+  only. Prepare real PostgreSQL/session/socket tests but defer execution, auth schema
+  checks, and migration inspections. Record UNRUN with the user deferral and keep
+  acceptance gates OPEN; the testing requirements below describe eventual proof.
 - Test application rules at the service boundary and HTTP contracts through the
   Nest application. Use real PostgreSQL integration tests for transaction,
   locking, constraint, rollback, and migration behavior; mocks cannot prove those.

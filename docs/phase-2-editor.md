@@ -1,5 +1,12 @@
 # Phase 2 local editor audit
 
+> Current verification timing (October 1, 2026): all database checks/tests, including
+> database-backed session/socket and schema/migration checks, are deferred until the
+> entire Version 1 implementation (M00–M08) is complete. Browser checks remain paused
+> independently. Follow the [shared policy](verification-policy.md); it overrides earlier
+> instructions to rerun these checks. Historical results below remain unchanged;
+> implementation may proceed with deferred acceptance gates OPEN.
+
 Status: **OPEN — required proof and performance gates remain unresolved.** This is a local-editor milestone, not a version 1 release or a claim of production offline navigation. The user requested a local merge into `main` despite this open status; branch integration does not change the gate result.
 
 ## Baseline, history, and runtime

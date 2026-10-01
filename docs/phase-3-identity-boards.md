@@ -1,5 +1,12 @@
 # Phase 3 identity and board lifecycle audit
 
+> Current verification timing (October 1, 2026): all database checks/tests, including
+> database-backed session/socket and schema/migration checks, are deferred until the
+> entire Version 1 implementation (M00–M08) is complete. Browser checks remain paused
+> independently. Follow the [shared policy](verification-policy.md); it overrides earlier
+> instructions to rerun these checks. Historical results below remain unchanged;
+> implementation may proceed with deferred acceptance gates OPEN.
+
 Status: **PASS for Phase 3**. Automated checks passed on the P3-12 tree. After P3-13, the user
 configured development GitHub OAuth and completed the real provider flow in Chrome, including a
 served optimized build; the API recorded authenticated `/me` and board requests during the local

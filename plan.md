@@ -1,5 +1,12 @@
 # Archboard — Product and Implementation Specification
 
+> Current verification timing (October 1, 2026): all database checks/tests, including
+> database-backed session/socket and schema/migration checks, are deferred until the
+> entire Version 1 implementation (M00–M08) is complete. Browser checks remain paused
+> independently. Follow the [shared policy](docs/verification-policy.md); it overrides earlier
+> instructions to rerun these checks. Historical results below remain unchanged;
+> implementation may proceed with deferred acceptance gates OPEN.
+
 Version: 1.1<br>
 Date: 16 September 2026<br>
 Status: Implementation baseline; architecture choices require the verification spikes defined below.<br>
@@ -766,17 +773,30 @@ Allowed modules/files: <scope>.
 Use these contracts unchanged: <DTOs, commands, invariants>.
 Explicit non-goals: <list>.
 Acceptance: <Axx tests plus task-specific assertions>.
-Run: <relevant targeted checks>.
+Run: <relevant database-free, non-browser checks under docs/verification-policy.md>.
+Prepare deferred DB/socket/browser cases; record UNRUN and leave acceptance gates OPEN.
 Report changes, evidence, unresolved issues, and next dependency.
 Do not claim completion if persistence/authorization is mocked where real behavior is required.
 ```
 
 ## 20. Release gate and demonstration
 
-Temporary implementation preference: browser-running verification is deferred at the user's
-request. Record skipped browser checks as **UNRUN (deferred by user)**. This does not change
-the release gate below; browser and production-preview acceptance must still pass before
-version 1 can be called complete.
+Implementation verification policy (updated October 1, 2026): defer all database checks
+and tests until the entire Version 1 implementation is complete, covering M00–M08.
+This includes database-backed HTTP/auth/session/socket tests, auth schema checks,
+configured migration inspections, and aggregates with database children. Individual
+task or phase completion does not resume them. Continue database-free unit/Node tests,
+formatting, lint, types, builds, boundaries, and static scans. Prepare meaningful
+integration tests but record execution as **UNRUN (deferred by user — until Version 1
+implementation is complete)**. This timing overrides per-milestone execution instructions
+and permits continued implementation with OPEN acceptance gates.
+
+The independent browser pause remains in effect until the user resumes it; record
+browser checks as **UNRUN (deferred by user)**. Follow the shared
+[verification policy](docs/verification-policy.md), including the consolidated database
+verification pass after all implementation deliverables. Historical results remain
+unchanged. Implementation completion unlocks final verification; it is distinct from
+verified release completion and does not waive the release gate below.
 
 Version 1 is complete only when:
 

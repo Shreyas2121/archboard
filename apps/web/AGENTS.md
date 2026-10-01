@@ -5,6 +5,12 @@ requested task. Existing inconsistent code is not permission to repeat the patte
 Do not refactor unrelated code just to bring it into compliance. Explicit user
 instructions take precedence; explain any necessary departure briefly.
 
+Follow the root [Version 1 verification policy](../../docs/verification-policy.md).
+Browser checks remain paused; all database-dependent checks, including real
+HTTP/auth/session/socket tests, are deferred until the entire Version 1 implementation
+is complete. Continue database-free, non-browser checks and record deferred proof as
+UNRUN without closing acceptance gates.
+
 ## Start here
 
 1. Read the component you are changing and its nearest related components.

@@ -1,5 +1,12 @@
 # Phase 5 evidence index
 
+> Current verification timing (October 1, 2026): all database checks/tests, including
+> database-backed session/socket and schema/migration checks, are deferred until the
+> entire Version 1 implementation (M00–M08) is complete. Browser checks remain paused
+> independently. Follow the [shared policy](../../verification-policy.md); it overrides earlier
+> instructions to rerun these checks. Historical results below remain unchanged;
+> implementation may proceed with deferred acceptance gates OPEN.
+
 Status: **OPEN**. The [Phase 5 audit](../../phase-5-offline.md) maps deliverables, acceptance cases, security checks, and remaining gates. The implementation branch `phase-5-offline-product` started from `main` at `740d0ff8939bcb0fa0015e699fcbb580a6094326`; commits are linear. The requested local merge into `main` does not certify Phase 5.
 
 | Task              | Commit                                     | Evidence                                            | Scope                                                           |
