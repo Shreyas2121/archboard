@@ -7,24 +7,30 @@ import {
   createCommentSchema,
   threadCreateResponseSchema,
   commentResponseSchema,
+  editCommentSchema,
+  deleteCommentSchema,
+  resolveThreadSchema,
+  threadResponseSchema,
+  type Comment,
 } from '@archboard/contracts';
 import { apiRequest } from '@/platform/api';
-import type { DiscussionRequest } from './discussion-model';
+import { anchorDraftKey, type DiscussionRequest } from './discussion-model';
+import type { DiscussionTarget, ModerationAction } from './discussion-moderation-state';
 
 export async function readThreads(
   boardId: string,
-  resolved: boolean,
+  resolved: boolean | undefined,
   cursor: string | null,
   signal: AbortSignal,
 ) {
   const query = threadListQuerySchema.parse({
-    resolved: String(resolved),
+    ...(resolved === undefined ? {} : { resolved: String(resolved) }),
     ...(cursor ? { cursor } : {}),
   });
   const params = new URLSearchParams({
     limit: String(query.limit),
-    resolved: String(query.resolved),
   });
+  if (query.resolved !== undefined) params.set('resolved', String(query.resolved));
   if (query.cursor) params.set('cursor', query.cursor);
   const result = await apiRequest(
     `/boards/${boardId}/threads?${params}`,
@@ -34,6 +40,111 @@ export async function readThreads(
   if (result.data.some((thread) => thread.boardId !== boardId))
     throw new Error('The API returned discussion for a different board.');
   return result;
+}
+
+export async function mutateDiscussion(
+  boardId: string,
+  action: ModerationAction,
+  signal: AbortSignal,
+): Promise<DiscussionTarget> {
+  if (action.kind === 'resolve') {
+    const result = await apiRequest(
+      `/boards/${boardId}/threads/${action.resource.id}`,
+      threadResponseSchema,
+      {
+        method: 'PATCH',
+        signal,
+        body: resolveThreadSchema.parse({
+          resolved: action.resolved,
+          expectedVersion: action.resource.version,
+        }),
+      },
+    );
+    if (result.data.id !== action.resource.id || result.data.boardId !== boardId)
+      throw new Error('The API returned a different discussion.');
+    return { kind: 'thread', value: result.data };
+  }
+  const result = await apiRequest(
+    `/boards/${boardId}/comments/${action.resource.id}`,
+    commentResponseSchema,
+    {
+      method: action.kind === 'edit' ? 'PATCH' : 'DELETE',
+      signal,
+      body:
+        action.kind === 'edit'
+          ? editCommentSchema.parse({ body: action.body, expectedVersion: action.resource.version })
+          : deleteCommentSchema.parse({ expectedVersion: action.resource.version }),
+    },
+  );
+  if (
+    result.data.id !== action.resource.id ||
+    result.data.threadId !== action.resource.threadId ||
+    result.data.author.id !== action.resource.author.id
+  )
+    throw new Error('The API returned a different message or author.');
+  return { kind: 'comment', value: result.data };
+}
+
+export async function readCurrentTarget(
+  boardId: string,
+  action: ModerationAction,
+  signal: AbortSignal,
+): Promise<DiscussionTarget> {
+  let cursor: string | null = null;
+  do {
+    if (signal.aborted) throw new Error('Read cancelled.');
+    if (action.kind === 'resolve') {
+      const page = await readThreads(boardId, undefined, cursor, signal);
+      const row = page.data.find(({ id }) => id === action.resource.id);
+      if (row) return { kind: 'thread', value: row };
+      cursor = page.nextCursor;
+    } else {
+      const page = await readComments(boardId, action.resource.threadId, cursor, signal);
+      const row = page.data.find(({ id }) => id === action.resource.id);
+      if (row) return { kind: 'comment', value: row };
+      cursor = page.nextCursor;
+    }
+  } while (cursor !== null);
+  throw new Error('The current resource is unavailable.');
+}
+
+export async function inspectCreation(
+  boardId: string,
+  request: DiscussionRequest,
+  accountId: string,
+  signal: AbortSignal,
+) {
+  const matches: Comment[] = [];
+  async function inspectThread(threadId: string, firstOnly: boolean) {
+    let cursor: string | null = null;
+    do {
+      if (signal.aborted) throw new Error('Read cancelled.');
+      const page = await readComments(boardId, threadId, cursor, signal);
+      for (const comment of firstOnly ? page.data.slice(0, 1) : page.data) {
+        if (
+          comment.author.id === accountId &&
+          comment.body === request.operation.input.body &&
+          comment.deletedAt === null
+        )
+          matches.push(comment);
+      }
+      cursor = firstOnly ? null : page.nextCursor;
+    } while (cursor !== null);
+  }
+  if (request.operation.kind === 'reply') await inspectThread(request.operation.threadId, false);
+  else {
+    let cursor: string | null = null;
+    do {
+      if (signal.aborted) throw new Error('Read cancelled.');
+      const page = await readThreads(boardId, undefined, cursor, signal);
+      for (const thread of page.data) {
+        if (anchorDraftKey(thread.anchor) === anchorDraftKey(request.operation.input.anchor))
+          await inspectThread(thread.id, true);
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+  }
+  return matches;
 }
 
 export async function readComments(

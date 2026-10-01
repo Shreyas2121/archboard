@@ -3,12 +3,16 @@ import type {
   ThreadAnchor,
   CreateThread,
   CreateComment,
+  Comment,
+  ErrorCode,
 } from '@archboard/contracts';
 import type { SelectionReference } from '@/features/editor/state';
 import type { SharingAuthority } from '@/features/boards/board-sharing-policy';
 
 const HALF = 2;
 const RETRY_WINDOW_MS = 82_800_000; // Leave one hour before server retention expires.
+const HTTP_CLIENT_ERROR = 400;
+const HTTP_SERVER_ERROR = 500;
 
 export function discussionWriteAllowed(access: SharingAuthority): boolean {
   return (
@@ -19,6 +23,14 @@ export function discussionWriteAllowed(access: SharingAuthority): boolean {
     !access.denied &&
     !access.archived &&
     (access.role === 'owner' || access.role === 'editor')
+  );
+}
+
+export function canModerateComment(access: SharingAuthority, comment: Comment): boolean {
+  return (
+    discussionWriteAllowed(access) &&
+    comment.deletedAt === null &&
+    (access.role === 'owner' || comment.author.id === access.accountId)
   );
 }
 
@@ -112,4 +124,35 @@ export function creationFailureUncertain(
   // A failed preflight/rejected retry cannot disprove an earlier lost response.
   // Only confirmation of the original keyed creation releases that uncertainty.
   return previous || (writeStarted && !definiteRejection);
+}
+
+export function definitiveCreationRejection(
+  status: number | null,
+  code: ErrorCode | null,
+): boolean {
+  // A key conflict may describe a prior committed effect; it is not proof that
+  // this logical creation can safely be replaced with a new key.
+  return (
+    status !== null &&
+    status >= HTTP_CLIENT_ERROR &&
+    status < HTTP_SERVER_ERROR &&
+    code !== 'IDEMPOTENCY_CONFLICT'
+  );
+}
+
+export function canRestartInspectedCreation(
+  request: DiscussionRequest,
+  now: number,
+  inspectedKey: string | null,
+  inspectedAt: number | null,
+): boolean {
+  return (
+    inspectedKey === request.key &&
+    inspectedAt !== null &&
+    inspectedAt <= now &&
+    inspectedAt >= request.startedAt &&
+    !canRetryDiscussion(request, inspectedAt) &&
+    now >= request.startedAt &&
+    !canRetryDiscussion(request, now)
+  );
 }

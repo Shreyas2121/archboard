@@ -160,8 +160,13 @@ async function apiWithPort(port) {
     { context },
   );
   await module.link((specifier) => {
-    const values = specifier === '@archboard/contracts' ? contracts : { apiRequest: port };
-    assert.ok(['@archboard/contracts', '@/platform/api'].includes(specifier));
+    const values =
+      specifier === '@archboard/contracts'
+        ? contracts
+        : specifier === './discussion-model'
+          ? { anchorDraftKey }
+          : { apiRequest: port };
+    assert.ok(['@archboard/contracts', '@/platform/api', './discussion-model'].includes(specifier));
     return new vm.SyntheticModule(
       Object.keys(values),
       function () {

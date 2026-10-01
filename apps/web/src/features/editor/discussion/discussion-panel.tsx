@@ -32,13 +32,16 @@ import {
   canRetryDiscussion,
   anchorDraftKey,
   creationFailureUncertain,
+  canModerateComment,
+  definitiveCreationRejection,
   type DiscussionRequest,
 } from './discussion-model';
 import type { DiscussionPanelProps } from './discussion-types';
+import { useDiscussionModeration } from './use-discussion-moderation';
+import { DiscussionModerationDialog } from './discussion-moderation-dialog';
+import { CreationRecoveryDialog } from './creation-recovery-dialog';
 
 const HALF = 2;
-const HTTP_CLIENT_ERROR = 400;
-const HTTP_SERVER_ERROR = 500;
 
 export function DiscussionPanel(props: DiscussionPanelProps) {
   const scope = props.session.resourceScope;
@@ -77,6 +80,7 @@ function ScopedDiscussion({
   const flight = useRef<AbortController | null>(null);
   const enabled = access.authenticated && access.online && !session.getSnapshot().accessDenied;
   const writable = !readOnly && discussionWriteAllowed(access.authority);
+  const moderation = useDiscussionModeration(scope, access, readOnly);
   const prefix = boardResourceQueryKey(scope, 'comments');
   const threads = useInfiniteQuery({
     queryKey: [...prefix, 'threads', resolved],
@@ -104,7 +108,7 @@ function ScopedDiscussion({
   const candidate = selectedAnchor(selection, projection);
   const context = threadId ?? (anchor ? anchorDraftKey(anchor) : 'none');
   const request = requests[context] ?? null;
-  const controlsLocked = sending || uncertain;
+  const controlsLocked = sending || uncertain || moderation.snapshot.action !== null;
   const body = drafts[context] ?? '';
   const valid = commentBodySchema.safeParse(body);
   const validation = valid.success ? '' : (valid.error.issues[0]?.message ?? 'Check your message.');
@@ -152,7 +156,7 @@ function ScopedDiscussion({
     void flow.setCenter(position.x, position.y, { zoom: viewport.zoom });
   }
   async function send() {
-    if (flight.current || !writable) return;
+    if (flight.current || !writable || moderation.snapshot.action !== null) return;
     if (!request && (!valid.success || (!threadId && !anchor))) {
       setError(validation || 'Choose an anchor.');
       return;
@@ -215,9 +219,7 @@ function ScopedDiscussion({
       const definiteRejection =
         cause instanceof ApiClientError &&
         cause.kind === 'http' &&
-        cause.status !== null &&
-        cause.status >= HTTP_CLIENT_ERROR &&
-        cause.status < HTTP_SERVER_ERROR;
+        definitiveCreationRejection(cause.status, cause.code);
       setUncertain((previous) =>
         creationFailureUncertain(previous, writeStarted, definiteRejection),
       );
@@ -315,7 +317,11 @@ function ScopedDiscussion({
         <p>No {resolved ? 'resolved' : 'unresolved'} discussions.</p>
       )}
       {summaries.map((thread) => (
-        <article key={thread.id} className="grid gap-1 rounded-lg border p-2">
+        <article
+          key={thread.id}
+          data-thread-id={thread.id}
+          className="grid gap-1 rounded-lg border p-2"
+        >
           <Button
             type="button"
             variant="ghost"
@@ -334,6 +340,14 @@ function ScopedDiscussion({
             {thread.messageCount} messages · Started by {thread.createdBy.name} ·{' '}
             <time dateTime={thread.createdAt}>{new Date(thread.createdAt).toLocaleString()}</time>
           </p>
+          {thread.resolvedAt && (
+            <p className="text-xs">
+              Resolved by {thread.resolvedBy?.name} ·{' '}
+              <time dateTime={thread.resolvedAt}>
+                {new Date(thread.resolvedAt).toLocaleString()}
+              </time>
+            </p>
+          )}
           <p className="break-words whitespace-pre-wrap">{thread.latestMessage.body}</p>
           <p className="text-xs text-muted-foreground">
             {thread.latestMessage.author.name} ·{' '}
@@ -349,6 +363,23 @@ function ScopedDiscussion({
           <Button type="button" variant="outline" size="sm" onClick={() => focus(thread.anchor)}>
             {localAnchor(thread.anchor, projection) ? 'Focus anchor' : 'Go to saved position'}
           </Button>
+          {writable && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={controlsLocked}
+              onClick={() =>
+                moderation.begin({
+                  kind: 'resolve',
+                  resource: thread,
+                  resolved: thread.resolvedAt === null,
+                })
+              }
+            >
+              {thread.resolvedAt ? 'Reopen discussion' : 'Resolve discussion'}
+            </Button>
+          )}
         </article>
       ))}
       {threads.hasNextPage && (
@@ -380,7 +411,11 @@ function ScopedDiscussion({
           {comments.data?.pages
             .flatMap((page) => page.data)
             .map((comment) => (
-              <article key={comment.id} className="rounded-lg border p-2">
+              <article
+                key={comment.id}
+                data-comment-id={comment.id}
+                className="rounded-lg border p-2"
+              >
                 <p className="text-xs">
                   {comment.author.name} ·{' '}
                   <time dateTime={comment.createdAt}>
@@ -390,6 +425,30 @@ function ScopedDiscussion({
                   {comment.deletedAt && ' · Deleted'}
                 </p>
                 <p className="break-words whitespace-pre-wrap">{comment.body}</p>
+                {writable && canModerateComment(access.authority, comment) && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={controlsLocked}
+                      onClick={() =>
+                        moderation.begin({ kind: 'edit', resource: comment, body: comment.body })
+                      }
+                    >
+                      Edit message
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={controlsLocked}
+                      onClick={() => moderation.begin({ kind: 'delete', resource: comment })}
+                    >
+                      Delete message
+                    </Button>
+                  </div>
+                )}
               </article>
             ))}
           {comments.hasNextPage && (
@@ -498,11 +557,16 @@ function ScopedDiscussion({
             {body && validation}
           </p>
           {writable && (
-            <Button type="submit" disabled={sending || (!request && !valid.success)}>
+            <Button
+              type="submit"
+              disabled={
+                sending || moderation.snapshot.action !== null || (!request && !valid.success)
+              }
+            >
               {sending ? 'Sending…' : request ? 'Retry identical unsent message' : 'Send message'}
             </Button>
           )}
-          {request && !controlsLocked && (
+          {request && !controlsLocked && canRetryDiscussion(request, Date.now()) && (
             <Button
               type="button"
               variant="outline"
@@ -520,6 +584,39 @@ function ScopedDiscussion({
               Edit rejected draft
             </Button>
           )}
+          {request && (
+            <CreationRecoveryDialog
+              key={request.key}
+              request={request}
+              scope={scope}
+              readable={enabled && !sending}
+              onFailure={(cause) => {
+                if (!latestAccess.current.accountMatches) return;
+                if (cause instanceof ApiClientError && cause.kind === 'unauthenticated')
+                  latestAccess.current.handleFailure(cause);
+                else if (navigator.onLine)
+                  void latestAccess.current.refresh().catch(latestAccess.current.handleFailure);
+              }}
+              onNewSubmission={() => {
+                if (
+                  !latestAccess.current.accountMatches ||
+                  latestAccess.current.readAuthority().denied ||
+                  !navigator.onLine ||
+                  canRetryDiscussion(request, Date.now())
+                )
+                  return;
+                setRequests((previous) => {
+                  const next = { ...previous };
+                  delete next[context];
+                  return next;
+                });
+                setUncertain(false);
+                setError(
+                  'The original outcome remains unconfirmed. You reviewed visible results and can now explicitly submit a new creation; it may duplicate an earlier message.',
+                );
+              }}
+            />
+          )}
         </form>
       )}
       {error && (
@@ -532,6 +629,28 @@ function ScopedDiscussion({
           {notice}
         </p>
       )}
+      {moderation.snapshot.notice && <p role="status">{moderation.snapshot.notice}</p>}
+      {moderation.snapshot.action === null && moderation.snapshot.retainedEdits.length > 0 && (
+        <section className="grid gap-2 rounded-lg border p-3" aria-label="Retained unsent edits">
+          <h3 className="font-semibold">Retained unsent edits</h3>
+          <p className="text-xs">
+            These edits were not confirmed. You can copy the text even if the original message was
+            deleted. Reloading or leaving this board loses them.
+          </p>
+          {moderation.snapshot.retainedEdits.map((draft) => (
+            <p key={draft.commentId} className="break-words whitespace-pre-wrap">
+              {draft.body}
+            </p>
+          ))}
+        </section>
+      )}
+      <DiscussionModerationDialog
+        controller={moderation.controller}
+        snapshot={moderation.snapshot}
+        readable={access.accountMatches && !access.authority.denied}
+        writable={writable}
+        restoreFocus={moderation.restoreFocus}
+      />
       {canvas.current &&
         createPortal(
           <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
