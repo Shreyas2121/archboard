@@ -18,6 +18,11 @@ import {
   threadResponseSchema,
   type ThreadAnchor,
   type ThreadCreateResult,
+  serverMessageSchema,
+  GRAPH_SCHEMA_VERSION,
+  PROTOCOL_VERSION,
+  boardInviteResponseSchema,
+  inviteAcceptanceResponseSchema,
 } from '@archboard/contracts';
 import {
   createNode,
@@ -36,8 +41,10 @@ import { HttpStatus } from '@nestjs/common';
 import { Pool } from 'pg';
 import { DataSource, type QueryRunner } from 'typeorm';
 import * as Y from 'yjs';
+import WebSocket, { type RawData } from 'ws';
 
 import { AppModule } from '../../app.module.js';
+import { CollaborationGateway } from '../collaboration/infrastructure/websocket/collaboration.gateway.js';
 import { DiscussionRepository } from './infrastructure/discussion-repository.js';
 import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
 import { RetainCompactedUpdateReceipts1790426800000 } from '../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
@@ -65,6 +72,7 @@ const SCHEMA_SUFFIX_LENGTH = 8;
 const CHANGED_VERSION = 2;
 const SECOND_CHANGED_VERSION = 3;
 const FRACTIONAL_VERSION = 1.5;
+const EXPECTED_COMMENTS_HINTS = 6;
 const EXPECTED_EDGE_POSITION = { x: 320, y: 70 };
 const SCHEMA = `archboard_p602_${process.pid}_${randomUUID().replaceAll('-', '').slice(0, SCHEMA_SUFFIX_LENGTH)}`;
 const point: ThreadAnchor = { type: 'point', position: { x: -25, y: 30 } };
@@ -98,6 +106,7 @@ describe('P6-02/P6-03 discussion HTTP, real sessions and PostgreSQL transactions
   let apiOrigin: string;
   const users = new Map<string, { id: string; cookie: string }>();
   const rooms = new Map<string, CollaborationRoom>();
+  const sockets = new Set<WebSocket>();
 
   async function request(
     path: string,
@@ -292,7 +301,7 @@ describe('P6-02/P6-03 discussion HTTP, real sessions and PostgreSQL transactions
     );
     console.log(
       JSON.stringify({
-        phase: 'P6-02/P6-03',
+        phase: 'P6-02/P6-03/P6-04',
         postgresVersion: version[0]?.server_version,
         migrations: 2,
         discussionIndexes: indexes.length,
@@ -336,6 +345,7 @@ describe('P6-02/P6-03 discussion HTTP, real sessions and PostgreSQL transactions
   });
 
   afterAll(async () => {
+    for (const socket of sockets) socket.terminate();
     for (const room of rooms.values()) room.destroy();
     try {
       await application?.close();
@@ -1758,6 +1768,459 @@ describe('P6-02/P6-03 discussion HTTP, real sessions and PostgreSQL transactions
       await runner.release();
       await attempted;
     }
+  });
+
+  async function observeSocket(boardId: string, actor = 'viewer') {
+    const frames: ReturnType<typeof serverMessageSchema.parse>[] = [];
+    const socket = new WebSocket(`${apiOrigin.replace('http:', 'ws:')}/ws/boards/${boardId}`, {
+      origin: ORIGIN,
+      headers: { cookie: users.get(actor)!.cookie },
+    });
+    sockets.add(socket);
+    socket.on('message', (raw) =>
+      frames.push(serverMessageSchema.parse(JSON.parse(raw.toString()))),
+    );
+    const waitEvent = (event: 'ready' | 'close' | 'pong') =>
+      new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error(`Socket ${event} timed out.`));
+        }, TIMEOUT_MS);
+        const done = () => {
+          cleanup();
+          resolve();
+        };
+        const onMessage = (raw: RawData) => {
+          if (serverMessageSchema.parse(JSON.parse(raw.toString())).event === event) done();
+        };
+        const cleanup = () => {
+          clearTimeout(timer);
+          socket.off('message', onMessage);
+          socket.off(event === 'ready' ? 'open' : event, done);
+        };
+        if (event === 'ready') socket.on('message', onMessage);
+        else socket.once(event, done);
+      });
+    await new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('error', reject);
+    });
+    const ready = waitEvent('ready');
+    socket.send(
+      JSON.stringify({
+        event: 'hello',
+        data: {
+          protocolVersion: PROTOCOL_VERSION,
+          schemaVersion: GRAPH_SCHEMA_VERSION,
+          tabId: randomUUID(),
+        },
+      }),
+    );
+    await ready;
+    const flush = async () => {
+      await application.get(CollaborationGateway).drain();
+      if (socket.readyState === WebSocket.OPEN) {
+        const pong = waitEvent('pong');
+        socket.ping();
+        await pong;
+      }
+    };
+    await flush();
+    frames.length = 0;
+    return { socket, frames, flush, closed: () => waitEvent('close') };
+  }
+
+  it('P6-04 sends one committed comments hint to current actor/readers without graph or unrelated-board effects', async () => {
+    const fixture = await board();
+    const other = await board();
+    const actor = await observeSocket(fixture.id, 'owner');
+    const reader = await observeSocket(fixture.id);
+    const unrelated = await observeSocket(other.id, 'owner');
+    const refreshes: Promise<ReturnType<typeof threadListResponseSchema.parse>>[] = [];
+    reader.socket.on('message', (raw) => {
+      const message = serverMessageSchema.parse(JSON.parse(raw.toString()));
+      if (message.event === 'invalidate' && message.data.resource === 'comments') {
+        refreshes.push(
+          request(`/boards/${fixture.id}/threads`, 'viewer').then(async (response) => {
+            expect(response.status).toBe(HttpStatus.OK);
+            return threadListResponseSchema.parse(await response.json());
+          }),
+        );
+      }
+    });
+    const before = await database.query(
+      'SELECT latest_seq,content_updated_at FROM boards WHERE id=$1',
+      [fixture.id],
+    );
+    const key = randomUUID();
+    const response = await createRequest(fixture.id, point, 'owner', key);
+    expect(response.status).toBe(HttpStatus.CREATED);
+    const first = threadCreateResponseSchema.parse(await response.json()).data;
+    await Promise.all([actor.flush(), reader.flush(), unrelated.flush()]);
+    const hints = (frames: typeof reader.frames) =>
+      frames.filter((frame) => frame.event === 'invalidate' && frame.data.resource === 'comments');
+    expect(hints(actor.frames)).toHaveLength(1);
+    expect(hints(reader.frames)).toHaveLength(1);
+    expect(unrelated.frames).toHaveLength(0);
+    const fetched = await Promise.all(refreshes);
+    expect(fetched[0]?.data[0]?.id).toBe(first.thread.id);
+    expect((await createRequest(fixture.id, point, 'owner', key)).status).toBe(HttpStatus.CREATED);
+    await expectError(
+      await createRequest(fixture.id, point, 'viewer'),
+      HttpStatus.FORBIDDEN,
+      ERROR_CODES.FORBIDDEN,
+    );
+    await reader.flush();
+    expect(hints(reader.frames)).toHaveLength(1);
+    expect((await reply(fixture.id, first.thread.id)).status).toBe(HttpStatus.CREATED);
+    expect((await edit(fixture.id, first.comment.id)).status).toBe(HttpStatus.OK);
+    expect((await edit(fixture.id, first.comment.id, 'owner', CHANGED_VERSION)).status).toBe(
+      HttpStatus.OK,
+    );
+    expect(
+      (await removeMessage(fixture.id, first.comment.id, 'owner', CHANGED_VERSION)).status,
+    ).toBe(HttpStatus.OK);
+    expect(
+      (await removeMessage(fixture.id, first.comment.id, 'owner', SECOND_CHANGED_VERSION)).status,
+    ).toBe(HttpStatus.OK);
+    expect((await resolveThread(fixture.id, first.thread.id)).status).toBe(HttpStatus.OK);
+    expect(
+      (await resolveThread(fixture.id, first.thread.id, 'owner', CHANGED_VERSION)).status,
+    ).toBe(HttpStatus.OK);
+    expect(
+      (await resolveThread(fixture.id, first.thread.id, 'owner', CHANGED_VERSION, false)).status,
+    ).toBe(HttpStatus.OK);
+    await reader.flush();
+    expect(hints(reader.frames)).toHaveLength(EXPECTED_COMMENTS_HINTS);
+    const finalReads = await Promise.all(refreshes);
+    expect(finalReads.at(-1)?.data[0]).toMatchObject({
+      version: 3,
+      resolvedAt: null,
+      messageCount: 2,
+    });
+    expect(reader.frames.some((frame) => frame.event === 'ack' || frame.event === 'update')).toBe(
+      false,
+    );
+    expect(
+      await database.query('SELECT latest_seq,content_updated_at FROM boards WHERE id=$1', [
+        fixture.id,
+      ]),
+    ).toEqual(before);
+    actor.socket.terminate();
+    reader.socket.terminate();
+    unrelated.socket.terminate();
+  });
+
+  it('P6-04 sends nothing before commit or after a real transaction rollback', async () => {
+    const fixture = await board();
+    const reader = await observeSocket(fixture.id);
+    const reached = deferred();
+    const release = deferred();
+    const original = DiscussionRepository.prototype.insertComment;
+    const spy = jest
+      .spyOn(DiscussionRepository.prototype, 'insertComment')
+      .mockImplementationOnce(async function (
+        this: DiscussionRepository,
+        ...args: Parameters<typeof original>
+      ) {
+        const result = await original.call(this, ...args);
+        reached.resolve();
+        await release.promise;
+        return result;
+      });
+    const creation = createRequest(fixture.id);
+    try {
+      await Promise.race([
+        reached.promise,
+        creation.then((response) => {
+          throw new Error(`Commit barrier missed (${response.status}).`);
+        }),
+      ]);
+      // Do not drain the gateway here: no notification operation exists until commit.
+      const pong = new Promise<void>((resolve) => reader.socket.once('pong', () => resolve()));
+      reader.socket.ping();
+      await pong;
+      expect(reader.frames).toHaveLength(0);
+      expect(await counts(fixture.id)).toEqual({ threads: 0, comments: 0, keys: 0 });
+      release.resolve();
+      expect((await creation).status).toBe(HttpStatus.CREATED);
+      await reader.flush();
+      expect(reader.frames.filter((frame) => frame.event === 'invalidate')).toHaveLength(1);
+    } finally {
+      release.resolve();
+      spy.mockRestore();
+      await creation;
+    }
+    reader.frames.length = 0;
+    await database.query(
+      'ALTER TABLE comments ADD CONSTRAINT p604_message_failure CHECK(false) NOT VALID',
+    );
+    try {
+      await expectError(
+        await createRequest(fixture.id),
+        HttpStatus.SERVICE_UNAVAILABLE,
+        ERROR_CODES.TEMPORARILY_UNAVAILABLE,
+      );
+      await reader.flush();
+      expect(reader.frames).toHaveLength(0);
+    } finally {
+      await database.query('ALTER TABLE comments DROP CONSTRAINT p604_message_failure');
+      reader.socket.terminate();
+    }
+  });
+
+  it('P6-04 orders downgrade/archive access events before member/metadata hints and suppresses no-op metadata changes', async () => {
+    const fixture = await board();
+    const editor = await observeSocket(fixture.id, 'editor');
+    const owner = await observeSocket(fixture.id, 'owner');
+    expect(
+      (
+        await request(`/boards/${fixture.id}`, 'owner', {
+          method: 'PATCH',
+          body: { expectedVersion: 1, title: 'Synthetic updated metadata' },
+        })
+      ).status,
+    ).toBe(HttpStatus.OK);
+    await owner.flush();
+    expect(owner.frames).toEqual([
+      expect.objectContaining({ event: 'invalidate', data: { resource: 'metadata' } }),
+    ]);
+    owner.frames.length = 0;
+    expect(
+      (
+        await request(`/boards/${fixture.id}`, 'owner', {
+          method: 'PATCH',
+          body: { expectedVersion: CHANGED_VERSION, title: 'Synthetic updated metadata' },
+        })
+      ).status,
+    ).toBe(HttpStatus.OK);
+    await owner.flush();
+    expect(owner.frames).toHaveLength(0);
+    editor.frames.length = 0;
+    expect(
+      (
+        await request(`/boards/${fixture.id}/members/${users.get('editor')!.id}`, 'owner', {
+          method: 'PATCH',
+          body: { role: 'viewer' },
+        })
+      ).status,
+    ).toBe(HttpStatus.OK);
+    await editor.flush();
+    expect(editor.frames.map((frame) => frame.event)).toEqual([
+      'access.changed',
+      'invalidate',
+      'invalidate',
+    ]);
+    expect(editor.frames[0]).toMatchObject({ data: { role: 'viewer', archived: false } });
+    editor.frames.length = 0;
+    expect(
+      (
+        await request(`/boards/${fixture.id}/archive`, 'owner', {
+          method: 'POST',
+          body: { expectedVersion: CHANGED_VERSION },
+        })
+      ).status,
+    ).toBe(HttpStatus.OK);
+    await editor.flush();
+    expect(editor.frames.map((frame) => frame.event)).toEqual(['access.changed', 'invalidate']);
+    expect(editor.frames[0]).toMatchObject({ data: { role: 'viewer', archived: true } });
+    editor.socket.terminate();
+    owner.socket.terminate();
+  });
+
+  it('P6-04 rechecks removal between a committed creation and delayed notification delivery', async () => {
+    const fixture = await board();
+    const removed = await observeSocket(fixture.id, 'editor');
+    const reader = await observeSocket(fixture.id);
+    const gateway = application.get(CollaborationGateway);
+    const original = gateway.resourcesChanged.bind(gateway);
+    const reached = deferred();
+    const release = deferred();
+    const spy = jest.spyOn(gateway, 'resourcesChanged').mockImplementationOnce(async (...args) => {
+      reached.resolve();
+      await release.promise;
+      return original(...args);
+    });
+    const creation = createRequest(fixture.id);
+    try {
+      await Promise.race([
+        reached.promise,
+        creation.then((response) => {
+          throw new Error(`Notification barrier missed (${response.status}).`);
+        }),
+      ]);
+      expect(await counts(fixture.id)).toEqual({ threads: 1, comments: 1, keys: 1 });
+      const closed = removed.closed();
+      expect(
+        (
+          await request(`/boards/${fixture.id}/members/${users.get('editor')!.id}`, 'owner', {
+            method: 'DELETE',
+          })
+        ).status,
+      ).toBe(HttpStatus.NO_CONTENT);
+      await closed;
+      release.resolve();
+      expect((await creation).status).toBe(HttpStatus.CREATED);
+      await reader.flush();
+      expect(removed.frames.some((frame) => frame.event === 'invalidate')).toBe(false);
+      expect(removed.frames).toContainEqual(
+        expect.objectContaining({ event: 'access.changed', data: { role: null, archived: false } }),
+      );
+      expect(reader.frames).toContainEqual({ event: 'invalidate', data: { resource: 'comments' } });
+      await expectError(
+        await request(`/boards/${fixture.id}/threads`, 'editor'),
+        HttpStatus.NOT_FOUND,
+        ERROR_CODES.NOT_FOUND,
+      );
+    } finally {
+      release.resolve();
+      spy.mockRestore();
+      await creation;
+      removed.socket.terminate();
+      reader.socket.terminate();
+    }
+  });
+
+  it('P6-04 maps invite acceptance to members/metadata after access changes and suppresses acceptance replay', async () => {
+    const fixture = await board();
+    const reader = await observeSocket(fixture.id);
+    const response = await request(`/boards/${fixture.id}/invites`, 'owner', {
+      method: 'POST',
+      key: randomUUID(),
+      body: { role: 'editor' },
+    });
+    expect(response.status).toBe(HttpStatus.CREATED);
+    const invite = boardInviteResponseSchema.parse(await response.json()).data;
+    const token = new URL(invite.inviteUrl!).pathname.split('/').at(-1)!;
+    await reader.flush();
+    expect(reader.frames).toHaveLength(0);
+    const accepted = await request('/invites/accept', 'viewer', {
+      method: 'POST',
+      body: { token },
+    });
+    expect(accepted.status).toBe(HttpStatus.OK);
+    expect(inviteAcceptanceResponseSchema.parse(await accepted.json()).data.effectiveRole).toBe(
+      'editor',
+    );
+    await reader.flush();
+    expect(reader.frames.map((frame) => frame.event)).toEqual([
+      'access.changed',
+      'invalidate',
+      'invalidate',
+    ]);
+    expect(reader.frames[0]).toMatchObject({ data: { role: 'editor' } });
+    reader.frames.length = 0;
+    expect(
+      (await request('/invites/accept', 'viewer', { method: 'POST', body: { token } })).status,
+    ).toBe(HttpStatus.OK);
+    await reader.flush();
+    expect(reader.frames).toHaveLength(0);
+    reader.socket.terminate();
+  });
+
+  it('P6-04 preserves a committed REST response when best-effort notification delivery fails', async () => {
+    const fixture = await board();
+    const reader = await observeSocket(fixture.id);
+    const gateway = application.get(CollaborationGateway);
+    const spy = jest
+      .spyOn(gateway, 'resourcesChanged')
+      .mockRejectedValueOnce(new Error('Synthetic notification failure'));
+    const key = randomUUID();
+    try {
+      const response = await createRequest(fixture.id, point, 'owner', key);
+      expect(response.status).toBe(HttpStatus.CREATED);
+      const first = threadCreateResponseSchema.parse(await response.json()).data;
+      expect(await counts(fixture.id)).toEqual({ threads: 1, comments: 1, keys: 1 });
+      await reader.flush();
+      expect(reader.frames).toHaveLength(0);
+      const replay = await createRequest(fixture.id, point, 'owner', key);
+      expect(replay.status).toBe(HttpStatus.CREATED);
+      expect(threadCreateResponseSchema.parse(await replay.json()).data).toEqual(first);
+      await reader.flush();
+      expect(reader.frames).toHaveLength(0);
+      const fetched = threadListResponseSchema.parse(
+        await (await request(`/boards/${fixture.id}/threads`, 'viewer')).json(),
+      ).data;
+      expect(fetched[0]?.id).toBe(first.thread.id);
+    } finally {
+      spy.mockRestore();
+      reader.socket.terminate();
+    }
+  });
+
+  it('P6-04 rechecks queued graph fanout when removal commits behind a graph commit before notification runs', async () => {
+    const fixture = await board();
+    const owner = await observeSocket(fixture.id, 'owner');
+    const removed = await observeSocket(fixture.id, 'editor');
+    const reached = deferred();
+    const release = deferred();
+    application
+      .get(DurableUpdateFailpointController)
+      .arm(DURABLE_UPDATE_FAILPOINTS.AFTER_COMMIT_BEFORE_ACK, async () => {
+        reached.resolve();
+        await release.promise;
+      });
+    const document = new Y.Doc();
+    Y.applyUpdate(document, fixture.state);
+    const vector = Y.encodeStateVector(document);
+    setNodeTitle(document, fixture.graph.nodes[0]!.id, 'Synthetic committed graph change');
+    const updateBase64 = Buffer.from(Y.encodeStateAsUpdate(document, vector)).toString('base64');
+    document.destroy();
+    owner.socket.send(
+      JSON.stringify({ event: 'update', data: { updateId: randomUUID(), updateBase64 } }),
+    );
+    let removal: Promise<Response> | undefined;
+    try {
+      await reached.promise;
+      const closed = removed.closed();
+      removal = request(`/boards/${fixture.id}/members/${users.get('editor')!.id}`, 'owner', {
+        method: 'DELETE',
+      });
+      let committed = false;
+      for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt += 1) {
+        const rows = await database.query(
+          'SELECT EXISTS(SELECT 1 FROM board_members WHERE board_id=$1 AND user_id=$2) AS present',
+          [fixture.id, users.get('editor')!.id],
+        );
+        if (!rows[0]?.present) {
+          committed = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      }
+      expect(committed).toBe(true);
+      release.resolve();
+      expect((await removal).status).toBe(HttpStatus.NO_CONTENT);
+      await closed;
+      await owner.flush();
+      expect(removed.frames.some((frame) => frame.event === 'update')).toBe(false);
+      expect(owner.frames).toContainEqual(
+        expect.objectContaining({ event: 'ack', data: expect.objectContaining({ seq: '1' }) }),
+      );
+    } finally {
+      release.resolve();
+      await removal;
+      owner.socket.terminate();
+      removed.socket.terminate();
+    }
+  });
+
+  it('P6-04 rejects an expired socket session before protected invalidation fanout', async () => {
+    const fixture = await board();
+    const reader = await observeSocket(fixture.id);
+    const closed = reader.closed();
+    await database.query(
+      `UPDATE session SET "expiresAt"=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE "userId"=$1`,
+      [users.get('viewer')!.id],
+    );
+    expect((await createRequest(fixture.id)).status).toBe(HttpStatus.CREATED);
+    await closed;
+    expect(reader.frames.some((frame) => frame.event === 'invalidate')).toBe(false);
+    await expectError(
+      await request(`/boards/${fixture.id}/threads`, 'viewer'),
+      HttpStatus.UNAUTHORIZED,
+      ERROR_CODES.UNAUTHENTICATED,
+    );
   });
 
   it('publishes all seven discussion routes with exact shared schemas, DELETE bodies and statuses', async () => {

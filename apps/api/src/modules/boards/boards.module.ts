@@ -2,7 +2,11 @@ import { Module, type DynamicModule } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type { ApiConfig } from '../../platform/config/index.js';
 import { BoardAuthorityModule } from './board-authority.module.js';
-import { BoardPermissionService } from './application/index.js';
+import {
+  BoardPermissionService,
+  BOARD_RESOURCE_NOTIFICATION,
+  type BoardResourceNotification,
+} from './application/index.js';
 import {
   BOARD_ACCESS_NOTIFICATION,
   type BoardAccessNotification,
@@ -33,15 +37,22 @@ export class BoardsModule {
       providers: [
         {
           provide: DiscussionService,
-          inject: [DataSource, BoardPermissionService, CommittedAnchorReader],
+          inject: [
+            DataSource,
+            BoardPermissionService,
+            CommittedAnchorReader,
+            BOARD_RESOURCE_NOTIFICATION,
+          ],
           useFactory: (
             dataSource: DataSource,
             permissions: BoardPermissionService,
             anchors: CommittedAnchorReader,
+            notify: BoardResourceNotification,
           ) =>
             new DiscussionService(
               new PostgresDiscussionPersistence(dataSource, anchors),
               permissions,
+              notify,
             ),
         },
         {
@@ -51,17 +62,20 @@ export class BoardsModule {
             BoardPermissionService,
             BOARD_ACCESS_NOTIFICATION,
             ValidationWorkerPool,
+            BOARD_RESOURCE_NOTIFICATION,
           ],
           useFactory: (
             dataSource: DataSource,
             permissions: BoardPermissionService,
             notify: BoardAccessNotification,
             workers: ValidationWorkerPool,
+            resourcesChanged: BoardResourceNotification,
           ) =>
             new BoardService(
               new PostgresBoardPersistence(dataSource, workers),
               permissions,
               notify,
+              resourcesChanged,
             ),
         },
         {

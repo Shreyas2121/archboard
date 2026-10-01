@@ -45,6 +45,7 @@ import {
   BrowserWriterSession,
   LOCAL_DEMO_USER_KEY,
   OrderedSyncClient,
+  ResourceRefreshEvents,
   SYNC_PHASES,
   WRITER_SESSION_PHASES,
   type SyncStatus,
@@ -94,11 +95,18 @@ export interface EditorSessionOptions {
 }
 
 export class EditorSession {
+  public readonly resourceEvents = new ResourceRefreshEvents();
+  public readonly resourceScope: Readonly<{
+    deploymentOrigin: string;
+    accountId: string;
+    boardId: string;
+  }> | null;
   private readonly board: EditorSessionOptions['board'];
   private readonly storageNamespace: BoardStorageNamespace;
   private readonly writerSession: BrowserWriterSession;
   private syncClient: OrderedSyncClient | null = null;
   private unsubscribeSync: (() => void) | null = null;
+  private unsubscribeResources: (() => void) | null = null;
   private boardRole: BoardRole | null = null;
   private cachedRole: BoardRole | null = null;
   private cachedArchived = false;
@@ -127,6 +135,14 @@ export class EditorSession {
   private projectionGeneration = -1;
 
   public constructor(options: EditorSessionOptions) {
+    this.resourceScope =
+      options.board === undefined
+        ? null
+        : {
+            deploymentOrigin: options.deploymentOrigin,
+            accountId: options.board.userId,
+            boardId: options.board.boardId,
+          };
     this.board = options.board;
     this.storageNamespace = {
       deploymentOrigin: options.deploymentOrigin,
@@ -465,6 +481,8 @@ export class EditorSession {
       this.updateStoppedSync = false;
       this.unsubscribeSync?.();
       this.unsubscribeSync = null;
+      this.unsubscribeResources?.();
+      this.unsubscribeResources = null;
       this.syncClient = null;
       const binding = this.writerSession.getWritableBinding();
       if (binding !== null) {
@@ -576,6 +594,9 @@ export class EditorSession {
       }
       this.refresh();
     });
+    this.unsubscribeResources = this.syncClient.resourceEvents.subscribe((event) =>
+      this.resourceEvents.emit(event),
+    );
     this.refresh();
   }
 
@@ -648,6 +669,7 @@ export class EditorSession {
       },
       () => {
         this.unsubscribeSync?.();
+        this.unsubscribeResources?.();
       },
       () => {
         this.syncClient?.stop();
@@ -668,6 +690,7 @@ export class EditorSession {
       }
     }
     this.unsubscribeSync = null;
+    this.unsubscribeResources = null;
     this.syncClient = null;
     this.unsubscribeWriter = null;
     this.undoManager = null;

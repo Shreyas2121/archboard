@@ -30,6 +30,8 @@ import {
   parseClientFrame,
   serverMessageSchema,
   type ErrorCode,
+  type BoardRole,
+  type InvalidateMessage,
 } from '@archboard/contracts';
 import { Inject } from '@nestjs/common';
 import { WebSocketGateway, WebSocketServer as NestWebSocketServer } from '@nestjs/websockets';
@@ -39,7 +41,10 @@ import type { RawData, WebSocketServer } from 'ws';
 import { fromNodeHeaders } from 'better-auth/node';
 import * as Y from 'yjs';
 
-import { BoardPermissionService } from '../../../boards/application/index.js';
+import {
+  BoardPermissionService,
+  BoardAuthorityTransaction,
+} from '../../../boards/application/index.js';
 import { AUTH_SESSION_LOOKUP, type AuthSessionLookup } from '../../../auth/application/index.js';
 import { CollaborationUpdateService } from '../../application/collaboration-update-service.js';
 import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
@@ -106,6 +111,8 @@ interface ConnectionState extends AuthorizedBoardSocket {
   reservation?: RoomReservation;
   unsubscribe?: () => void;
   deliverUpdate?: (update: { seq: string; updateBase64: string }) => void;
+  lastRole?: BoardRole;
+  lastArchived?: boolean;
 }
 
 // The adapter creates a noServer ws instance; the authenticated upgrade broker matches dynamic IDs.
@@ -124,6 +131,8 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     @Inject(BoardPermissionService) private readonly permissions: BoardPermissionService,
     @Inject(AUTH_SESSION_LOOKUP) private readonly sessions: AuthSessionLookup,
     @Inject(CollaborationUpdateService) private readonly updates: CollaborationUpdateService,
+    @Inject(BoardAuthorityTransaction)
+    private readonly authorityTransactions: BoardAuthorityTransaction,
   ) {}
 
   public acceptUpgrade(
@@ -215,36 +224,62 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     return this.track(this.refreshAccess(boardId, userId));
   }
 
-  private async refreshAccess(boardId: string, userId?: string): Promise<void> {
+  public resourcesChanged(
+    boardId: string,
+    resources: readonly InvalidateMessage['data']['resource'][],
+  ): Promise<void> {
+    return this.track(this.refreshAccess(boardId, undefined, resources));
+  }
+
+  private async refreshAccess(
+    boardId: string,
+    userId?: string,
+    resources?: readonly InvalidateMessage['data']['resource'][],
+  ): Promise<void> {
     const affected = [...this.connections].filter(
       ([, state]) => state.boardId === boardId && (userId === undefined || state.userId === userId),
     );
     if (affected.length === 0) return;
     try {
       await this.rooms.runIfActive(boardId, async () => {
-        for (const [websocket, state] of affected) {
-          if (!this.isOpen(websocket, state)) continue;
-          const decision = await this.permissions.read(boardId, state.userId);
-          if (!this.isOpen(websocket, state)) continue;
-          if (!decision.allowed) {
-            reportCollaborationMetric('collaboration.access_reject', { count: 1 });
-            this.send(websocket, {
-              event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
-              data: { role: null, archived: false },
-            });
-            websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
-            this.handleDisconnect(websocket);
-          } else {
-            if (!state.ready) {
-              state.accessChangedWhileJoining = true;
-              continue;
+        await this.authorityTransactions.run(async (transaction) => {
+          for (const [websocket, state] of affected) {
+            if (!this.isOpen(websocket, state)) continue;
+            // Hold the same board lock through protected fanout: removal cannot commit between
+            // authority lookup and delivery. Session lookup is bounded by the existing deadline.
+            const decision = await this.permissions.readLocked(transaction, boardId, state.userId);
+            if (!(await this.revalidateSession(websocket, state))) continue;
+            if (!this.isOpen(websocket, state)) continue;
+            if (!decision.allowed) {
+              reportCollaborationMetric('collaboration.access_reject', { count: 1 });
+              this.send(websocket, {
+                event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
+                data: { role: null, archived: false },
+              });
+              websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
+              this.handleDisconnect(websocket);
+            } else {
+              if (!state.ready) {
+                state.accessChangedWhileJoining = true;
+                continue;
+              }
+              if (
+                resources === undefined ||
+                state.lastRole !== decision.role ||
+                state.lastArchived !== (decision.board.archivedAt !== null)
+              )
+                this.send(websocket, {
+                  event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
+                  data: { role: decision.role, archived: decision.board.archivedAt !== null },
+                });
+              state.lastRole = decision.role;
+              state.lastArchived = decision.board.archivedAt !== null;
+              for (const resource of new Set(resources ?? [])) {
+                this.send(websocket, { event: SERVER_EVENT_NAMES.INVALIDATE, data: { resource } });
+              }
             }
-            this.send(websocket, {
-              event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
-              data: { role: decision.role, archived: decision.board.archivedAt !== null },
-            });
           }
-        }
+        });
       });
     } catch {
       // A failed authority refresh must fail closed without changing the committed REST result.
@@ -442,10 +477,32 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         }
         const deliverUpdate = (update: { seq: string; updateBase64: string }) => {
           if (!this.isOpen(websocket, state)) return;
-          this.send(websocket, {
-            event: SERVER_EVENT_NAMES.UPDATE,
-            data: update,
-          });
+          // Queue delivery separately from installation. A REST access change may have committed
+          // while the graph transaction was finishing; recheck before releasing protected bytes.
+          void this.track(
+            this.rooms
+              .runIfActive(state.boardId, async () => {
+                await this.authorityTransactions.run(async (transaction) => {
+                  const decision = await this.permissions.readLocked(
+                    transaction,
+                    state.boardId,
+                    state.userId,
+                  );
+                  if (!(await this.revalidateSession(websocket, state))) return;
+                  if (!decision.allowed) {
+                    this.send(websocket, {
+                      event: SERVER_EVENT_NAMES.ACCESS_CHANGED,
+                      data: { role: null, archived: false },
+                    });
+                    websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
+                    this.handleDisconnect(websocket);
+                    return;
+                  }
+                  this.send(websocket, { event: SERVER_EVENT_NAMES.UPDATE, data: update });
+                });
+              })
+              .catch(() => this.terminate(websocket)),
+          );
         };
         state.deliverUpdate = deliverUpdate;
         const subscription = reservation.room.subscribe(deliverUpdate, () =>
@@ -485,6 +542,8 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
                   return;
                 }
                 state.ready = true;
+                state.lastRole = current.role;
+                state.lastArchived = current.board.archivedAt !== null;
                 reportCollaborationMetric('collaboration.connections', {
                   activeSockets: this.connections.size,
                   activeRooms: this.rooms.activeRoomCount,

@@ -8,3 +8,4 @@ export {
   type BoardPermissionTransaction,
   type EffectiveBoardRole,
 } from './board-permissions.js';
+export { BoardAuthorityTransaction } from './board-authority-transaction.js';

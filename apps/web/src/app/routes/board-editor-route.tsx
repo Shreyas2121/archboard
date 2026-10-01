@@ -14,6 +14,7 @@ import { useEditorSession, type EditorSession } from '@/features/editor/applicat
 import { serverUnavailable } from '@/platform/api';
 import { useBoardEditorLoader } from '@/app/editor/use-board-editor-loader';
 import type { BoardLoadStatus } from '@/app/editor/board-editor-loader';
+import { useBoardResourceRefresh } from '@/features/boards/use-board-resource-refresh';
 
 interface SessionEditorProps {
   readonly session: EditorSession;
@@ -23,6 +24,16 @@ interface SessionEditorProps {
 
 function SessionEditor({ session, boardTitle, narrowScreen }: SessionEditorProps) {
   const snapshot = useEditorSession(session);
+  const currentUser = useCurrentUser();
+  const { boardId } = useParams({ from: '/boards/$boardId' });
+  const resourceAccount =
+    currentUser.isSuccess &&
+    !currentUser.isError &&
+    session.resourceScope?.accountId === currentUser.data?.id &&
+    session.resourceScope?.boardId === boardId
+      ? (currentUser.data?.id ?? null)
+      : null;
+  useBoardResourceRefresh(session.resourceEvents, resourceAccount, boardId);
   return (
     <EditorShell
       boardTitle={boardTitle}

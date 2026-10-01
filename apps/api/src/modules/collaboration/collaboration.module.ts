@@ -2,7 +2,11 @@ import { Module, type DynamicModule } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type { ApiConfig } from '../../platform/config/index.js';
 import { BoardAuthorityModule } from '../boards/board-authority.module.js';
-import { BoardPermissionService } from '../boards/application/index.js';
+import {
+  BoardPermissionService,
+  BOARD_RESOURCE_NOTIFICATION,
+  type BoardResource,
+} from '../boards/application/index.js';
 import { BOARD_ACCESS_NOTIFICATION } from '../boards/application/board-access-notification.js';
 import { CollaborationRoomRegistry } from './application/room-registry.js';
 import { CommittedAnchorReader } from './application/committed-anchor-reader.js';
@@ -39,6 +43,14 @@ export class CollaborationModule {
       module: CollaborationModule,
       imports: [auth, database, BoardAuthorityModule],
       providers: [
+        {
+          provide: BOARD_RESOURCE_NOTIFICATION,
+          inject: [CollaborationGateway],
+          useFactory:
+            (gateway: CollaborationGateway) =>
+            (boardId: string, resources: readonly BoardResource[]) =>
+              gateway.resourcesChanged(boardId, resources),
+        },
         { provide: WEBSOCKET_API_CONFIG, useValue: config },
         CollaborationGateway,
         CollaborationUpgradeService,
@@ -82,12 +94,19 @@ export class CollaborationModule {
         {
           provide: BOARD_ACCESS_NOTIFICATION,
           inject: [CollaborationGateway],
-          useFactory: (gateway: CollaborationGateway) => (boardId: string, userId?: string) =>
-            gateway.accessChanged(boardId, userId),
+          useFactory:
+            (gateway: CollaborationGateway) => async (boardId: string, userId?: string) => {
+              await gateway.accessChanged(boardId, userId);
+              await gateway.resourcesChanged(
+                boardId,
+                userId === undefined ? ['metadata'] : ['members', 'metadata'],
+              );
+            },
         },
       ],
       exports: [
         BOARD_ACCESS_NOTIFICATION,
+        BOARD_RESOURCE_NOTIFICATION,
         ValidationWorkerPool,
         CollaborationUpgradeService,
         CommittedAnchorReader,

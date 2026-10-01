@@ -16,6 +16,7 @@ import {
   type PatchBoard,
 } from '@archboard/contracts';
 import type { BoardAccessNotification } from './board-access-notification.js';
+import type { BoardResourceNotification } from './board-resource-notification.js';
 
 import {
   decideBoardPermission,
@@ -113,6 +114,7 @@ export class BoardService {
     private readonly persistence: BoardPersistence,
     private readonly permissions: BoardPermissionService,
     private readonly accessChanged: BoardAccessNotification = async () => undefined,
+    private readonly resourcesChanged: BoardResourceNotification = async () => undefined,
   ) {}
 
   public async create(
@@ -170,7 +172,8 @@ export class BoardService {
     boardId: string,
     input: PatchBoard,
   ): Promise<BoardDetail> {
-    return this.persistence.run(async (scope) => {
+    let changed = false;
+    const result = await this.persistence.run(async (scope) => {
       const decision = await this.permissions.editMetadata(
         scope.permissionTransaction,
         boardId,
@@ -191,10 +194,19 @@ export class BoardService {
       if (title === current.title && description === current.description)
         return detail(current, decision.role);
       await scope.updateMetadata(boardId, title, description);
+      changed = true;
       const updated = await scope.load(boardId, actorUserId);
       if (!updated) throw new Error('Updated board disappeared inside its transaction.');
       return detail(updated, decision.role);
     });
+    if (changed) {
+      try {
+        await this.resourcesChanged(boardId, ['metadata']);
+      } catch {
+        /* Best-effort committed hint. */
+      }
+    }
+    return result;
   }
 
   public async archive(
@@ -219,6 +231,7 @@ export class BoardService {
     input: BoardVersionRequest,
     archived: boolean,
   ): Promise<BoardDetail> {
+    let changed = false;
     const result = await this.persistence.run(async (scope) => {
       const activeOwnedCount = archived ? undefined : await scope.lockOwnerAndCount(actorUserId);
       const decision = await this.permissions.manageLifecycle(
@@ -239,11 +252,12 @@ export class BoardService {
       if (!archived && activeOwnedCount! >= MAX_ACTIVE_OWNED_BOARDS)
         throw new BoardServiceError(ERROR_CODES.RATE_LIMITED, 'Active board limit reached.');
       await scope.setArchived(boardId, archived);
-      const changed = await scope.load(boardId, actorUserId);
-      if (!changed) throw new Error('Updated board disappeared inside its transaction.');
-      return detail(changed, decision.role);
+      changed = true;
+      const updated = await scope.load(boardId, actorUserId);
+      if (!updated) throw new Error('Updated board disappeared inside its transaction.');
+      return detail(updated, decision.role);
     });
-    await this.accessChanged(boardId);
+    if (changed) await this.accessChanged(boardId);
     return result;
   }
 
@@ -297,6 +311,7 @@ export class BoardService {
     targetUserId: string,
     input: ChangeMemberRole,
   ): Promise<BoardMember> {
+    let membershipChanged = false;
     const result = await this.persistence.run(async (scope) => {
       const decision = await this.permissions.manageAccess(
         scope.permissionTransaction,
@@ -311,11 +326,12 @@ export class BoardService {
       if (!member) throw new BoardServiceError(ERROR_CODES.NOT_FOUND, 'Board member not found.');
       if (member.role === input.role) return member;
       await scope.setMemberRole(boardId, targetUserId, input.role);
+      membershipChanged = true;
       const changed = await scope.getMember(boardId, targetUserId);
       if (!changed) throw new Error('Updated member disappeared inside its transaction.');
       return changed;
     });
-    await this.accessChanged(boardId, targetUserId);
+    if (membershipChanged) await this.accessChanged(boardId, targetUserId);
     return result;
   }
 
@@ -324,6 +340,7 @@ export class BoardService {
     boardId: string,
     targetUserId: string,
   ): Promise<void> {
+    let changed = false;
     await this.persistence.run(async (scope) => {
       const decision =
         targetUserId === actorUserId
@@ -333,8 +350,11 @@ export class BoardService {
         throw new BoardServiceError(decision.code, 'Board member removal unavailable.');
       if (targetUserId === decision.board.ownerUserId)
         throw new BoardServiceError(ERROR_CODES.FORBIDDEN, 'The board owner cannot be removed.');
-      await scope.removeMember(boardId, targetUserId);
+      if (await scope.getMember(boardId, targetUserId)) {
+        await scope.removeMember(boardId, targetUserId);
+        changed = true;
+      }
     });
-    await this.accessChanged(boardId, targetUserId);
+    if (changed) await this.accessChanged(boardId, targetUserId);
   }
 }

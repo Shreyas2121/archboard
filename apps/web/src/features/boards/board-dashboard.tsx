@@ -14,23 +14,22 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ApiClientError, serverUnavailable } from '@/platform/api';
-import {
-  BOARD_QUERY_KEY,
-  BOARD_SEARCH_DELAY_MS,
-  listBoards,
-  readBoard,
-  type BoardAction,
-} from './board-api';
+import { BOARD_SEARCH_DELAY_MS, listBoards, readBoard, type BoardAction } from './board-api';
 import { BoardDialog } from './board-dialog';
 import { CachedBoardDashboard } from './cached-board-dashboard';
 import { BoardEntry } from './board-entry';
 import { BoardActionsMenu } from './board-actions-menu';
 import { BoardListSkeleton } from './board-list-skeleton';
+import { useCurrentUser } from '@/features/auth';
+import { boardListQueryKey } from './board-resource-refresh';
 
 type Selection = { action: BoardAction; board: BoardSummary | null; intent: string };
 
 export function BoardDashboard() {
   const queryClient = useQueryClient();
+  const currentUser = useCurrentUser();
+  const accountId = currentUser.data?.id;
+  const listQueryKey = boardListQueryKey(window.location.origin, accountId ?? '');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [archived, setArchived] = useState(false);
@@ -42,7 +41,8 @@ export function BoardDashboard() {
     return () => window.clearTimeout(timer);
   }, [searchInput]);
   const boards = useInfiniteQuery({
-    queryKey: [...BOARD_QUERY_KEY, { search, archived }],
+    queryKey: [...listQueryKey, { search, archived }],
+    enabled: accountId !== undefined && !currentUser.isError,
     initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }) => listBoards(search, archived, pageParam, signal),
     getNextPageParam: (page) => page.nextCursor,
@@ -67,7 +67,7 @@ export function BoardDashboard() {
     setAnnouncement(
       `${title}: ${action === 'create' ? 'created' : action === 'edit' ? 'updated' : action === 'duplicate' ? 'duplicated' : action === 'archive' ? 'archived' : 'restored'}.`,
     );
-    void queryClient.invalidateQueries({ queryKey: BOARD_QUERY_KEY });
+    void queryClient.invalidateQueries({ queryKey: listQueryKey });
   }
   const failure = boards.error;
   const expired = failure instanceof ApiClientError && failure.kind === 'unauthenticated';
@@ -105,7 +105,7 @@ export function BoardDashboard() {
                 value={searchInput}
                 onChange={(event) => {
                   setSearchInput(event.target.value);
-                  void queryClient.cancelQueries({ queryKey: BOARD_QUERY_KEY });
+                  void queryClient.cancelQueries({ queryKey: listQueryKey });
                 }}
               />
             </div>
@@ -116,7 +116,7 @@ export function BoardDashboard() {
               value={archived ? 'archived' : 'active'}
               onValueChange={(value) => {
                 setArchived(value === 'archived');
-                void queryClient.cancelQueries({ queryKey: BOARD_QUERY_KEY });
+                void queryClient.cancelQueries({ queryKey: listQueryKey });
               }}
             >
               <SelectTrigger id="board-filter" className="w-full sm:w-40">
@@ -224,7 +224,7 @@ export function BoardDashboard() {
           onConflict={async (id) => {
             const latest = await readBoard(id);
             setSelection((current) => (current ? { ...current, board: latest } : null));
-            await queryClient.invalidateQueries({ queryKey: BOARD_QUERY_KEY });
+            await queryClient.invalidateQueries({ queryKey: listQueryKey });
             return latest;
           }}
           returnFocus={returnFocus.current}

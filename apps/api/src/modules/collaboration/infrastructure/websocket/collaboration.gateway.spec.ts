@@ -104,6 +104,7 @@ function harness(load?: () => Promise<LoadedRoom>) {
     permissions,
     { lookup },
     {} as CollaborationUpdateService,
+    { run: async (work) => work({ isTransactionActive: true }) },
   );
   const sockets: TestSocket[] = [];
   function connect() {
@@ -145,6 +146,7 @@ function harness(load?: () => Promise<LoadedRoom>) {
     await reservation.room.run(async () => {
       reservation.room.publishCommittedUpdate({ seq, updateBase64: 'AQ==' });
     });
+    await gateway.drain();
     reservation.release();
   }
   return {

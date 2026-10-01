@@ -15,6 +15,7 @@ import {
 
 import { LOCAL_PERSISTENCE_PHASES, type LocalPersistenceAdapter } from '../persistence/index.js';
 import { TransientPresence } from './transient-presence.js';
+import { ResourceRefreshEvents } from './resource-refresh-events.js';
 
 const INITIAL_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 30_000;
@@ -78,6 +79,7 @@ function isWritableRole(role: BoardRole | null): boolean {
 }
 
 export class OrderedSyncClient {
+  public readonly resourceEvents = new ResourceRefreshEvents();
   public readonly presence = new TransientPresence((message) => {
     if (!this.handshakeComplete || this.socket?.readyState !== WebSocket.OPEN || this.stopped)
       return false;
@@ -304,6 +306,7 @@ export class OrderedSyncClient {
       this.retryDelay = INITIAL_RETRY_MS;
       this.publish();
       await this.drain();
+      this.resourceEvents.emit({ boardId: this.options.boardId, kind: 'ready' });
       return;
     }
     if (!this.handshakeComplete) {
@@ -313,6 +316,14 @@ export class OrderedSyncClient {
     }
     if (message.event === SERVER_EVENT_NAMES.PRESENCE) {
       this.presence.receive(message.data);
+      return;
+    }
+    if (message.event === SERVER_EVENT_NAMES.INVALIDATE) {
+      this.resourceEvents.emit({
+        boardId: this.options.boardId,
+        kind: 'invalidate',
+        resource: message.data.resource,
+      });
       return;
     }
     if (message.event === SERVER_EVENT_NAMES.UPDATE) {
@@ -350,6 +361,11 @@ export class OrderedSyncClient {
       this.denialCode = null;
       if (!this.accessDenied) this.inFlightId = null;
       this.publish();
+      this.resourceEvents.emit({
+        boardId: this.options.boardId,
+        kind: 'access',
+        role: message.data.role,
+      });
       if (!this.accessDenied) await this.drain();
     }
   }
@@ -385,6 +401,15 @@ export class OrderedSyncClient {
       this.inFlightId = null;
       if (error.code === ERROR_CODES.BOARD_ARCHIVED) this.archived = true;
       this.accessChanged = true;
+      this.resourceEvents.emit({
+        boardId: this.options.boardId,
+        kind: 'access',
+        role:
+          error.code === ERROR_CODES.UNAUTHENTICATED || error.code === ERROR_CODES.NOT_FOUND
+            ? null
+            : this.role,
+        code: error.code,
+      });
     } else {
       this.recoveryCode = error.code;
     }

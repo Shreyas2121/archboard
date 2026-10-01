@@ -26,6 +26,7 @@ import type {
   BoardPermissionTransaction,
 } from './permissions/index.js';
 import { BoardServiceError } from './board-service.js';
+import type { BoardResourceNotification } from './board-resource-notification.js';
 
 export interface DiscussionCursor {
   readonly timestamp: string;
@@ -85,6 +86,7 @@ export class DiscussionService {
   public constructor(
     private readonly persistence: DiscussionPersistence,
     private readonly permissions: BoardPermissionService,
+    private readonly resourcesChanged: BoardResourceNotification = async () => undefined,
   ) {}
 
   public listThreads(
@@ -141,7 +143,7 @@ export class DiscussionService {
     key: string,
     request: CreateThread,
   ): Promise<{ body: ThreadCreateResult; replayed: boolean }> {
-    return this.persistence.idempotent(
+    const result = await this.persistence.idempotent(
       actor.userId,
       `discussion.thread.create:${boardId}`,
       key,
@@ -158,6 +160,8 @@ export class DiscussionService {
         return { thread, comment };
       },
     );
+    if (!result.replayed) await this.notify(boardId);
+    return result;
   }
 
   public async createComment(
@@ -167,7 +171,7 @@ export class DiscussionService {
     key: string,
     request: CreateComment,
   ): Promise<{ body: Comment; replayed: boolean }> {
-    return this.persistence.idempotent(
+    const result = await this.persistence.idempotent(
       actor.userId,
       `discussion.comment.create:${boardId}:${threadId}`,
       key,
@@ -184,15 +188,18 @@ export class DiscussionService {
         return scope.insertComment(threadId, actor.userId, request.body);
       },
     );
+    if (!result.replayed) await this.notify(boardId);
+    return result;
   }
 
-  public editComment(
+  public async editComment(
     actor: DiscussionActor,
     boardId: string,
     commentId: string,
     request: EditComment,
   ): Promise<Comment> {
-    return this.persistence.run(async (scope) => {
+    let changed = false;
+    const result = await this.persistence.run(async (scope) => {
       const current = await this.moderatableComment(scope, actor, boardId, commentId);
       this.requireVersion(current.version, request.expectedVersion);
       if (current.deletedAt !== null) this.versionConflict('Deleted messages cannot be edited.');
@@ -200,33 +207,41 @@ export class DiscussionService {
       await actor.requireCurrentSession();
       if (!(await scope.editComment(commentId, request.expectedVersion, request.body)))
         this.versionConflict();
+      changed = true;
       return this.requireComment(scope, boardId, commentId);
     });
+    if (changed) await this.notify(boardId);
+    return result;
   }
 
-  public deleteComment(
+  public async deleteComment(
     actor: DiscussionActor,
     boardId: string,
     commentId: string,
     request: DeleteComment,
   ): Promise<Comment> {
-    return this.persistence.run(async (scope) => {
+    let changed = false;
+    const result = await this.persistence.run(async (scope) => {
       const current = await this.moderatableComment(scope, actor, boardId, commentId);
       this.requireVersion(current.version, request.expectedVersion);
       if (current.deletedAt !== null) return current;
       await actor.requireCurrentSession();
       if (!(await scope.deleteComment(commentId, request.expectedVersion))) this.versionConflict();
+      changed = true;
       return this.requireComment(scope, boardId, commentId);
     });
+    if (changed) await this.notify(boardId);
+    return result;
   }
 
-  public resolveThread(
+  public async resolveThread(
     actor: DiscussionActor,
     boardId: string,
     threadId: string,
     request: ResolveThread,
   ): Promise<Thread> {
-    return this.persistence.run(async (scope) => {
+    let changed = false;
+    const result = await this.persistence.run(async (scope) => {
       await this.authorize(scope, actor, boardId, true);
       await this.requireThread(scope, boardId, threadId);
       const current = await scope.summary(boardId, threadId);
@@ -235,6 +250,7 @@ export class DiscussionService {
         await actor.requireCurrentSession();
         if (!(await scope.resolveThread(boardId, threadId, actor.userId, request)))
           this.versionConflict();
+        changed = true;
       }
       const thread = await scope.summary(boardId, threadId);
       return {
@@ -248,6 +264,16 @@ export class DiscussionService {
         createdAt: thread.createdAt,
       };
     });
+    if (changed) await this.notify(boardId);
+    return result;
+  }
+
+  private async notify(boardId: string): Promise<void> {
+    try {
+      await this.resourcesChanged(boardId, ['comments']);
+    } catch {
+      /* A missed hint never reverses a committed response; reconnect refetches. */
+    }
   }
 
   private async moderatableComment(
