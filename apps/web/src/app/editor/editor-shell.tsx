@@ -62,6 +62,16 @@ import { EDITOR_VIEW_PHASES } from './editor-view-state';
 import { EditorDialogs } from './editor-dialogs';
 import { EditorInspector } from './editor-inspector';
 import { DiscussionPanel } from '@/features/editor/discussion/discussion-panel';
+import { StepsPanel } from '@/features/editor/presentation/steps-panel';
+import { useLocalPresentation } from '@/features/editor/presentation/use-local-presentation';
+import {
+  PresentationControls,
+  PresentationNotes,
+} from '@/features/editor/presentation/presentation-controls';
+import {
+  captureHighlights,
+  visibleWorldRect,
+} from '@/features/editor/presentation/presentation-model';
 import { EditorToolbar } from './editor-toolbar';
 import { editorSessionViewState } from './editor-status-policy';
 import { PALETTE_ITEMS } from './editor-palette-definitions';
@@ -128,6 +138,20 @@ export function EditorShell({
   );
   const projection = sessionSnapshot?.projection ?? null;
   const canvasReady = projection !== null;
+  const playback = useLocalPresentation(
+    session,
+    projection?.steps ?? [],
+    activeDialog !== null || storageOpen || serverReloadOpen || sharingOpen,
+    canvasContainer,
+  );
+  const captureStep = () => {
+    const container = canvasContainer.current;
+    if (container === null || projection === null) throw new Error('Wait for the canvas to load.');
+    return {
+      rect: visibleWorldRect(container.getBoundingClientRect(), reactFlow.getViewport()),
+      ...captureHighlights(projection, selection),
+    };
+  };
   const createConnection = useCallback(
     (endpoints: ConnectionEndpoints): string | null => {
       if (session === null || !viewState.editable) return 'Editing is not available in this view.';
@@ -307,8 +331,13 @@ export function EditorShell({
     [actions, session, viewState.editable, viewport],
   );
   const editorCommands = useEditorCommands({
-    shortcutsBlocked: activeDialog !== null || storageOpen || serverReloadOpen || sharingOpen,
-    editable: viewState.editable,
+    shortcutsBlocked:
+      playback.presenting ||
+      activeDialog !== null ||
+      storageOpen ||
+      serverReloadOpen ||
+      sharingOpen,
+    editable: viewState.editable && !playback.presenting,
     projection,
     selection,
     session,
@@ -399,25 +428,43 @@ export function EditorShell({
       className="grid h-full grid-rows-[3.5rem_minmax(0,1fr)_2.75rem] overflow-hidden bg-background"
       data-phase={viewState.phase}
     >
-      <EditorToolbar
-        sharing={sharing}
-        boardMode={boardMode}
-        boardTitle={boardTitle}
-        viewState={viewState}
-        editorCommands={editorCommands}
-        shortcutModifier={shortcutModifier}
-        canReset={canReset}
-        resetButtonRef={resetButtonRef}
-        storageButtonRef={storageButtonRef}
-        helpButtonRef={helpButtonRef}
-        actions={actions}
-        session={session}
-        projection={projection}
-        setStorageOpen={setStorageOpen}
-        downloadRecovery={downloadRecovery}
-        serverReloadPending={serverReloadPending}
-        setServerReloadOpen={setServerReloadOpen}
-      />
+      {playback.presenting && <PresentationControls playback={playback} />}
+      <div className={playback.presenting ? 'hidden' : 'contents'}>
+        <EditorToolbar
+          presentation={
+            <Button
+              id="present-local"
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!projection?.steps.length}
+              onClick={() => {
+                const first = playback.ordered[0];
+                if (first) playback.start(first.id);
+              }}
+            >
+              Present
+            </Button>
+          }
+          sharing={sharing}
+          boardMode={boardMode}
+          boardTitle={boardTitle}
+          viewState={viewState}
+          editorCommands={editorCommands}
+          shortcutModifier={shortcutModifier}
+          canReset={canReset}
+          resetButtonRef={resetButtonRef}
+          storageButtonRef={storageButtonRef}
+          helpButtonRef={helpButtonRef}
+          actions={actions}
+          session={session}
+          projection={projection}
+          setStorageOpen={setStorageOpen}
+          downloadRecovery={downloadRecovery}
+          serverReloadPending={serverReloadPending}
+          setServerReloadOpen={setServerReloadOpen}
+        />
+      </div>
 
       <div
         className={cn(
@@ -425,62 +472,65 @@ export function EditorShell({
           !paletteOpen && 'md:grid-cols-[3.5rem_minmax(0,1fr)_20rem]',
           !inspectorOpen && 'md:grid-cols-[14rem_minmax(0,1fr)_3.5rem]',
           !paletteOpen && !inspectorOpen && 'md:grid-cols-[3.5rem_minmax(0,1fr)_3.5rem]',
+          playback.presenting && '!grid-cols-1',
         )}
         data-palette={paletteOpen ? 'open' : 'closed'}
         data-inspector={inspectorOpen ? 'open' : 'closed'}
       >
-        <Collapsible
-          className="min-h-0 overflow-hidden border-r bg-surface-panel max-md:hidden"
-          open={paletteOpen}
-        >
-          <div
-            className={cn(
-              'flex h-14 items-center border-b px-3',
-              paletteOpen ? 'justify-between' : 'justify-center',
-            )}
+        {!playback.presenting && (
+          <Collapsible
+            className="min-h-0 overflow-hidden border-r bg-surface-panel max-md:hidden"
+            open={paletteOpen}
           >
-            {paletteOpen && <h2 className="text-sm font-semibold">Add to board</h2>}
-            <IconButton
-              label={paletteOpen ? 'Collapse palette' : 'Expand palette'}
-              variant="ghost"
-              onClick={actions.togglePalette}
+            <div
+              className={cn(
+                'flex h-14 items-center border-b px-3',
+                paletteOpen ? 'justify-between' : 'justify-center',
+              )}
             >
-              {paletteOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
-            </IconButton>
-          </div>
-          <CollapsibleContent className="h-[calc(100%-3.5rem)] overflow-y-auto p-3">
-            <p className="mb-3 text-xs leading-5 text-muted-foreground">
-              Choose a card or boundary to create it in the visible canvas.
-            </p>
-            <div className="grid gap-1">
-              {PALETTE_ITEMS.map((item) => (
-                <Button
-                  type="button"
-                  className="h-auto min-h-12 justify-start gap-3 px-2 py-2 text-left whitespace-normal"
-                  variant="ghost"
-                  disabled={!viewState.editable}
-                  key={item.label}
-                  onClick={() =>
-                    item.kind === 'boundary' ? createBoundary() : createCard(item.kind)
-                  }
-                >
-                  <item.icon aria-hidden="true" />
-                  <span className="grid gap-0.5">
-                    <strong className="text-sm leading-5 font-medium">{item.label}</strong>
-                    <small className="text-xs leading-4 font-normal text-muted-foreground">
-                      {item.description}
-                    </small>
-                  </span>
-                </Button>
-              ))}
+              {paletteOpen && <h2 className="text-sm font-semibold">Add to board</h2>}
+              <IconButton
+                label={paletteOpen ? 'Collapse palette' : 'Expand palette'}
+                variant="ghost"
+                onClick={actions.togglePalette}
+              >
+                {paletteOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
+              </IconButton>
             </div>
-            {creationError !== null && (
-              <p className="mt-3 text-xs text-destructive" role="alert">
-                {creationError}
+            <CollapsibleContent className="h-[calc(100%-3.5rem)] overflow-y-auto p-3">
+              <p className="mb-3 text-xs leading-5 text-muted-foreground">
+                Choose a card or boundary to create it in the visible canvas.
               </p>
-            )}
-          </CollapsibleContent>
-        </Collapsible>
+              <div className="grid gap-1">
+                {PALETTE_ITEMS.map((item) => (
+                  <Button
+                    type="button"
+                    className="h-auto min-h-12 justify-start gap-3 px-2 py-2 text-left whitespace-normal"
+                    variant="ghost"
+                    disabled={!viewState.editable}
+                    key={item.label}
+                    onClick={() =>
+                      item.kind === 'boundary' ? createBoundary() : createCard(item.kind)
+                    }
+                  >
+                    <item.icon aria-hidden="true" />
+                    <span className="grid gap-0.5">
+                      <strong className="text-sm leading-5 font-medium">{item.label}</strong>
+                      <small className="text-xs leading-4 font-normal text-muted-foreground">
+                        {item.description}
+                      </small>
+                    </span>
+                  </Button>
+                ))}
+              </div>
+              {creationError !== null && (
+                <p className="mt-3 text-xs text-destructive" role="alert">
+                  {creationError}
+                </p>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
+        )}
 
         <main
           className="relative flex min-h-0 min-w-0 flex-col overflow-hidden"
@@ -489,7 +539,8 @@ export function EditorShell({
           <h1 id="canvas-heading" className="sr-only">
             {boardMode ? `${boardTitle} architecture canvas` : 'Local demo architecture canvas'}
           </h1>
-          {hasNotices && (
+          {playback.presenting && <PresentationNotes playback={playback} />}
+          {!playback.presenting && hasNotices && (
             <div className="grid max-h-[40%] shrink-0 gap-2 overflow-y-auto border-b bg-surface-panel p-3">
               {showOfflineNotice && (
                 <aside
@@ -560,15 +611,22 @@ export function EditorShell({
           )}
           <div
             ref={canvasContainer}
-            className="relative grid min-h-0 w-full flex-1 place-items-center overflow-hidden bg-surface-canvas"
+            id="architecture-canvas"
+            tabIndex={-1}
+            className={cn(
+              'relative grid min-h-0 w-full flex-1 place-items-center overflow-hidden bg-surface-canvas',
+              playback.presenting && '[&_.react-flow__handle]:hidden',
+            )}
             aria-describedby={showStatePanel ? 'canvas-status-detail' : undefined}
           >
             {projection !== null && (
               <GraphCanvas
-                presence={session?.presence ?? null}
-                editable={viewState.editable}
+                presence={playback.presenting ? null : (session?.presence ?? null)}
+                presenting={playback.presenting}
+                presentationStep={playback.step}
+                editable={viewState.editable && !playback.presenting}
                 gridSnapEnabled={gridSnapEnabled}
-                minimapVisible={minimapVisible}
+                minimapVisible={minimapVisible && !playback.presenting}
                 onConnect={connectWithPointer}
                 onGeometryCommit={commitGeometry}
                 onReconnect={reconnectWithPointer}
@@ -627,7 +685,8 @@ export function EditorShell({
                 )}
               </section>
             )}
-            {!showStatePanel &&
+            {!playback.presenting &&
+              !showStatePanel &&
               canvasReady &&
               (!boardMode || sessionSnapshot?.hasLocalCopy) &&
               projection.nodes.length === 0 &&
@@ -646,32 +705,51 @@ export function EditorShell({
           </div>
         </main>
 
-        <EditorInspector
-          discussion={
-            boardMode && session?.resourceScope ? (
-              <DiscussionPanel
-                session={session}
-                projection={projection}
-                selection={selection}
-                canvas={canvasContainer}
-                viewport={viewport}
-                readOnly={narrowScreen}
-              />
-            ) : undefined
-          }
-          inspectorOpen={inspectorOpen}
-          actions={actions}
-          editorCommands={editorCommands}
-          viewState={viewState}
-          session={session}
-          projection={projection}
-          selection={selection}
-          setConnectionNotice={setConnectionNotice}
-          createConnection={createConnection}
-        />
+        <div className={playback.presenting ? 'hidden' : 'contents'}>
+          <EditorInspector
+            presentation={
+              session !== null && projection !== null ? (
+                <StepsPanel
+                  session={session}
+                  projection={projection}
+                  editable={viewState.editable}
+                  capture={captureStep}
+                  highlights={() => captureHighlights(projection, selection)}
+                  present={playback.start}
+                />
+              ) : undefined
+            }
+            discussion={
+              boardMode && session?.resourceScope ? (
+                <DiscussionPanel
+                  session={session}
+                  projection={projection}
+                  selection={selection}
+                  canvas={canvasContainer}
+                  viewport={viewport}
+                  readOnly={narrowScreen}
+                />
+              ) : undefined
+            }
+            inspectorOpen={inspectorOpen}
+            actions={actions}
+            editorCommands={editorCommands}
+            viewState={viewState}
+            session={session}
+            projection={projection}
+            selection={selection}
+            setConnectionNotice={setConnectionNotice}
+            createConnection={createConnection}
+          />
+        </div>
       </div>
 
-      <footer className="relative z-20 flex items-center justify-between border-t bg-background px-2 sm:px-3">
+      <footer
+        className={cn(
+          'relative z-20 flex items-center justify-between border-t bg-background px-2 sm:px-3',
+          playback.presenting && 'invisible',
+        )}
+      >
         <div className="flex items-center gap-0.5" aria-label="Canvas view controls">
           <IconButton
             label={canvasReady ? 'Zoom out' : 'Zoom out — unavailable while loading'}

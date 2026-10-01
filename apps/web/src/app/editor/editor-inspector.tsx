@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import type { EditorInspectorProps } from './editor-composition-types';
 import { EditorInspectorSection } from './editor-inspector-section';
 export function EditorInspector({
+  presentation,
   discussion,
   inspectorOpen,
   actions,
@@ -70,6 +71,7 @@ export function EditorInspector({
           <Tabs defaultValue="properties" className="w-full">
             <TabsList className="m-3" aria-label="Inspector">
               <TabsTrigger value="properties">Properties</TabsTrigger>
+              {presentation && <TabsTrigger value="steps">Steps</TabsTrigger>}
               {discussion && <TabsTrigger value="discussion">Discussion</TabsTrigger>}
             </TabsList>
             <TabsContent value="properties">
@@ -161,6 +163,7 @@ export function EditorInspector({
               )}
               <EditorActionsPanel actions={editorCommands} disabled={!viewState.editable} />
             </TabsContent>
+            {presentation && <TabsContent value="steps">{presentation}</TabsContent>}
             {discussion && (
               <TabsContent value="discussion" forceMount className="data-[state=inactive]:hidden">
                 {discussion}

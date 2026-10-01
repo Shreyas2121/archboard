@@ -132,6 +132,65 @@ beforeEach(() => {
 });
 
 describe('editor text binding availability', () => {
+  it('routes step commands through writer authority and preserves graph bytes when authoring is denied', async () => {
+    const state = harness();
+    try {
+      await state.session.open();
+      await state.session.setBoardAccess(BOARD_ROLES.EDITOR, false);
+      const id = crypto.randomUUID();
+      state.session.createStep({
+        id,
+        title: 'Walkthrough',
+        notes: '',
+        order: 0,
+        rect: { x: 0, y: 0, width: 1, height: 1 },
+        nodeIds: [state.target.id],
+        edgeIds: [],
+      });
+      state.session.editStep(id, { notes: 'Local notes' });
+      state.session.reorderSteps([{ id, order: 1 }]);
+      expect(projectGraphDocument(state.initial).steps[0]).toMatchObject({
+        id,
+        notes: 'Local notes',
+        order: 1,
+      });
+      const mutations = [
+        () =>
+          state.session.createStep({
+            id: crypto.randomUUID(),
+            title: 'Denied',
+            notes: '',
+            order: 0,
+            rect: { x: 0, y: 0, width: 1, height: 1 },
+            nodeIds: [],
+            edgeIds: [],
+          }),
+        () => state.session.editStep(id, { notes: 'Denied' }),
+        () => state.session.reorderSteps([{ id, order: 0 }]),
+        () => state.session.deleteStep(id),
+      ];
+      for (const access of [
+        { role: BOARD_ROLES.VIEWER, archived: false },
+        { role: BOARD_ROLES.EDITOR, archived: true },
+      ]) {
+        await state.session.setBoardAccess(access.role, access.archived);
+        const before = Y.encodeStateAsUpdate(state.initial);
+        for (const mutate of mutations) expect(mutate).toThrow();
+        expect(Y.encodeStateAsUpdate(state.initial)).toEqual(before);
+      }
+      await state.session.setBoardAccess(BOARD_ROLES.EDITOR, false);
+      state.setWritable(false);
+      const before = Y.encodeStateAsUpdate(state.initial);
+      for (const mutate of mutations) expect(mutate).toThrow();
+      expect(Y.encodeStateAsUpdate(state.initial)).toEqual(before);
+      state.setWritable(true);
+      state.session.deleteStep(id);
+      expect(projectGraphDocument(state.initial).steps).toEqual([]);
+    } finally {
+      await state.session.close();
+      state.initial.destroy();
+    }
+  });
   it('socket removal denies protected access without changing retained graph bytes', async () => {
     const state = harness();
     try {

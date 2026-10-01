@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { GraphProjection, Rect, PresenceState } from '@archboard/contracts';
+import type { GraphProjection, Rect, PresenceState, PresentationStep } from '@archboard/contracts';
 import type { TransientPresence } from '@archboard/sync-client';
 import type { GeometryBatch } from '@archboard/document-model';
 import {
@@ -43,12 +43,15 @@ import {
 } from './projection-adapter';
 import { CanvasGestures, reconcileCanvasNodes } from './canvas-gestures';
 import { CanvasRenderCache } from './canvas-render-cache';
+import { PRESENTATION_MIN_ZOOM } from '@/features/editor/presentation/presentation-model';
 
 const NODE_TYPES = { 'graph-card': CardNode, 'graph-boundary': BoundaryNode } as const;
 const SNAP_GRID: [number, number] = [CANVAS_GRID_SIZE, CANVAS_GRID_SIZE];
 type EditorCanvasNode = CanvasNode | BoundaryCanvasNode;
 
 interface GraphCanvasProps {
+  readonly presenting?: boolean;
+  readonly presentationStep?: PresentationStep | null;
   readonly presence?: TransientPresence | null;
   readonly projection: GraphProjection;
   readonly minimapVisible: boolean;
@@ -61,6 +64,8 @@ interface GraphCanvasProps {
 }
 
 export function GraphCanvas({
+  presenting = false,
+  presentationStep = null,
   presence = null,
   projection,
   minimapVisible,
@@ -105,20 +110,30 @@ export function GraphCanvas({
   }, []);
   const selectedNodeIds = useMemo(
     () =>
-      new Set(selection.filter(({ kind }) => kind === SELECTION_KINDS.NODE).map(({ id }) => id)),
-    [selection],
+      new Set(
+        presenting
+          ? (presentationStep?.nodeIds ?? [])
+          : selection.filter(({ kind }) => kind === SELECTION_KINDS.NODE).map(({ id }) => id),
+      ),
+    [selection, presenting, presentationStep],
   );
   const selectedEdgeIds = useMemo(
     () =>
-      new Set(selection.filter(({ kind }) => kind === SELECTION_KINDS.EDGE).map(({ id }) => id)),
-    [selection],
+      new Set(
+        presenting
+          ? (presentationStep?.edgeIds ?? [])
+          : selection.filter(({ kind }) => kind === SELECTION_KINDS.EDGE).map(({ id }) => id),
+      ),
+    [selection, presenting, presentationStep],
   );
   const selectedBoundaryIds = useMemo(
     () =>
       new Set(
-        selection.filter(({ kind }) => kind === SELECTION_KINDS.BOUNDARY).map(({ id }) => id),
+        presenting
+          ? []
+          : selection.filter(({ kind }) => kind === SELECTION_KINDS.BOUNDARY).map(({ id }) => id),
       ),
-    [selection],
+    [selection, presenting],
   );
   const finishCardResize = useCallback(
     (id: string, rect: Rect): void => {
@@ -396,9 +411,9 @@ export function GraphCanvas({
       edges={edges}
       edgesReconnectable={editable}
       elevateEdgesOnSelect
-      elementsSelectable
+      elementsSelectable={!presenting}
       maxZoom={CANVAS_MAX_ZOOM}
-      minZoom={CANVAS_MIN_ZOOM}
+      minZoom={presenting ? PRESENTATION_MIN_ZOOM : CANVAS_MIN_ZOOM}
       multiSelectionKeyCode="Shift"
       nodes={nodes}
       nodesConnectable={editable}
@@ -413,19 +428,23 @@ export function GraphCanvas({
         if (cursor !== undefined) publishPresence({ cursor });
       }}
       onMouseLeave={() => publishPresence({ cursor: null })}
-      onPaneClick={actions.clearSelection}
-      onNodeClick={(event, node) =>
-        selectObject(
-          {
-            id: node.id,
-            kind: node.type === 'graph-boundary' ? SELECTION_KINDS.BOUNDARY : SELECTION_KINDS.NODE,
-          },
-          event.shiftKey,
-        )
-      }
-      onEdgeClick={(event, edge) =>
-        selectObject({ id: edge.id, kind: SELECTION_KINDS.EDGE }, event.shiftKey)
-      }
+      onPaneClick={() => {
+        if (!presenting) actions.clearSelection();
+      }}
+      onNodeClick={(event, node) => {
+        if (!presenting)
+          selectObject(
+            {
+              id: node.id,
+              kind:
+                node.type === 'graph-boundary' ? SELECTION_KINDS.BOUNDARY : SELECTION_KINDS.NODE,
+            },
+            event.shiftKey,
+          );
+      }}
+      onEdgeClick={(event, edge) => {
+        if (!presenting) selectObject({ id: edge.id, kind: SELECTION_KINDS.EDGE }, event.shiftKey);
+      }}
       onNodeDragStart={(_event, _node, draggedNodes) => {
         if (editableRef.current) gestures.current.begin(draggedNodes.map(({ id }) => id));
       }}
@@ -443,21 +462,22 @@ export function GraphCanvas({
       }}
       onNodesChange={handleNodesChange}
       onReconnect={(edge, connection) => onReconnect(edge.id, connection)}
-      onSelectionEnd={() =>
-        actions.setSelection(
-          nodesRef.current
-            .filter(({ selected }) => selected)
-            .map(({ id, type }) => ({
-              id,
-              kind: type === 'graph-boundary' ? SELECTION_KINDS.BOUNDARY : SELECTION_KINDS.NODE,
-            })),
-        )
-      }
+      onSelectionEnd={() => {
+        if (!presenting)
+          actions.setSelection(
+            nodesRef.current
+              .filter(({ selected }) => selected)
+              .map(({ id, type }) => ({
+                id,
+                kind: type === 'graph-boundary' ? SELECTION_KINDS.BOUNDARY : SELECTION_KINDS.NODE,
+              })),
+          );
+      }}
       onViewportChange={onViewportChange}
       panActivationKeyCode="Space"
-      panOnDrag={[1]}
+      panOnDrag={presenting ? true : [1]}
       selectionMode={SelectionMode.Partial}
-      selectionOnDrag
+      selectionOnDrag={!presenting}
       snapGrid={SNAP_GRID}
       snapToGrid={gridSnapEnabled && !altBypass}
       zoomActivationKeyCode="Control"

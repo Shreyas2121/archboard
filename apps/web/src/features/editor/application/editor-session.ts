@@ -10,6 +10,7 @@ import {
   type GraphEdge,
   type GraphNode,
   type GraphProjection,
+  type PresentationStep,
 } from '@archboard/contracts';
 import {
   accessGraphText,
@@ -20,6 +21,9 @@ import {
   createEdge,
   createNode,
   createPresentationStep,
+  editPresentationStep,
+  reorderPresentationSteps,
+  tombstonePresentationStep,
   editGraphText,
   editEdge,
   editBoundary,
@@ -331,6 +335,26 @@ export class EditorSession {
 
   public createCard(node: GraphNode): void {
     this.executeMutation((document) => createNode(document, node));
+  }
+
+  public createStep(step: PresentationStep): void {
+    this.finishTextHistory();
+    this.executeMutation((document) => createPresentationStep(document, step));
+  }
+
+  public editStep(id: string, changes: Partial<Omit<PresentationStep, 'id'>>): void {
+    this.finishTextHistory();
+    this.executeMutation((document) => editPresentationStep(document, id, changes));
+  }
+
+  public reorderSteps(ordering: readonly { readonly id: string; readonly order: number }[]): void {
+    this.finishTextHistory();
+    this.executeMutation((document) => reorderPresentationSteps(document, ordering));
+  }
+
+  public deleteStep(id: string): void {
+    this.finishTextHistory();
+    this.executeMutation((document) => tombstonePresentationStep(document, id));
   }
 
   public createBoundary(boundary: Boundary): void {

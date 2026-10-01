@@ -8,6 +8,7 @@ import type { EditorViewState } from './editor-view-state';
 type Actions = ReturnType<typeof useEditorUiActions>;
 type ButtonRef = RefObject<HTMLButtonElement | null>;
 export interface EditorToolbarProps {
+  readonly presentation?: ReactNode;
   readonly sharing?: ReactNode;
   readonly boardMode: boolean;
   readonly boardTitle: string | undefined;
@@ -27,6 +28,7 @@ export interface EditorToolbarProps {
   readonly setServerReloadOpen: (open: boolean) => void;
 }
 export interface EditorInspectorProps {
+  readonly presentation?: ReactNode;
   readonly discussion?: ReactNode;
   readonly inspectorOpen: boolean;
   readonly actions: Actions;
