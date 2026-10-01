@@ -27,6 +27,7 @@ export interface EditorToolbarProps {
   readonly setServerReloadOpen: (open: boolean) => void;
 }
 export interface EditorInspectorProps {
+  readonly discussion?: ReactNode;
   readonly inspectorOpen: boolean;
   readonly actions: Actions;
   readonly editorCommands: EditorCommandActions;

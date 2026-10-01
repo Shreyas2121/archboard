@@ -61,6 +61,7 @@ import { cn } from '@/lib/utils';
 import { EDITOR_VIEW_PHASES } from './editor-view-state';
 import { EditorDialogs } from './editor-dialogs';
 import { EditorInspector } from './editor-inspector';
+import { DiscussionPanel } from '@/features/editor/discussion/discussion-panel';
 import { EditorToolbar } from './editor-toolbar';
 import { editorSessionViewState } from './editor-status-policy';
 import { PALETTE_ITEMS } from './editor-palette-definitions';
@@ -646,6 +647,18 @@ export function EditorShell({
         </main>
 
         <EditorInspector
+          discussion={
+            boardMode && session?.resourceScope ? (
+              <DiscussionPanel
+                session={session}
+                projection={projection}
+                selection={selection}
+                canvas={canvasContainer}
+                viewport={viewport}
+                readOnly={narrowScreen}
+              />
+            ) : undefined
+          }
           inspectorOpen={inspectorOpen}
           actions={actions}
           editorCommands={editorCommands}

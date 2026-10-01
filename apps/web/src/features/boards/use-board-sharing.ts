@@ -267,6 +267,7 @@ export function useBoardSharing(session: EditorSession, scope: BoardQueryScope, 
     notice,
     error,
     authority: authority(),
+    readAuthority: authority,
     assertAllowed,
     assertInviteAllowed: () => {
       const current = authority();
