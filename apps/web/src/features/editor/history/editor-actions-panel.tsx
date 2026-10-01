@@ -20,7 +20,7 @@ export function EditorActionsPanel({ actions, disabled }: EditorActionsPanelProp
           Structural commands are excluded from Undo. Deleted objects can be restored until reload.
         </p>
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-2 [&>button]:h-auto [&>button]:min-h-8 [&>button]:min-w-0 [&>button]:whitespace-normal">
         <Button
           type="button"
           size="compact"

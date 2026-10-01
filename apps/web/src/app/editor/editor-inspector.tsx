@@ -65,9 +65,9 @@ export function EditorInspector({
         </div>
         <CollapsibleContent
           forceMount
-          className="h-[calc(100%-3.5rem)] overflow-y-auto data-[state=closed]:hidden"
+          className="h-[calc(100%-3.5rem)] min-w-0 overflow-x-hidden overflow-y-auto data-[state=closed]:hidden"
         >
-          <Tabs defaultValue="properties">
+          <Tabs defaultValue="properties" className="w-full">
             <TabsList className="m-3" aria-label="Inspector">
               <TabsTrigger value="properties">Properties</TabsTrigger>
               {discussion && <TabsTrigger value="discussion">Discussion</TabsTrigger>}
