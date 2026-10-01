@@ -6,6 +6,7 @@ import {
   type Comment,
   type ThreadAnchor,
   type ThreadSummary,
+  type ResolveThread,
 } from '@archboard/contracts';
 import type { EntityManager } from 'typeorm';
 
@@ -100,6 +101,75 @@ export class DiscussionRepository {
     const row = await this.commentQuery().where('comment.id = :id', { id }).getRawOne<CommentRow>();
     if (!row) throw new Error('The inserted message is unavailable.');
     return this.toComment(row);
+  }
+
+  public async comment(boardId: string, commentId: string): Promise<Comment | null> {
+    const row = await this.commentQuery()
+      .innerJoin(CommentThreadEntity, 'thread', 'thread.id = comment.thread_id')
+      .where('thread.board_id = :boardId AND comment.id = :commentId', { boardId, commentId })
+      .getRawOne<CommentRow>();
+    return row ? this.toComment(row) : null;
+  }
+
+  // The caller holds the board authority lock and has resolved the message through that board.
+  public async editComment(
+    commentId: string,
+    expectedVersion: number,
+    body: string,
+  ): Promise<boolean> {
+    const result = await this.manager
+      .getRepository(CommentEntity)
+      .createQueryBuilder()
+      .update()
+      .set({ body, version: () => 'version + 1', editedAt: () => 'CURRENT_TIMESTAMP' })
+      .where('id = :commentId AND version = :expectedVersion AND deleted_at IS NULL', {
+        commentId,
+        expectedVersion,
+      })
+      .execute();
+    return result.affected === 1;
+  }
+
+  public async deleteComment(commentId: string, expectedVersion: number): Promise<boolean> {
+    const result = await this.manager
+      .getRepository(CommentEntity)
+      .createQueryBuilder()
+      .update()
+      .set({
+        body: COMMENT_DELETION_MARKER,
+        version: () => 'version + 1',
+        deletedAt: () => 'CURRENT_TIMESTAMP',
+      })
+      .where('id = :commentId AND version = :expectedVersion AND deleted_at IS NULL', {
+        commentId,
+        expectedVersion,
+      })
+      .execute();
+    return result.affected === 1;
+  }
+
+  public async resolveThread(
+    boardId: string,
+    threadId: string,
+    actorUserId: string,
+    request: ResolveThread,
+  ): Promise<boolean> {
+    const result = await this.manager
+      .getRepository(CommentThreadEntity)
+      .createQueryBuilder()
+      .update()
+      .set({
+        version: () => 'version + 1',
+        resolvedAt: request.resolved ? () => 'CURRENT_TIMESTAMP' : null,
+        resolvedBy: request.resolved ? actorUserId : null,
+      })
+      .where('id = :threadId AND board_id = :boardId AND version = :expectedVersion', {
+        threadId,
+        boardId,
+        expectedVersion: request.expectedVersion,
+      })
+      .execute();
+    return result.affected === 1;
   }
 
   public async summary(boardId: string, threadId: string): Promise<ThreadSummary> {

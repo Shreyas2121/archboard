@@ -9,6 +9,10 @@ import {
   type CommentListResponse,
   type CreateComment,
   type CreateThread,
+  type EditComment,
+  type DeleteComment,
+  type ResolveThread,
+  type Thread,
   type ThreadAnchor,
   type ThreadCreateResult,
   type ThreadListQuery,
@@ -42,6 +46,15 @@ export interface DiscussionScope {
   insertThread(boardId: string, actorUserId: string, anchor: ThreadAnchor): Promise<string>;
   insertComment(threadId: string, actorUserId: string, body: string): Promise<Comment>;
   summary(boardId: string, threadId: string): Promise<ThreadSummary>;
+  comment(boardId: string, commentId: string): Promise<Comment | null>;
+  editComment(commentId: string, expectedVersion: number, body: string): Promise<boolean>;
+  deleteComment(commentId: string, expectedVersion: number): Promise<boolean>;
+  resolveThread(
+    boardId: string,
+    threadId: string,
+    actorUserId: string,
+    request: ResolveThread,
+  ): Promise<boolean>;
   listThreads(
     boardId: string,
     limit: number,
@@ -171,6 +184,105 @@ export class DiscussionService {
         return scope.insertComment(threadId, actor.userId, request.body);
       },
     );
+  }
+
+  public editComment(
+    actor: DiscussionActor,
+    boardId: string,
+    commentId: string,
+    request: EditComment,
+  ): Promise<Comment> {
+    return this.persistence.run(async (scope) => {
+      const current = await this.moderatableComment(scope, actor, boardId, commentId);
+      this.requireVersion(current.version, request.expectedVersion);
+      if (current.deletedAt !== null) this.versionConflict('Deleted messages cannot be edited.');
+      if (current.body === request.body) return current;
+      await actor.requireCurrentSession();
+      if (!(await scope.editComment(commentId, request.expectedVersion, request.body)))
+        this.versionConflict();
+      return this.requireComment(scope, boardId, commentId);
+    });
+  }
+
+  public deleteComment(
+    actor: DiscussionActor,
+    boardId: string,
+    commentId: string,
+    request: DeleteComment,
+  ): Promise<Comment> {
+    return this.persistence.run(async (scope) => {
+      const current = await this.moderatableComment(scope, actor, boardId, commentId);
+      this.requireVersion(current.version, request.expectedVersion);
+      if (current.deletedAt !== null) return current;
+      await actor.requireCurrentSession();
+      if (!(await scope.deleteComment(commentId, request.expectedVersion))) this.versionConflict();
+      return this.requireComment(scope, boardId, commentId);
+    });
+  }
+
+  public resolveThread(
+    actor: DiscussionActor,
+    boardId: string,
+    threadId: string,
+    request: ResolveThread,
+  ): Promise<Thread> {
+    return this.persistence.run(async (scope) => {
+      await this.authorize(scope, actor, boardId, true);
+      await this.requireThread(scope, boardId, threadId);
+      const current = await scope.summary(boardId, threadId);
+      this.requireVersion(current.version, request.expectedVersion);
+      if ((current.resolvedAt !== null) !== request.resolved) {
+        await actor.requireCurrentSession();
+        if (!(await scope.resolveThread(boardId, threadId, actor.userId, request)))
+          this.versionConflict();
+      }
+      const thread = await scope.summary(boardId, threadId);
+      return {
+        id: thread.id,
+        boardId: thread.boardId,
+        anchor: thread.anchor,
+        resolvedAt: thread.resolvedAt,
+        resolvedBy: thread.resolvedBy,
+        version: thread.version,
+        createdBy: thread.createdBy,
+        createdAt: thread.createdAt,
+      };
+    });
+  }
+
+  private async moderatableComment(
+    scope: DiscussionScope,
+    actor: DiscussionActor,
+    boardId: string,
+    commentId: string,
+  ): Promise<Comment> {
+    const board = await this.authorize(scope, actor, boardId, true);
+    const comment = await this.requireComment(scope, boardId, commentId);
+    if (board.ownerUserId !== actor.userId && comment.author.id !== actor.userId)
+      throw new BoardServiceError(
+        ERROR_CODES.FORBIDDEN,
+        'Only the author or board owner may moderate this message.',
+      );
+    return comment;
+  }
+
+  private async requireComment(
+    scope: DiscussionScope,
+    boardId: string,
+    commentId: string,
+  ): Promise<Comment> {
+    const comment = await scope.comment(boardId, commentId);
+    if (!comment)
+      throw new BoardServiceError(ERROR_CODES.NOT_FOUND, 'Discussion message unavailable.');
+    return comment;
+  }
+
+  private requireVersion(current: number, expected: number): void {
+    if (current !== expected) this.versionConflict();
+  }
+
+  private versionConflict(message = 'Discussion version is stale.'): never {
+    throw new BoardServiceError(ERROR_CODES.VERSION_CONFLICT, message);
   }
 
   private async authorize(

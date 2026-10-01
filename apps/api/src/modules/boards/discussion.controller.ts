@@ -11,6 +11,11 @@ import {
   threadListQuerySchema,
   threadListResponseSchema,
   threadPathSchema,
+  commentPathSchema,
+  editCommentSchema,
+  deleteCommentSchema,
+  resolveThreadSchema,
+  threadResponseSchema,
 } from '@archboard/contracts';
 import {
   Body,
@@ -20,6 +25,8 @@ import {
   Inject,
   Param,
   Post,
+  Patch,
+  Delete,
   Query,
   Req,
   UseGuards,
@@ -115,6 +122,60 @@ export class DiscussionController {
       validate(createCommentSchema, body),
     );
     return commentResponseSchema.parse({ data: result.body });
+  }
+
+  @Patch(':id/comments/:commentId')
+  public async editComment(
+    @Req() request: IncomingMessage,
+    @CurrentSession() session: AuthenticatedSession,
+    @Param() path: unknown,
+    @Body() body: unknown,
+  ) {
+    const { id, commentId } = validate(commentPathSchema, path);
+    return commentResponseSchema.parse({
+      data: await this.discussion.editComment(
+        this.actor(session, request),
+        id,
+        commentId,
+        validate(editCommentSchema, body),
+      ),
+    });
+  }
+
+  @Delete(':id/comments/:commentId')
+  public async deleteComment(
+    @Req() request: IncomingMessage,
+    @CurrentSession() session: AuthenticatedSession,
+    @Param() path: unknown,
+    @Body() body: unknown,
+  ) {
+    const { id, commentId } = validate(commentPathSchema, path);
+    return commentResponseSchema.parse({
+      data: await this.discussion.deleteComment(
+        this.actor(session, request),
+        id,
+        commentId,
+        validate(deleteCommentSchema, body),
+      ),
+    });
+  }
+
+  @Patch(':id/threads/:threadId')
+  public async resolveThread(
+    @Req() request: IncomingMessage,
+    @CurrentSession() session: AuthenticatedSession,
+    @Param() path: unknown,
+    @Body() body: unknown,
+  ) {
+    const { id, threadId } = validate(threadPathSchema, path);
+    return threadResponseSchema.parse({
+      data: await this.discussion.resolveThread(
+        this.actor(session, request),
+        id,
+        threadId,
+        validate(resolveThreadSchema, body),
+      ),
+    });
   }
 
   private actor(session: AuthenticatedSession, request: IncomingMessage): DiscussionActor {

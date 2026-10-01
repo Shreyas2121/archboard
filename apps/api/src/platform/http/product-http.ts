@@ -53,6 +53,7 @@ export function configureProductHttp(application: NestExpressApplication): void 
         JSON.stringify({
           requestId,
           route: typeof route === 'string' ? route : 'unmatched',
+          method: request.method,
           status: response.statusCode,
           durationMs: Math.round(performance.now() - started),
           ...(context?.actorId ? { actorId: context.actorId } : {}),

@@ -36,6 +36,7 @@ import {
   threadPathSchema,
   threadListQuerySchema,
   commentListQuerySchema,
+  commentPathSchema,
 } from '@archboard/contracts';
 import { z } from 'zod';
 
@@ -70,7 +71,7 @@ const schemas = {
   ChangeMemberRoleRequest: changeMemberRoleSchema,
   CreateInviteRequest: createInviteSchema,
   InviteTokenRequest: inviteTokenRequestSchema,
-  // Moderation components precede their P6-03 routes; P6-02 registers reads and creation below.
+  // Shared discussion components cover reads, creation, and versioned moderation.
   ThreadAnchor: threadAnchorSchema,
   ThreadListResponse: threadListResponseSchema,
   CommentListResponse: commentListResponseSchema,
@@ -92,7 +93,10 @@ type ParameterSchema =
   | typeof boardListQuerySchema
   | typeof inviteListQuerySchema;
 type DiscussionParameterSchema =
-  typeof threadPathSchema | typeof threadListQuerySchema | typeof commentListQuerySchema;
+  | typeof threadPathSchema
+  | typeof threadListQuerySchema
+  | typeof commentListQuerySchema
+  | typeof commentPathSchema;
 
 interface RouteSpec {
   method: 'get' | 'post' | 'patch' | 'delete';
@@ -108,6 +112,36 @@ interface RouteSpec {
 }
 
 const routes: readonly RouteSpec[] = [
+  {
+    method: 'patch',
+    path: '/api/v1/boards/{id}/comments/{commentId}',
+    summary:
+      'Edit own message or moderate as owner; stale/deleted versions conflict, identical body is unchanged',
+    pathSchema: commentPathSchema,
+    request: 'EditCommentRequest',
+    response: 'CommentResponse',
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT],
+  },
+  {
+    method: 'delete',
+    path: '/api/v1/boards/{id}/comments/{commentId}',
+    summary:
+      'Retain deletion marker (200); current-version deleted state is unchanged, stale version conflicts',
+    pathSchema: commentPathSchema,
+    request: 'DeleteCommentRequest',
+    response: 'CommentResponse',
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT],
+  },
+  {
+    method: 'patch',
+    path: '/api/v1/boards/{id}/threads/{threadId}',
+    summary:
+      'Resolve/reopen thread; current-version unchanged state preserves metadata, stale version conflicts',
+    pathSchema: threadPathSchema,
+    request: 'ResolveThreadRequest',
+    response: 'ThreadResponse',
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT],
+  },
   {
     method: 'get',
     path: '/api/v1/boards/{id}/threads',

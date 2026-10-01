@@ -15,6 +15,7 @@ import {
   currentUserResponseSchema,
   threadCreateResponseSchema,
   threadListResponseSchema,
+  threadResponseSchema,
   type ThreadAnchor,
   type ThreadCreateResult,
 } from '@archboard/contracts';
@@ -37,6 +38,7 @@ import { DataSource, type QueryRunner } from 'typeorm';
 import * as Y from 'yjs';
 
 import { AppModule } from '../../app.module.js';
+import { DiscussionRepository } from './infrastructure/discussion-repository.js';
 import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300000000-InitialDatabaseFoundation.js';
 import { RetainCompactedUpdateReceipts1790426800000 } from '../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
 import { loadApiConfig } from '../../platform/config/index.js';
@@ -60,6 +62,9 @@ const POLL_INTERVAL_MS = 50;
 const PAGE_SIZE = 2;
 const FIRST_AND_WINNING_MESSAGES = 2;
 const SCHEMA_SUFFIX_LENGTH = 8;
+const CHANGED_VERSION = 2;
+const SECOND_CHANGED_VERSION = 3;
+const FRACTIONAL_VERSION = 1.5;
 const EXPECTED_EDGE_POSITION = { x: 320, y: 70 };
 const SCHEMA = `archboard_p602_${process.pid}_${randomUUID().replaceAll('-', '').slice(0, SCHEMA_SUFFIX_LENGTH)}`;
 const point: ThreadAnchor = { type: 'point', position: { x: -25, y: 30 } };
@@ -86,7 +91,7 @@ function deferred() {
 
 jest.setTimeout(TIMEOUT_MS);
 
-describe('P6-02 discussion HTTP, real sessions and PostgreSQL transactions', () => {
+describe('P6-02/P6-03 discussion HTTP, real sessions and PostgreSQL transactions', () => {
   let admin: Pool;
   let database: DataSource;
   let application: NestExpressApplication;
@@ -287,7 +292,7 @@ describe('P6-02 discussion HTTP, real sessions and PostgreSQL transactions', () 
     );
     console.log(
       JSON.stringify({
-        phase: 'P6-02',
+        phase: 'P6-02/P6-03',
         postgresVersion: version[0]?.server_version,
         migrations: 2,
         discussionIndexes: indexes.length,
@@ -310,7 +315,7 @@ describe('P6-02 discussion HTTP, real sessions and PostgreSQL transactions', () 
     configureAuthHttp(application, application.get(BetterAuthRuntime), config);
     await application.listen(0, '127.0.0.1');
     apiOrigin = `http://127.0.0.1:${(application.getHttpServer().address() as AddressInfo).port}`;
-    for (const name of ['owner', 'editor', 'viewer', 'outsider', 'expiring']) {
+    for (const name of ['owner', 'editor', 'viewer', 'outsider', 'expiring', 'moderator']) {
       const signup = await fetch(`${apiOrigin}/api/auth/sign-up/email`, {
         method: 'POST',
         headers: { origin: ORIGIN, 'content-type': 'application/json' },
@@ -1040,7 +1045,722 @@ describe('P6-02 discussion HTTP, real sessions and PostgreSQL transactions', () 
     }
   });
 
-  it('publishes the four implemented discussion routes with exact shared schemas and creation headers', async () => {
+  function edit(
+    boardId: string,
+    commentId: string,
+    actor = 'owner',
+    expectedVersion = 1,
+    body = 'Synthetic newer message',
+  ) {
+    return request(`/boards/${boardId}/comments/${commentId}`, actor, {
+      method: 'PATCH',
+      body: { body, expectedVersion },
+    });
+  }
+
+  function removeMessage(boardId: string, commentId: string, actor = 'owner', expectedVersion = 1) {
+    return request(`/boards/${boardId}/comments/${commentId}`, actor, {
+      method: 'DELETE',
+      body: { expectedVersion },
+    });
+  }
+
+  function resolveThread(
+    boardId: string,
+    threadId: string,
+    actor = 'owner',
+    expectedVersion = 1,
+    resolved = true,
+  ) {
+    return request(`/boards/${boardId}/threads/${threadId}`, actor, {
+      method: 'PATCH',
+      body: { expectedVersion, resolved },
+    });
+  }
+
+  async function storedComment(commentId: string) {
+    return (
+      await database.query(
+        'SELECT body,version,author_user_id,created_at,edited_at,deleted_at FROM comments WHERE id=$1',
+        [commentId],
+      )
+    )[0];
+  }
+
+  async function storedThread(threadId: string) {
+    return (
+      await database.query(
+        'SELECT version,resolved_at,resolved_by,anchor,created_at,created_by FROM comment_threads WHERE id=$1',
+        [threadId],
+      )
+    )[0];
+  }
+
+  it('edits only the message version and preserves author, creation context and graph state', async () => {
+    const fixture = await board();
+    const first = await create(fixture.id);
+    const graphBefore = await database.query(
+      'SELECT latest_seq,content_updated_at FROM boards WHERE id=$1',
+      [fixture.id],
+    );
+    const threadBefore = await storedThread(first.thread.id);
+    const response = await edit(fixture.id, first.comment.id);
+    expect(response.status).toBe(HttpStatus.OK);
+    const updated = commentResponseSchema.parse(await response.json()).data;
+    expect(updated).toMatchObject({
+      version: 2,
+      author: first.comment.author,
+      createdAt: first.comment.createdAt,
+      deletedAt: null,
+    });
+    expect(updated.editedAt).not.toBeNull();
+    const newer = await storedComment(first.comment.id);
+    expect(newer).toMatchObject({
+      version: 2,
+      body: updated.body,
+      author_user_id: users.get('owner')!.id,
+      deleted_at: null,
+    });
+    await expectError(
+      await edit(fixture.id, first.comment.id),
+      HttpStatus.CONFLICT,
+      ERROR_CODES.VERSION_CONFLICT,
+    );
+    expect(await storedComment(first.comment.id)).toEqual(newer);
+    const unchanged = await edit(
+      fixture.id,
+      first.comment.id,
+      'owner',
+      CHANGED_VERSION,
+      updated.body,
+    );
+    expect(unchanged.status).toBe(HttpStatus.OK);
+    expect(commentResponseSchema.parse(await unchanged.json()).data).toEqual(updated);
+    expect(await storedThread(first.thread.id)).toEqual(threadBefore);
+    expect(
+      await database.query('SELECT latest_seq,content_updated_at FROM boards WHERE id=$1', [
+        fixture.id,
+      ]),
+    ).toEqual(graphBefore);
+  });
+
+  it('permits owner moderation without replacing the original editor author and logs only safe operation fields', async () => {
+    const fixture = await board();
+    const created = await createRequest(fixture.id, point, 'editor');
+    const first = threadCreateResponseSchema.parse(await created.json()).data;
+    const ownEdit = await edit(fixture.id, first.comment.id, 'editor');
+    expect(ownEdit.status).toBe(HttpStatus.OK);
+    const ownerEdit = await edit(
+      fixture.id,
+      first.comment.id,
+      'owner',
+      CHANGED_VERSION,
+      'Synthetic owner moderation',
+    );
+    expect(ownerEdit.status).toBe(HttpStatus.OK);
+    const updated = commentResponseSchema.parse(await ownerEdit.json()).data;
+    expect(updated.author).toEqual(first.comment.author);
+    const ownerDelete = await removeMessage(
+      fixture.id,
+      first.comment.id,
+      'owner',
+      SECOND_CHANGED_VERSION,
+    );
+    expect(ownerDelete.status).toBe(HttpStatus.OK);
+    expect(commentResponseSchema.parse(await ownerDelete.json()).data.author).toEqual(
+      first.comment.author,
+    );
+    const ownReply = commentResponseSchema.parse(
+      await (await reply(fixture.id, first.thread.id, 'editor')).json(),
+    ).data;
+    expect((await removeMessage(fixture.id, ownReply.id, 'editor')).status).toBe(HttpStatus.OK);
+    const logs = jest
+      .mocked(console.info)
+      .mock.calls.map(([entry]) => JSON.parse(String(entry)) as Record<string, unknown>);
+    expect(logs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actorId: users.get('owner')!.id,
+          boardId: fixture.id,
+          method: 'DELETE',
+          route: '/api/v1/boards/:id/comments/:commentId',
+          status: HttpStatus.OK,
+        }),
+      ]),
+    );
+    const safeLogs = JSON.stringify(logs);
+    expect(safeLogs).not.toContain('Synthetic owner moderation');
+    expect(safeLogs).not.toContain(users.get('owner')!.cookie);
+    expect(safeLogs).not.toContain('author_user_id');
+  });
+
+  it('retains deletion markers, counts, metadata and timestamps and prevents stale or current-version resurrection', async () => {
+    const fixture = await board();
+    const first = await create(fixture.id);
+    const edited = commentResponseSchema.parse(
+      await (await edit(fixture.id, first.comment.id)).json(),
+    ).data;
+    const removed = await removeMessage(fixture.id, first.comment.id, 'owner', CHANGED_VERSION);
+    expect(removed.status).toBe(HttpStatus.OK);
+    const marker = commentResponseSchema.parse(await removed.json()).data;
+    expect(marker).toMatchObject({
+      body: COMMENT_DELETION_MARKER,
+      version: 3,
+      author: first.comment.author,
+      createdAt: first.comment.createdAt,
+      editedAt: edited.editedAt,
+    });
+    expect(marker.deletedAt).not.toBeNull();
+    const stored = await storedComment(first.comment.id);
+    expect(stored).toMatchObject({ body: COMMENT_DELETION_MARKER, version: 3 });
+    const again = await removeMessage(
+      fixture.id,
+      first.comment.id,
+      'owner',
+      SECOND_CHANGED_VERSION,
+    );
+    expect(again.status).toBe(HttpStatus.OK);
+    expect(commentResponseSchema.parse(await again.json()).data).toEqual(marker);
+    await expectError(
+      await removeMessage(fixture.id, first.comment.id, 'owner', CHANGED_VERSION),
+      HttpStatus.CONFLICT,
+      ERROR_CODES.VERSION_CONFLICT,
+    );
+    await expectError(
+      await edit(fixture.id, first.comment.id, 'owner', CHANGED_VERSION),
+      HttpStatus.CONFLICT,
+      ERROR_CODES.VERSION_CONFLICT,
+    );
+    await expectError(
+      await edit(fixture.id, first.comment.id, 'owner', SECOND_CHANGED_VERSION),
+      HttpStatus.CONFLICT,
+      ERROR_CODES.VERSION_CONFLICT,
+    );
+    expect(await storedComment(first.comment.id)).toEqual(stored);
+    const listed = threadListResponseSchema.parse(
+      await (await request(`/boards/${fixture.id}/threads`)).json(),
+    ).data[0]!;
+    expect(listed).toMatchObject({
+      version: 1,
+      messageCount: 1,
+      latestMessage: { body: COMMENT_DELETION_MARKER, deletedAt: marker.deletedAt },
+    });
+    expect(await counts(fixture.id)).toEqual({ threads: 1, comments: 1, keys: 1 });
+  });
+
+  it('versions resolution and reopening independently from messages and preserves no-op resolution attribution', async () => {
+    const fixture = await board();
+    const first = await create(fixture.id);
+    const original = await storedComment(first.comment.id);
+    const resolvedResponse = await resolveThread(fixture.id, first.thread.id, 'editor');
+    expect(resolvedResponse.status).toBe(HttpStatus.OK);
+    const resolved = threadResponseSchema.parse(await resolvedResponse.json()).data;
+    expect(resolved).toMatchObject({
+      version: 2,
+      resolvedBy: { id: users.get('editor')!.id },
+      createdBy: first.thread.createdBy,
+      anchor: first.thread.anchor,
+    });
+    expect(resolved.resolvedAt).not.toBeNull();
+    const same = await resolveThread(fixture.id, first.thread.id, 'owner', CHANGED_VERSION);
+    expect(same.status).toBe(HttpStatus.OK);
+    expect(threadResponseSchema.parse(await same.json()).data).toEqual(resolved);
+    const before = await storedThread(first.thread.id);
+    await expectError(
+      await resolveThread(fixture.id, first.thread.id, 'owner', 1, false),
+      HttpStatus.CONFLICT,
+      ERROR_CODES.VERSION_CONFLICT,
+    );
+    expect(await storedThread(first.thread.id)).toEqual(before);
+    const reopenedResponse = await resolveThread(
+      fixture.id,
+      first.thread.id,
+      'owner',
+      CHANGED_VERSION,
+      false,
+    );
+    expect(reopenedResponse.status).toBe(HttpStatus.OK);
+    expect(threadResponseSchema.parse(await reopenedResponse.json()).data).toMatchObject({
+      version: 3,
+      resolvedAt: null,
+      resolvedBy: null,
+    });
+    expect(await storedComment(first.comment.id)).toEqual(original);
+    const filtered = threadListResponseSchema.parse(
+      await (await request(`/boards/${fixture.id}/threads?resolved=false`)).json(),
+    );
+    expect(filtered.data.map((thread) => thread.id)).toContain(first.thread.id);
+  });
+
+  it('rejects editor moderation of another author, viewer writes, removed users and cross-board resources', async () => {
+    const fixture = await board();
+    const otherBoard = await board();
+    const first = await create(fixture.id);
+    const before = await storedComment(first.comment.id);
+    for (const mutate of [edit, removeMessage]) {
+      await expectError(
+        await mutate(fixture.id, first.comment.id, 'editor'),
+        HttpStatus.FORBIDDEN,
+        ERROR_CODES.FORBIDDEN,
+      );
+      await expectError(
+        await mutate(fixture.id, first.comment.id, 'viewer'),
+        HttpStatus.FORBIDDEN,
+        ERROR_CODES.FORBIDDEN,
+      );
+      await expectError(
+        await mutate(fixture.id, first.comment.id, 'outsider'),
+        HttpStatus.NOT_FOUND,
+        ERROR_CODES.NOT_FOUND,
+      );
+      await expectError(
+        await mutate(otherBoard.id, first.comment.id),
+        HttpStatus.NOT_FOUND,
+        ERROR_CODES.NOT_FOUND,
+      );
+      await expectError(
+        await mutate(fixture.id, randomUUID()),
+        HttpStatus.NOT_FOUND,
+        ERROR_CODES.NOT_FOUND,
+      );
+    }
+    await expectError(
+      await resolveThread(fixture.id, first.thread.id, 'viewer'),
+      HttpStatus.FORBIDDEN,
+      ERROR_CODES.FORBIDDEN,
+    );
+    await expectError(
+      await resolveThread(fixture.id, first.thread.id, 'outsider'),
+      HttpStatus.NOT_FOUND,
+      ERROR_CODES.NOT_FOUND,
+    );
+    await expectError(
+      await resolveThread(otherBoard.id, first.thread.id),
+      HttpStatus.NOT_FOUND,
+      ERROR_CODES.NOT_FOUND,
+    );
+    const authored = threadCreateResponseSchema.parse(
+      await (await createRequest(fixture.id, point, 'editor')).json(),
+    ).data;
+    expect(
+      (
+        await request(`/boards/${fixture.id}/members/${users.get('editor')!.id}`, 'owner', {
+          method: 'PATCH',
+          body: { role: 'viewer' },
+        })
+      ).status,
+    ).toBe(HttpStatus.OK);
+    for (const mutate of [edit, removeMessage])
+      await expectError(
+        await mutate(fixture.id, authored.comment.id, 'editor'),
+        HttpStatus.FORBIDDEN,
+        ERROR_CODES.FORBIDDEN,
+      );
+    await expectError(
+      await resolveThread(fixture.id, authored.thread.id, 'editor'),
+      HttpStatus.FORBIDDEN,
+      ERROR_CODES.FORBIDDEN,
+    );
+    expect(
+      (
+        await request(`/boards/${fixture.id}/members/${users.get('editor')!.id}`, 'owner', {
+          method: 'DELETE',
+        })
+      ).status,
+    ).toBe(HttpStatus.NO_CONTENT);
+    for (const mutate of [edit, removeMessage])
+      await expectError(
+        await mutate(fixture.id, authored.comment.id, 'editor'),
+        HttpStatus.NOT_FOUND,
+        ERROR_CODES.NOT_FOUND,
+      );
+    await expectError(
+      await resolveThread(fixture.id, authored.thread.id, 'editor'),
+      HttpStatus.NOT_FOUND,
+      ERROR_CODES.NOT_FOUND,
+    );
+    expect(await storedComment(first.comment.id)).toEqual(before);
+    expect((await storedComment(authored.comment.id)).version).toBe(1);
+  });
+
+  it('blocks every archived moderation operation while authorized readers retain the unchanged rows', async () => {
+    const fixture = await board();
+    const first = await create(fixture.id);
+    const before = await storedComment(first.comment.id);
+    const threadBefore = await storedThread(first.thread.id);
+    expect(
+      (
+        await request(`/boards/${fixture.id}/archive`, 'owner', {
+          method: 'POST',
+          body: { expectedVersion: 1 },
+        })
+      ).status,
+    ).toBe(HttpStatus.OK);
+    for (const actor of ['owner', 'editor']) {
+      for (const mutate of [edit, removeMessage])
+        await expectError(
+          await mutate(fixture.id, first.comment.id, actor),
+          HttpStatus.CONFLICT,
+          ERROR_CODES.BOARD_ARCHIVED,
+        );
+      await expectError(
+        await resolveThread(fixture.id, first.thread.id, actor),
+        HttpStatus.CONFLICT,
+        ERROR_CODES.BOARD_ARCHIVED,
+      );
+    }
+    expect(
+      (await request(`/boards/${fixture.id}/threads/${first.thread.id}/comments`, 'viewer')).status,
+    ).toBe(HttpStatus.OK);
+    expect(await storedComment(first.comment.id)).toEqual(before);
+    expect(await storedThread(first.thread.id)).toEqual(threadBefore);
+  });
+
+  it('rejects unauthenticated, forged and malformed version mutation payloads without changing rows', async () => {
+    const fixture = await board();
+    const first = await create(fixture.id);
+    const before = await storedComment(first.comment.id);
+    const threadBefore = await storedThread(first.thread.id);
+    const commentPath = `/boards/${fixture.id}/comments/${first.comment.id}`;
+    const threadPath = `/boards/${fixture.id}/threads/${first.thread.id}`;
+    for (const [path, method, body] of [
+      [commentPath, 'PATCH', { body: 'Synthetic', expectedVersion: 1 }],
+      [commentPath, 'DELETE', { expectedVersion: 1 }],
+      [threadPath, 'PATCH', { resolved: true, expectedVersion: 1 }],
+    ] as const) {
+      await expectError(
+        await request(path, '', { method, body }),
+        HttpStatus.UNAUTHORIZED,
+        ERROR_CODES.UNAUTHENTICATED,
+      );
+      for (const extra of [
+        { authorUserId: users.get('owner')!.id },
+        { createdAt: first.comment.createdAt },
+        { editedAt: first.comment.createdAt },
+        { deletedAt: first.comment.createdAt },
+        { resolvedAt: first.thread.createdAt },
+        { resolvedBy: users.get('owner')!.id },
+        { createdBy: users.get('owner')!.id },
+        { version: 1 },
+      ])
+        await expectError(
+          await request(path, 'owner', { method, body: { ...body, ...extra } }),
+          HttpStatus.BAD_REQUEST,
+          ERROR_CODES.VALIDATION_ERROR,
+        );
+      for (const expectedVersion of [0, -1, FRACTIONAL_VERSION, '1', null])
+        await expectError(
+          await request(path, 'owner', { method, body: { ...body, expectedVersion } }),
+          HttpStatus.BAD_REQUEST,
+          ERROR_CODES.VALIDATION_ERROR,
+        );
+      await expectError(
+        await request(path, 'owner', { method, body: {} }),
+        HttpStatus.BAD_REQUEST,
+        ERROR_CODES.VALIDATION_ERROR,
+      );
+    }
+    await expectError(
+      await request(threadPath, 'owner', {
+        method: 'PATCH',
+        body: { resolved: 'true', expectedVersion: 1 },
+      }),
+      HttpStatus.BAD_REQUEST,
+      ERROR_CODES.VALIDATION_ERROR,
+    );
+    await expectError(
+      await edit(fixture.id, first.comment.id, 'owner', 1, ' \n\t'),
+      HttpStatus.BAD_REQUEST,
+      ERROR_CODES.VALIDATION_ERROR,
+    );
+    await expectError(
+      await edit(
+        fixture.id,
+        first.comment.id,
+        'owner',
+        1,
+        'x'.repeat(MAX_COMMENT_BODY_CHARACTERS + 1),
+      ),
+      HttpStatus.BAD_REQUEST,
+      ERROR_CODES.VALIDATION_ERROR,
+    );
+    expect(await storedComment(first.comment.id)).toEqual(before);
+    expect(await storedThread(first.thread.id)).toEqual(threadBefore);
+  });
+
+  it('preserves the winning stored body and metadata in an independent edit/edit A20 race', async () => {
+    const fixture = await board();
+    const first = threadCreateResponseSchema.parse(
+      await (await createRequest(fixture.id, point, 'editor')).json(),
+    ).data;
+    const responses = await Promise.all([
+      edit(fixture.id, first.comment.id, 'editor', 1, 'Synthetic editor winner'),
+      edit(fixture.id, first.comment.id, 'owner', 1, 'Synthetic owner winner'),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      HttpStatus.OK,
+      HttpStatus.CONFLICT,
+    ]);
+    const winner = commentResponseSchema.parse(
+      await responses.find((response) => response.status === HttpStatus.OK)!.json(),
+    ).data;
+    await expectError(
+      responses.find((response) => response.status === HttpStatus.CONFLICT)!,
+      HttpStatus.CONFLICT,
+      ERROR_CODES.VERSION_CONFLICT,
+    );
+    const stored = await storedComment(first.comment.id);
+    expect(stored).toMatchObject({
+      body: winner.body,
+      version: 2,
+      author_user_id: users.get('editor')!.id,
+      deleted_at: null,
+    });
+    expect(stored.edited_at).not.toBeNull();
+    expect((await storedThread(first.thread.id)).version).toBe(1);
+  });
+
+  it.each(['edit-first', 'delete-first'] as const)(
+    'preserves the newer row under ordered edit/delete A20 race: %s',
+    async (ordering) => {
+      const fixture = await board();
+      const first = await create(fixture.id);
+      const reached = deferred();
+      const release = deferred();
+      const method = ordering === 'edit-first' ? 'editComment' : 'deleteComment';
+      const originalEdit = DiscussionRepository.prototype.editComment;
+      const originalDelete = DiscussionRepository.prototype.deleteComment;
+      const spy = jest
+        .spyOn(DiscussionRepository.prototype, method)
+        .mockImplementationOnce(async function (
+          this: DiscussionRepository,
+          ...args: [string, number, string?]
+        ) {
+          const result =
+            ordering === 'edit-first'
+              ? await originalEdit.call(this, args[0], args[1], args[2]!)
+              : await originalDelete.call(this, args[0], args[1]);
+          reached.resolve();
+          await release.promise;
+          return result;
+        });
+      const winner =
+        ordering === 'edit-first'
+          ? edit(fixture.id, first.comment.id)
+          : removeMessage(fixture.id, first.comment.id);
+      let loser: Promise<Response> | undefined;
+      try {
+        await Promise.race([
+          reached.promise,
+          winner.then((response) => {
+            throw new Error(`Mutation barrier was not reached (HTTP ${response.status}).`);
+          }),
+        ]);
+        loser =
+          ordering === 'edit-first'
+            ? removeMessage(fixture.id, first.comment.id)
+            : edit(fixture.id, first.comment.id);
+        await waitForBoardLock();
+        release.resolve();
+        const response = await winner;
+        expect(response.status).toBe(HttpStatus.OK);
+        const changed = commentResponseSchema.parse(await response.json()).data;
+        await expectError(await loser, HttpStatus.CONFLICT, ERROR_CODES.VERSION_CONFLICT);
+        expect(await storedComment(first.comment.id)).toMatchObject({
+          body: changed.body,
+          version: 2,
+          author_user_id: first.comment.author.id,
+        });
+        expect(changed.body).toBe(
+          ordering === 'edit-first' ? 'Synthetic newer message' : COMMENT_DELETION_MARKER,
+        );
+        expect(changed.deletedAt === null).toBe(ordering === 'edit-first');
+      } finally {
+        release.resolve();
+        spy.mockRestore();
+        await winner;
+        await loser;
+      }
+    },
+  );
+
+  it.each(['reopen-first', 'resolve-first'] as const)(
+    'preserves a committed resolution state against a waiting opposite stale request: %s',
+    async (ordering) => {
+      const fixture = await board();
+      const first = await create(fixture.id);
+      if (ordering === 'reopen-first')
+        expect((await resolveThread(fixture.id, first.thread.id)).status).toBe(HttpStatus.OK);
+      const expectedVersion = ordering === 'reopen-first' ? CHANGED_VERSION : 1;
+      const resolved = ordering === 'resolve-first';
+      const reached = deferred();
+      const release = deferred();
+      const original = DiscussionRepository.prototype.resolveThread;
+      const spy = jest
+        .spyOn(DiscussionRepository.prototype, 'resolveThread')
+        .mockImplementationOnce(async function (
+          this: DiscussionRepository,
+          ...args: Parameters<typeof original>
+        ) {
+          const result = await original.call(this, ...args);
+          reached.resolve();
+          await release.promise;
+          return result;
+        });
+      const winner = resolveThread(
+        fixture.id,
+        first.thread.id,
+        'editor',
+        expectedVersion,
+        resolved,
+      );
+      let loser: Promise<Response> | undefined;
+      try {
+        await Promise.race([
+          reached.promise,
+          winner.then((response) => {
+            throw new Error(`Resolution barrier was not reached (HTTP ${response.status}).`);
+          }),
+        ]);
+        loser = resolveThread(fixture.id, first.thread.id, 'owner', expectedVersion, !resolved);
+        await waitForBoardLock();
+        release.resolve();
+        const response = await winner;
+        expect(response.status).toBe(HttpStatus.OK);
+        const changed = threadResponseSchema.parse(await response.json()).data;
+        expect(changed.version).toBe(expectedVersion + 1);
+        expect(changed.resolvedAt !== null).toBe(resolved);
+        expect(changed.resolvedBy?.id ?? null).toBe(resolved ? users.get('editor')!.id : null);
+        await expectError(await loser, HttpStatus.CONFLICT, ERROR_CODES.VERSION_CONFLICT);
+        const stored = await storedThread(first.thread.id);
+        expect(stored.version).toBe(expectedVersion + 1);
+        expect(stored.resolved_at !== null).toBe(resolved);
+        expect(stored.resolved_by).toBe(resolved ? users.get('editor')!.id : null);
+        expect((await storedComment(first.comment.id)).version).toBe(1);
+      } finally {
+        release.resolve();
+        spy.mockRestore();
+        await winner;
+        await loser;
+      }
+    },
+  );
+
+  it.each(['edit', 'delete', 'resolve'] as const)(
+    'rolls back a failed %s without changing content, version or metadata',
+    async (operation) => {
+      const fixture = await board();
+      const first = await create(fixture.id);
+      const before = await storedComment(first.comment.id);
+      const threadBefore = await storedThread(first.thread.id);
+      const table = operation === 'resolve' ? 'comment_threads' : 'comments';
+      const constraint = `p603_${operation}_failure`;
+      await database.query(
+        `ALTER TABLE ${table} ADD CONSTRAINT ${constraint} CHECK (false) NOT VALID`,
+      );
+      try {
+        const response =
+          operation === 'edit'
+            ? await edit(fixture.id, first.comment.id)
+            : operation === 'delete'
+              ? await removeMessage(fixture.id, first.comment.id)
+              : await resolveThread(fixture.id, first.thread.id);
+        const error = await expectError(
+          response,
+          HttpStatus.SERVICE_UNAVAILABLE,
+          ERROR_CODES.TEMPORARILY_UNAVAILABLE,
+        );
+        expect(JSON.stringify(error)).not.toContain(constraint);
+        expect(JSON.stringify(error)).not.toContain('Synthetic newer message');
+        expect(await storedComment(first.comment.id)).toEqual(before);
+        expect(await storedThread(first.thread.id)).toEqual(threadBefore);
+        expect(await counts(fixture.id)).toEqual({ threads: 1, comments: 1, keys: 1 });
+      } finally {
+        await database.query(`ALTER TABLE ${table} DROP CONSTRAINT ${constraint}`);
+      }
+    },
+  );
+
+  it.each(['downgrade', 'remove', 'archive'] as const)(
+    'rechecks authority after a moderation request waits behind %s',
+    async (change) => {
+      const fixture = await board();
+      const first = threadCreateResponseSchema.parse(
+        await (await createRequest(fixture.id, point, 'editor')).json(),
+      ).data;
+      const before = await storedComment(first.comment.id);
+      const runner = await lockedBoard(fixture.id);
+      let attempted: Promise<Response> | undefined;
+      try {
+        attempted = edit(fixture.id, first.comment.id, 'editor');
+        await waitForBoardLock();
+        if (change === 'downgrade')
+          await runner.query(
+            `UPDATE board_members SET role='viewer' WHERE board_id=$1 AND user_id=$2`,
+            [fixture.id, users.get('editor')!.id],
+          );
+        else if (change === 'remove')
+          await runner.query('DELETE FROM board_members WHERE board_id=$1 AND user_id=$2', [
+            fixture.id,
+            users.get('editor')!.id,
+          ]);
+        else
+          await runner.query('UPDATE boards SET archived_at=CURRENT_TIMESTAMP WHERE id=$1', [
+            fixture.id,
+          ]);
+        await runner.commitTransaction();
+        const status =
+          change === 'downgrade'
+            ? HttpStatus.FORBIDDEN
+            : change === 'remove'
+              ? HttpStatus.NOT_FOUND
+              : HttpStatus.CONFLICT;
+        const code =
+          change === 'downgrade'
+            ? ERROR_CODES.FORBIDDEN
+            : change === 'remove'
+              ? ERROR_CODES.NOT_FOUND
+              : ERROR_CODES.BOARD_ARCHIVED;
+        await expectError(await attempted, status, code);
+        expect(await storedComment(first.comment.id)).toEqual(before);
+      } finally {
+        if (runner.isTransactionActive) await runner.rollbackTransaction();
+        await runner.release();
+        await attempted;
+      }
+    },
+  );
+
+  it('rejects an expired real session after moderation waits for the board lock', async () => {
+    const fixture = await board();
+    await database.query(
+      `INSERT INTO board_members (board_id,user_id,role) VALUES ($1,$2,'editor')`,
+      [fixture.id, users.get('moderator')!.id],
+    );
+    const first = threadCreateResponseSchema.parse(
+      await (await createRequest(fixture.id, point, 'moderator')).json(),
+    ).data;
+    const before = await storedComment(first.comment.id);
+    const runner = await lockedBoard(fixture.id);
+    let attempted: Promise<Response> | undefined;
+    try {
+      attempted = edit(fixture.id, first.comment.id, 'moderator');
+      await waitForBoardLock();
+      await database.query(
+        `UPDATE session SET "expiresAt"=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE "userId"=$1`,
+        [users.get('moderator')!.id],
+      );
+      await runner.commitTransaction();
+      await expectError(await attempted, HttpStatus.UNAUTHORIZED, ERROR_CODES.UNAUTHENTICATED);
+      expect(await storedComment(first.comment.id)).toEqual(before);
+    } finally {
+      if (runner.isTransactionActive) await runner.rollbackTransaction();
+      await runner.release();
+      await attempted;
+    }
+  });
+
+  it('publishes all seven discussion routes with exact shared schemas, DELETE bodies and statuses', async () => {
     const document = (await (await request('/openapi.json')).json()) as {
       paths: Record<
         string,
@@ -1048,6 +1768,10 @@ describe('P6-02 discussion HTTP, real sessions and PostgreSQL transactions', () 
           string,
           {
             parameters: { name: string; required: boolean }[];
+            requestBody: {
+              required: boolean;
+              content: { 'application/json': { schema: { $ref: string } } };
+            };
             responses: Record<
               string,
               { content: { 'application/json': { schema: { $ref: string } } } }
@@ -1066,6 +1790,18 @@ describe('P6-02 discussion HTTP, real sessions and PostgreSQL transactions', () 
       createRoute.responses[String(HttpStatus.CREATED)]!.content['application/json'].schema.$ref,
     ).toBe('#/components/schemas/ThreadCreateResponse');
     expect(document.paths['/api/v1/boards/{id}/threads/{threadId}/comments']!.get).toBeDefined();
-    expect(document.paths['/api/v1/boards/{id}/threads/{threadId}']).toBeUndefined();
+    expect(document.paths['/api/v1/boards/{id}/threads/{threadId}']!.patch).toBeDefined();
+    const deletion = document.paths['/api/v1/boards/{id}/comments/{commentId}']!.delete!;
+    expect(deletion.requestBody.required).toBe(true);
+    expect(deletion.requestBody.content['application/json'].schema.$ref).toBe(
+      '#/components/schemas/DeleteCommentRequest',
+    );
+    expect(deletion.responses[String(HttpStatus.OK)]!.content['application/json'].schema.$ref).toBe(
+      '#/components/schemas/CommentResponse',
+    );
+    expect(deletion.responses[String(HttpStatus.NO_CONTENT)]).toBeUndefined();
+    expect(deletion.parameters.some((parameter) => parameter.name === 'Idempotency-Key')).toBe(
+      false,
+    );
   });
 });

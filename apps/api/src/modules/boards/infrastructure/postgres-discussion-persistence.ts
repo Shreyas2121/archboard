@@ -74,6 +74,13 @@ export class PostgresDiscussionPersistence implements DiscussionPersistence {
       insertComment: (threadId, actorUserId, body) =>
         repository.insertComment(threadId, actorUserId, body),
       summary: (boardId, threadId) => repository.summary(boardId, threadId),
+      comment: (boardId, commentId) => repository.comment(boardId, commentId),
+      editComment: (commentId, expectedVersion, body) =>
+        repository.editComment(commentId, expectedVersion, body),
+      deleteComment: (commentId, expectedVersion) =>
+        repository.deleteComment(commentId, expectedVersion),
+      resolveThread: (boardId, threadId, actorUserId, request) =>
+        repository.resolveThread(boardId, threadId, actorUserId, request),
       listThreads: (boardId, limit, resolved, cursor) =>
         repository.listThreads(boardId, limit, resolved, cursor),
       listComments: (boardId, threadId, limit, cursor) =>
