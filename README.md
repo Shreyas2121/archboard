@@ -4,15 +4,19 @@ Archboard is a local-first collaborative architecture editor. This repository is
 monorepo containing independently deployable web and API applications plus framework-independent
 shared packages.
 
-The current implementation scope includes Phase 6: board sharing and anchored discussion.
-Read [`phase6.md`](./phase6.md), the commit-by-commit [`guide5.md`](./guide5.md), and the
-[Phase 6 audit](./docs/phase-6-discussion-sharing.md). Its
-[evidence index](./docs/evidence/phase6/README.md) maps all tasks and the focused layout fix.
-Implementation is delivered; the full Phase 6 gate is **OPEN**. P6-11 recorded 430 passing
+The current implementation scope includes Phase 7: presentation and portability.
+Read [`phase7.md`](./phase7.md), the commit-by-commit [`guide6.md`](./guide6.md), and the
+[Phase 7 audit](./docs/phase-7-presentation-portability.md). Its
+[evidence index](./docs/evidence/phase7/README.md) maps all tasks and the focused API fix.
+Implementation is delivered; the full Phase 7 gate is **OPEN**. P7-11 recorded 628 passing
 Node/unit tests, with the implementation verifier failing on 32 inherited boundary findings.
-Current-tree database/session/socket/schema and browser/manual acceptance remain deferred.
-Phase 7 implementation may proceed under the existing verification policy; this handoff
-does not establish Phase 7/8 or release readiness. Earlier-phase evidence remains input.
+Database/session/socket/schema and browser/manual acceptance remain deferred. M08 implementation
+may proceed under the existing verification policy. Local branch integration preserves these
+OPEN gates; release acceptance remains outstanding.
+
+The [Phase 6 audit](./docs/phase-6-discussion-sharing.md) remains **OPEN**; its
+[evidence index](./docs/evidence/phase6/README.md) preserves the earlier 430-test result,
+sharing/discussion implementation and historical proof boundaries.
 
 The Phase 5 exit gate is **open**. The [Phase 5 evidence index](./docs/evidence/phase5/README.md)
 links the implementation commits and distinguishes historical browser results from current-tree
@@ -45,7 +49,8 @@ apps/
 packages/
   contracts/           shared wire and graph contracts
   document-model/      framework-independent Yjs graph model
-  fixtures/            deterministic test fixtures
+  export/              pure JSON and controlled SVG export
+  fixtures/            deterministic fixtures and three architecture templates
   sync-client/         browser persistence and synchronization
 ```
 
@@ -111,9 +116,9 @@ See [Phase 7 verification](docs/phase7-verification.md) for presentation/portabi
 mode boundaries, A16–A18/A21 coverage and recoverable deferred commands.
 
 The browser-backed sync-client units use Playwright with an installed stable Google Chrome. Package
-installation does not download a second browser binary. The web application does not retain an
-automated frontend test suite; its feature evidence is recorded through manual supported-browser
-acceptance and production builds. When browser verification resumes, use
+installation does not download a second browser binary. The web application has focused Node
+tests for state and policy; rendered acceptance uses prepared supported-browser harnesses and
+human observations, currently deferred. When browser verification resumes, use
 `pnpm test:browser -- indexeddb outbox` to filter the sync-client units.
 
 Invitation documents require `Referrer-Policy: no-referrer`, `Cache-Control: no-store`,
