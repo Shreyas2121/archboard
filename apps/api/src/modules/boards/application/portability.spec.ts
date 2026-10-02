@@ -1,5 +1,12 @@
-import { ERROR_CODES, MAX_ACTIVE_OWNED_BOARDS, type ImportBoard } from '@archboard/contracts';
-import { allEntityGraphFixture } from '@archboard/fixtures';
+import {
+  ERROR_CODES,
+  MAX_ACTIVE_OWNED_BOARDS,
+  type BoardDetail,
+  type ImportBoard,
+} from '@archboard/contracts';
+import { TEMPLATE_CHOICES, resolveTemplate, allEntityGraphFixture } from '@archboard/fixtures';
+import { projectGraphDocument } from '@archboard/document-model';
+import * as Y from 'yjs';
 import { jest } from '@jest/globals';
 import { BoardService, type BoardPersistence, type BoardWriteScope } from './board-service.js';
 import type { BoardPermissionService } from './permissions/index.js';
@@ -78,5 +85,64 @@ describe('portable board service', () => {
     ).rejects.toMatchObject({ code: ERROR_CODES.NOT_FOUND });
     expect(lockOwnerAndCount).toHaveBeenCalledTimes(1);
     expect(readLocked).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('fixed template creation service', () => {
+  it.each(TEMPLATE_CHOICES)(
+    'initializes $id through the shared private-board path',
+    async ({ id }) => {
+      const persistence = { idempotent: jest.fn<BoardPersistence['idempotent']>() };
+      persistence.idempotent.mockImplementation(
+        async (_actor, _operation, _key, _request, work) => ({
+          ...(await work({} as BoardWriteScope)),
+          replayed: false,
+        }),
+      );
+      const service = new BoardService(
+        persistence as unknown as BoardPersistence,
+        {} as BoardPermissionService,
+      );
+      const initialize = jest
+        .spyOn(service, 'initializePrivateBoard')
+        .mockResolvedValue({} as BoardDetail);
+      await service.create('actor', crypto.randomUUID(), { title: 'Example', templateId: id });
+      expect(persistence.idempotent.mock.calls[0]![3]).toEqual({
+        title: 'Example',
+        description: '',
+        templateId: id,
+      });
+      const bytes = initialize.mock.calls[0]![4]!;
+      const doc = new Y.Doc();
+      try {
+        Y.applyUpdate(doc, bytes);
+        const graph = projectGraphDocument(doc);
+        expect(graph.nodes.map((n) => n.title).sort()).toEqual(
+          resolveTemplate(id)
+            .nodes.map((n) => n.title)
+            .sort(),
+        );
+        expect(graph.steps).toHaveLength(resolveTemplate(id).steps.length);
+        expect(
+          graph.nodes.every((n) => !resolveTemplate(id).nodes.some((source) => source.id === n.id)),
+        ).toBe(true);
+      } finally {
+        doc.destroy();
+      }
+    },
+  );
+  it('rejects an unknown template before starting any transaction', async () => {
+    const persistence = { idempotent: jest.fn<BoardPersistence['idempotent']>() };
+    const service = new BoardService(
+      persistence as unknown as BoardPersistence,
+      {} as BoardPermissionService,
+    );
+    await expect(
+      service.create('actor', crypto.randomUUID(), {
+        title: 'Bad',
+        templateId: '../module' as 'web-application',
+      }),
+    ).rejects.toThrow();
+    expect(persistence.idempotent).not.toHaveBeenCalled();
   });
 });

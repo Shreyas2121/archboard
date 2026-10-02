@@ -74,7 +74,7 @@ export const importBoardSchema = z.strictObject({
   title: boardTitleSchema,
   file: exportEnvelopeSchema,
 });
-// The existing blank-board route stays unchanged until P7-10 wires the fixed registry.
+// Blank and fixed-template creation share the existing private-board route.
 export const createTemplateBoardSchema = z.strictObject({
   title: boardTitleSchema,
   description: boardDescriptionSchema.optional(),

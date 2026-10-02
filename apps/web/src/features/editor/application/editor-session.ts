@@ -14,6 +14,7 @@ import {
 } from '@archboard/contracts';
 import {
   accessGraphText,
+  remapGraphProjection,
   alignNodeGeometry,
   createGraphObjects,
   createLocalUndoManager,
@@ -43,7 +44,7 @@ import {
   type NodeAlignment,
   type TextEdit,
 } from '@archboard/document-model';
-import { instantiateWebApplicationTemplate } from '@archboard/fixtures';
+import { webApplicationTemplate } from '@archboard/fixtures';
 import * as Y from 'yjs';
 import {
   BrowserWriterSession,
@@ -671,7 +672,7 @@ export class EditorSession {
   }
 
   private seedDocument(document: Parameters<typeof createGraphObjects>[0]): void {
-    const fixture = instantiateWebApplicationTemplate(() => crypto.randomUUID());
+    const fixture = remapGraphProjection(webApplicationTemplate);
     createGraphObjects(document, {
       nodes: fixture.nodes,
       edges: fixture.edges,

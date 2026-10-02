@@ -9,7 +9,7 @@ import {
   boardInviteResponseSchema,
   boardVersionRequestSchema,
   changeMemberRoleSchema,
-  createBoardSchema,
+  createTemplateBoardSchema,
   createInviteSchema,
   duplicateBoardSchema,
   idempotencyKeySchema,
@@ -54,7 +54,7 @@ export class BoardsController {
     @Body() body: unknown,
   ) {
     const parsedKey = validate(idempotencyKeySchema, key);
-    const input = validate(createBoardSchema, body);
+    const input = validate(createTemplateBoardSchema, body);
     const result = await this.boards.create(session.user.id, parsedKey, input);
     return boardDetailResponseSchema.parse({ data: result.board });
   }

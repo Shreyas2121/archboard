@@ -8,7 +8,8 @@ import {
   type BoardListQuery,
   type BoardListResponse,
   type BoardSummary,
-  type CreateBoard,
+  type CreateTemplateBoard,
+  createTemplateBoardSchema,
   type ChangeMemberRole,
   type DuplicateBoard,
   type BoardVersionRequest,
@@ -18,6 +19,7 @@ import {
   type ImportBoard,
   boardSummarySchema,
 } from '@archboard/contracts';
+import { resolveTemplate } from '@archboard/fixtures';
 import { createFreshGraphUpdate } from '@archboard/document-model';
 import { parsePortableJson, PortableFileError } from '@archboard/export';
 import type { BoardAccessNotification } from './board-access-notification.js';
@@ -186,9 +188,11 @@ export class BoardService {
   public async create(
     actorUserId: string,
     key: string,
-    input: CreateBoard,
+    input: CreateTemplateBoard,
   ): Promise<{ board: BoardDetail; replayed: boolean }> {
-    const request = { title: input.title, description: input.description ?? '' };
+    const parsed = createTemplateBoardSchema.parse(input);
+    const request = { ...parsed, description: parsed.description ?? '' };
+    const graph = request.templateId ? resolveTemplate(request.templateId) : undefined;
     const result = await this.persistence.idempotent(
       actorUserId,
       'board.create',
@@ -202,6 +206,7 @@ export class BoardService {
             actorUserId,
             request.title,
             request.description,
+            graph ? createFreshGraphUpdate(graph) : undefined,
           ),
         };
       },

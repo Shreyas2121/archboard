@@ -7,6 +7,7 @@ import {
   GRAPH_SCHEMA_VERSION,
   HANDLES,
   graphProjectionSchema,
+  portableGraphProjectionSchema,
   type GraphProjection,
 } from '@archboard/contracts';
 
@@ -38,7 +39,7 @@ const SOURCE_IDS = {
   databaseStep: fixtureId(FIXTURE_NAMESPACES.STEP, TEMPLATE_ORDINALS.CACHE),
 } as const;
 
-export const webApplicationTemplate: GraphProjection = graphProjectionSchema.parse({
+export const webApplicationTemplate: GraphProjection = portableGraphProjectionSchema.parse({
   schemaVersion: GRAPH_SCHEMA_VERSION,
   nodes: [
     {
@@ -168,7 +169,7 @@ export const webApplicationTemplate: GraphProjection = graphProjectionSchema.par
       title: 'Handle request',
       notes: 'The API validates the request payload.',
       order: 1,
-      rect: { x: 340, y: 70, width: 340, height: 240 },
+      rect: { x: -40, y: 70, width: 720, height: 510 },
       nodeIds: [SOURCE_IDS.api, SOURCE_IDS.payload],
       edgeIds: [],
     },

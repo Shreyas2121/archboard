@@ -37,10 +37,10 @@
     "typeorm": "1.1.1",
     "ws": "8.21.3",
     "yjs": "13.6.32",
-    "zod": "4.6.4"
+    "zod": "4.6.4",
+    "@archboard/fixtures": "workspace:*"
   },
   "devDependencies": {
-    "@archboard/fixtures": "workspace:*",
     "@jest/globals": "30.5.1",
     "@types/node": "22.20.2",
     "@types/pg": "8.23.1",

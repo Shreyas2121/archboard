@@ -29,7 +29,7 @@ import {
   projectGraphDocument,
   validateGraphDocument,
 } from '@archboard/document-model';
-import { allEntityGraphFixture } from '@archboard/fixtures';
+import { TEMPLATE_CHOICES, resolveTemplate, allEntityGraphFixture } from '@archboard/fixtures';
 import { jest } from '@jest/globals';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -247,6 +247,23 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       through_seq: '0',
       byte_length: snapshot[0]!.actual,
     });
+    const blankBytes = (await database.query(
+      'SELECT update_bytes FROM board_snapshots WHERE board_id = $1',
+      [board.id],
+    )) as { update_bytes: Buffer }[];
+    const blankDoc = new Y.Doc();
+    try {
+      Y.applyUpdate(blankDoc, blankBytes[0]!.update_bytes);
+      expect(projectGraphDocument(blankDoc)).toEqual({
+        schemaVersion: 1,
+        nodes: [],
+        edges: [],
+        boundaries: [],
+        steps: [],
+      });
+    } finally {
+      blankDoc.destroy();
+    }
     const replay = await request('/boards', 'owner', {
       method: 'POST',
       key,
@@ -265,35 +282,101 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     );
   });
 
-  it('rolls back board and idempotency writes if snapshot persistence fails', async () => {
-    await database.query(
-      'ALTER TABLE board_snapshots ADD CONSTRAINT deny_p305_snapshot CHECK (false) NOT VALID',
-    );
-    const key = randomUUID();
-    try {
-      const response = await request('/boards', 'owner', {
+  it.each(TEMPLATE_CHOICES)(
+    'creates and exactly replays fresh private $id content',
+    async ({ id }) => {
+      const key = randomUUID();
+      const body = { title: 'Template ' + id, templateId: id };
+      const first = await request('/boards', 'editor', { method: 'POST', key, body });
+      expect(first.status).toBe(HTTP_CREATED);
+      const board = boardDetailResponseSchema.parse(await first.json()).data;
+      expect(board).toMatchObject({
+        effectiveRole: 'owner',
+        latestSeq: '0',
+        memberCount: 1,
+        owner: { id: users.get('editor')!.id },
+      });
+      const rows = (await database.query(
+        'SELECT update_bytes FROM board_snapshots WHERE board_id = $1',
+        [board.id],
+      )) as { update_bytes: Buffer }[];
+      const doc = new Y.Doc();
+      try {
+        Y.applyUpdate(doc, rows[0]!.update_bytes);
+        const graph = projectGraphDocument(doc);
+        const source = resolveTemplate(id);
+        expect(graph.nodes.map((n) => n.title).sort()).toEqual(
+          source.nodes.map((n) => n.title).sort(),
+        );
+        expect(graph.steps).toHaveLength(source.steps.length);
+        expect(graph.nodes.every((n) => !source.nodes.some((s) => s.id === n.id))).toBe(true);
+        validateGraphDocument(doc);
+      } finally {
+        doc.destroy();
+      }
+      const replay = await request('/boards', 'editor', { method: 'POST', key, body });
+      expect(replay.status).toBe(HTTP_CREATED);
+      expect(boardDetailResponseSchema.parse(await replay.json()).data).toEqual(board);
+      const changed = await request('/boards', 'editor', {
         method: 'POST',
         key,
-        body: { title: 'Rollback board' },
+        body: {
+          ...body,
+          templateId: id === 'web-application' ? 'event-processing' : 'web-application',
+        },
       });
-      expect(response.status).toBe(HTTP_UNAVAILABLE);
-      const error = apiErrorEnvelopeSchema.parse(await response.json());
-      expect(error.error.code).toBe(ERROR_CODES.TEMPORARILY_UNAVAILABLE);
-      expect(JSON.stringify(error)).not.toContain('SQL');
-      expect(
-        (await database.query('SELECT id FROM boards WHERE title = $1', [
-          'Rollback board',
-        ])) as unknown[],
-      ).toHaveLength(0);
-      expect(
-        (await database.query('SELECT key FROM api_idempotency WHERE key = $1', [
-          key,
-        ])) as unknown[],
-      ).toHaveLength(0);
-    } finally {
-      await database.query('ALTER TABLE board_snapshots DROP CONSTRAINT deny_p305_snapshot');
-    }
+      expect(changed.status).toBe(HTTP_CONFLICT);
+    },
+  );
+
+  it('rejects unknown templates without boards or receipts', async () => {
+    const key = randomUUID();
+    const response = await request('/boards', 'owner', {
+      method: 'POST',
+      key,
+      body: { title: 'Rejected template', templateId: '../module' },
+    });
+    expect(response.status).toBe(HTTP_BAD_REQUEST);
+    expect(
+      await database.query('SELECT id FROM boards WHERE title = $1', ['Rejected template']),
+    ).toHaveLength(0);
+    expect(
+      await database.query('SELECT key FROM api_idempotency WHERE key = $1', [key]),
+    ).toHaveLength(0);
   });
+
+  it.each([undefined, 'web-application', 'event-processing', 'service-boundary'] as const)(
+    'rolls back board and idempotency writes if snapshot persistence fails (%s)',
+    async (templateId) => {
+      await database.query(
+        'ALTER TABLE board_snapshots ADD CONSTRAINT deny_p305_snapshot CHECK (false) NOT VALID',
+      );
+      const key = randomUUID();
+      try {
+        const response = await request('/boards', 'owner', {
+          method: 'POST',
+          key,
+          body: { title: 'Rollback board', ...(templateId ? { templateId } : {}) },
+        });
+        expect(response.status).toBe(HTTP_UNAVAILABLE);
+        const error = apiErrorEnvelopeSchema.parse(await response.json());
+        expect(error.error.code).toBe(ERROR_CODES.TEMPORARILY_UNAVAILABLE);
+        expect(JSON.stringify(error)).not.toContain('SQL');
+        expect(
+          (await database.query('SELECT id FROM boards WHERE title = $1', [
+            'Rollback board',
+          ])) as unknown[],
+        ).toHaveLength(0);
+        expect(
+          (await database.query('SELECT key FROM api_idempotency WHERE key = $1', [
+            key,
+          ])) as unknown[],
+        ).toHaveLength(0);
+      } finally {
+        await database.query('ALTER TABLE board_snapshots DROP CONSTRAINT deny_p305_snapshot');
+      }
+    },
+  );
 
   it('imports privately with fresh IDs, exact replay and payload conflict', async () => {
     const file = {
@@ -1837,7 +1920,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       request('/boards', 'owner', {
         method: 'POST',
         key: randomUUID(),
-        body: { title: 'limit A' },
+        body: { title: 'limit A', templateId: 'event-processing' },
       }),
       request('/imports', 'owner', {
         method: 'POST',

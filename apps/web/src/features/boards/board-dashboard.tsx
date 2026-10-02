@@ -170,7 +170,7 @@ export function BoardDashboard() {
                 ? 'No titles match your search'
                 : archived
                   ? 'No archived boards'
-                  : 'Start with a blank board'}
+                  : 'Start with a blank board or template'}
             </h2>
             <p className="mt-2 text-muted-foreground">
               {search

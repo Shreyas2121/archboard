@@ -6,11 +6,20 @@ import {
   boardTitleSchema,
   boardDescriptionSchema,
   boardDetailResponseSchema,
-  createBoardSchema,
+  createTemplateBoardSchema,
+  templateIdSchema,
   duplicateBoardSchema,
   type BoardSummary,
 } from '@archboard/contracts';
 
+import { TEMPLATE_CHOICES } from '@archboard/fixtures';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -63,6 +72,7 @@ export function BoardDialog({
   const [title, setTitle] = useState(
     action === 'duplicate' ? `${board?.title ?? ''} copy` : (board?.title ?? ''),
   );
+  const [template, setTemplate] = useState('blank');
   const [description, setDescription] = useState(board?.description ?? '');
   const [error, setError] = useState('');
   const [mutationBusy, setBusy] = useState(false);
@@ -104,9 +114,10 @@ export function BoardDialog({
       await creation.submit(() =>
         action === 'duplicate'
           ? duplicateBoardSchema.parse({ title })
-          : createBoardSchema.parse({
+          : createTemplateBoardSchema.parse({
               title: title.trim() || DEFAULT_NEW_BOARD_TITLE,
               description,
+              ...(template === 'blank' ? {} : { templateId: templateIdSchema.parse(template) }),
             }),
       );
       return;
@@ -191,10 +202,34 @@ export function BoardDialog({
                   : action === 'restore'
                     ? 'The board will return to Active boards.'
                     : action === 'create'
-                      ? 'Create a blank private board. Leave the title empty to use the default.'
+                      ? 'Create a private board from a blank canvas or a bundled template. Online sign-in is required. Leave the title empty to use the default.'
                       : 'Change the board title or description.'}
             </DialogDescription>
           </DialogHeader>
+          {action === 'create' && (
+            <div className="grid gap-2">
+              <Label htmlFor="board-template">Starting content</Label>
+              <Select value={template} onValueChange={setTemplate} disabled={busy || locked}>
+                <SelectTrigger id="board-template">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="blank">Blank board</SelectItem>
+                  {TEMPLATE_CHOICES.map((choice) => (
+                    <SelectItem key={choice.id} value={choice.id}>
+                      {choice.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">
+                {template === 'blank'
+                  ? 'An empty canvas with no objects or steps.'
+                  : TEMPLATE_CHOICES.find((choice) => choice.id === template)?.description}
+              </p>
+              {!scope.online && <p role="status">Reconnect to create a board.</p>}
+            </div>
+          )}
           {action === 'duplicate' && (
             <div className="grid gap-2">
               {board && (
