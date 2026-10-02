@@ -23,6 +23,7 @@ export interface BoardEditorIdentity {
 export interface BoardEditorLoadState {
   readonly session: EditorSession | null;
   readonly boardTitle: string;
+  readonly boardDescription?: string;
   readonly status: BoardLoadStatus;
 }
 
@@ -34,6 +35,7 @@ export class BoardEditorLoader {
   private generation = 0;
   private closed = false;
   private title = 'Board';
+  private description = '';
 
   public constructor(
     private readonly identity: BoardEditorIdentity,
@@ -71,6 +73,7 @@ export class BoardEditorLoader {
       await this.current.setBoardAccess(detail.effectiveRole, detail.archivedAt !== null);
       if (!active()) return;
       this.title = detail.title;
+      this.description = detail.description;
       this.publish('ready');
       await cacheBoardSummary(
         { ...this.identity, graphSchemaVersion: GRAPH_SCHEMA_VERSION },
@@ -129,6 +132,7 @@ export class BoardEditorLoader {
       return;
     }
     this.title = cached.summary?.title ?? 'Cached board';
+    this.description = cached.summary?.description ?? '';
     this.publish('ready');
     if (active()) await this.current.startSync();
   }
@@ -146,6 +150,12 @@ export class BoardEditorLoader {
   }
 
   private publish(status: BoardLoadStatus): void {
-    if (!this.closed) this.onState({ session: this.current, boardTitle: this.title, status });
+    if (!this.closed)
+      this.onState({
+        session: this.current,
+        boardTitle: this.title,
+        boardDescription: this.description,
+        status,
+      });
   }
 }

@@ -10,6 +10,7 @@ import { RouteError } from './routes/route-error';
 import { safeReturnPath } from '@/features/auth';
 import type { AuthReturnPath } from '@/features/auth/return-path';
 import { InviteRoute } from './routes/invite-route';
+import { CheckpointRoute } from './routes/checkpoint-route';
 
 const rootRoute = createRootRoute({
   component: RootLayout,
@@ -45,6 +46,12 @@ const demoRoute = createRoute({
   component: DemoRoute,
 });
 
+const checkpointRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/boards/$boardId/checkpoints/$checkpointId',
+  component: CheckpointRoute,
+});
+
 const inviteRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/invite/$token',
@@ -55,6 +62,7 @@ const routeTree = rootRoute.addChildren([
   homeRoute,
   boardsRoute,
   boardEditorRoute,
+  checkpointRoute,
   demoRoute,
   inviteRoute,
 ]);

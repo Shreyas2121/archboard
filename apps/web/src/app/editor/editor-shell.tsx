@@ -97,6 +97,9 @@ function connectionEndpoints(connection: Connection): ConnectionEndpoints {
 }
 
 export function EditorShell({
+  boardDescription = '',
+  portability,
+  portabilityOpen = false,
   narrowScreen,
   session,
   sessionSnapshot,
@@ -142,7 +145,7 @@ export function EditorShell({
   const playback = useLocalPresentation(
     session,
     projection?.steps ?? [],
-    activeDialog !== null || storageOpen || serverReloadOpen || sharingOpen,
+    activeDialog !== null || storageOpen || serverReloadOpen || sharingOpen || portabilityOpen,
     canvasContainer,
     sessionSnapshot,
     viewState.editable,
@@ -339,7 +342,8 @@ export function EditorShell({
       activeDialog !== null ||
       storageOpen ||
       serverReloadOpen ||
-      sharingOpen,
+      sharingOpen ||
+      portabilityOpen,
     editable: viewState.editable && !playback.presenting,
     projection,
     selection,
@@ -361,14 +365,22 @@ export function EditorShell({
     session !== null &&
     sessionSnapshot?.writer.writable === true;
   const downloadRecovery = useCallback((): void => {
-    if (projection === null) return;
+    const graph = session?.getSnapshot().projection ?? projection;
+    if (graph === null) return;
     setRecoveryError(null);
     try {
-      downloadRecoveryArtifact(projection);
+      const reimportable = downloadRecoveryArtifact(graph, {
+        title: boardTitle ?? 'Local demo',
+        description: boardDescription,
+      });
+      if (!reimportable)
+        setRecoveryError(
+          'Full JSON exceeds 5 MiB and cannot be reimported unchanged. No content was truncated.',
+        );
     } catch (error) {
       setRecoveryError(error instanceof Error ? error.message : 'Recovery export failed.');
     }
-  }, [projection]);
+  }, [projection, session, boardTitle, boardDescription]);
   const confirmReset = useCallback(async (): Promise<void> => {
     if (session === null || !canReset) return;
     setResetPending(true);
@@ -450,6 +462,7 @@ export function EditorShell({
             </Button>
           }
           sharing={sharing}
+          portability={portability}
           boardMode={boardMode}
           boardTitle={boardTitle}
           viewState={viewState}

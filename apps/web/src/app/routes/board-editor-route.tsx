@@ -16,16 +16,24 @@ import { useBoardEditorLoader } from '@/app/editor/use-board-editor-loader';
 import type { BoardLoadStatus } from '@/app/editor/board-editor-loader';
 import { useBoardResourceRefresh } from '@/features/boards/use-board-resource-refresh';
 import { BoardSharingControl } from '@/features/boards/board-sharing-control';
+import { PortabilityControl } from '@/features/editor/portability/portability-control';
 
 interface SessionEditorProps {
+  readonly boardDescription?: string;
   readonly session: EditorSession;
   readonly boardTitle: string;
   readonly narrowScreen: boolean;
 }
 
-function SessionEditor({ session, boardTitle, narrowScreen }: SessionEditorProps) {
+function SessionEditor({
+  session,
+  boardTitle,
+  boardDescription = '',
+  narrowScreen,
+}: SessionEditorProps) {
   const snapshot = useEditorSession(session);
   const [sharingOpen, setSharingOpen] = useState(false);
+  const [portabilityOpen, setPortabilityOpen] = useState(false);
   const currentUser = useCurrentUser();
   const { boardId } = useParams({ from: '/boards/$boardId' });
   const resourceAccount =
@@ -39,6 +47,7 @@ function SessionEditor({ session, boardTitle, narrowScreen }: SessionEditorProps
   return (
     <EditorShell
       boardTitle={boardTitle}
+      boardDescription={boardDescription}
       narrowScreen={narrowScreen}
       session={session}
       sessionSnapshot={snapshot}
@@ -46,6 +55,21 @@ function SessionEditor({ session, boardTitle, narrowScreen }: SessionEditorProps
         <BoardSharingControl session={session} open={sharingOpen} onOpenChange={setSharingOpen} />
       }
       sharingOpen={sharingOpen}
+      portability={
+        session.resourceScope && (
+          <PortabilityControl
+            key={`${session.resourceScope.accountId}:${boardId}`}
+            session={session}
+            accountId={session.resourceScope.accountId}
+            boardId={boardId}
+            boardTitle={boardTitle}
+            boardDescription={boardDescription}
+            open={portabilityOpen}
+            onOpenChange={setPortabilityOpen}
+          />
+        )
+      }
+      portabilityOpen={portabilityOpen}
     />
   );
 }
@@ -120,6 +144,7 @@ export function BoardEditorRoute() {
   const {
     session,
     boardTitle,
+    boardDescription,
     status: offlineState,
   } = useBoardEditorLoader({
     boardId,
@@ -160,7 +185,12 @@ export function BoardEditorRoute() {
           sessionSnapshot={null}
         />
       ) : (
-        <SessionEditor session={session} boardTitle={boardTitle} narrowScreen={narrowScreen} />
+        <SessionEditor
+          session={session}
+          boardTitle={boardTitle}
+          boardDescription={boardDescription ?? ''}
+          narrowScreen={narrowScreen}
+        />
       )}
     </ReactFlowProvider>
   );

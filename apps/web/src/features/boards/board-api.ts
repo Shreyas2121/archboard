@@ -35,7 +35,10 @@ export async function readBoard(id: string, signal?: AbortSignal): Promise<Board
   const response = await apiRequest(`/boards/${id}`, boardDetailResponseSchema, {
     ...(signal === undefined ? {} : { signal }),
   });
-  return response.data;
+  // GET detail has memberCount; the account cache accepts the exact summary shape.
+  const { memberCount, ...summary } = response.data;
+  void memberCount;
+  return summary;
 }
 
 export async function submitBoardAction(

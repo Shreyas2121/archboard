@@ -361,6 +361,7 @@ test('actual API adapter accepts 204 only for the no-content contract and keeps 
   assert.equal(requests[0].credentials, 'include');
   assert.equal(requests[0].method, 'DELETE');
   assert.equal(requests[0].url, 'https://api.example.test/api/v1/boards/board-a/members/member-a');
+  assert.equal(requests[0].cache, 'no-store');
   responses.push(new Response(null, { status: 204 }));
   await assert.rejects(
     api.apiRequest('/boards/board-a', contracts.boardDetailResponseSchema),

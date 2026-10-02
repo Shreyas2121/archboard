@@ -1,9 +1,13 @@
 import { useRef, useState, type FormEvent } from 'react';
+import { Link } from '@tanstack/react-router';
 import {
   MAX_BOARD_DESCRIPTION_CHARACTERS,
   MAX_BOARD_TITLE_CHARACTERS,
   boardTitleSchema,
   boardDescriptionSchema,
+  boardDetailResponseSchema,
+  createBoardSchema,
+  duplicateBoardSchema,
   type BoardSummary,
 } from '@archboard/contracts';
 
@@ -22,6 +26,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { ApiClientError } from '@/platform/api';
 
 import { submitBoardAction, type BoardAction } from './board-api';
+import { DEFAULT_NEW_BOARD_TITLE } from './board-api';
+import { usePortabilityScope } from '@/features/editor/portability/use-portability-scope';
+import { usePortableCreation } from '@/features/editor/portability/use-portable-creation';
+import { CreationFeedback } from '@/features/editor/portability/creation-feedback';
+import { inspectVisibleBoards } from '@/features/editor/portability/inspect-boards';
+import { isNewPrivateBoard } from '@/features/editor/portability/portability-policy';
 
 const ACTION_LABELS: Record<BoardAction, string> = {
   create: 'Create board',
@@ -32,6 +42,7 @@ const ACTION_LABELS: Record<BoardAction, string> = {
 };
 
 interface BoardDialogProps {
+  accountId: string;
   action: BoardAction;
   board: BoardSummary | null;
   onClose: () => void;
@@ -41,6 +52,7 @@ interface BoardDialogProps {
 }
 
 export function BoardDialog({
+  accountId,
   action,
   board,
   onClose,
@@ -53,8 +65,24 @@ export function BoardDialog({
   );
   const [description, setDescription] = useState(board?.description ?? '');
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [mutationBusy, setBusy] = useState(false);
   const [conflicted, setConflicted] = useState(false);
+  const [sourceSelected, setSourceSelected] = useState(false);
+  const [reviewedBoards, setReviewedBoards] = useState<string[]>([]);
+  const scope = usePortabilityScope(accountId, board?.id ?? 'create');
+  const creation = usePortableCreation(
+    scope,
+    action === 'duplicate' ? `/boards/${board?.id ?? ''}/duplicate` : '/boards',
+    boardDetailResponseSchema.refine(
+      (result) =>
+        isNewPrivateBoard(result.data, accountId, board?.id) && result.data.memberCount === 1,
+    ),
+    (result) => onSuccess(action, result.data.title),
+    async () => setReviewedBoards(await inspectVisibleBoards(scope)),
+  );
+  const creates = action === 'create' || action === 'duplicate';
+  const busy = mutationBusy || creation.busy;
+  const locked = creates && creation.intent !== null;
   // A mounted dialog represents one user intent. A failed request keeps this key for a safe retry.
   const idempotency = useRef({ key: crypto.randomUUID(), request: '' });
   const editsText = action === 'create' || action === 'edit' || action === 'duplicate';
@@ -70,9 +98,25 @@ export function BoardDialog({
       setError(`Description must be at most ${MAX_BOARD_DESCRIPTION_CHARACTERS} characters.`);
       return;
     }
+    if (creates) {
+      if (action === 'duplicate' && !sourceSelected) return;
+      setError('');
+      await creation.submit(() =>
+        action === 'duplicate'
+          ? duplicateBoardSchema.parse({ title })
+          : createBoardSchema.parse({
+              title: title.trim() || DEFAULT_NEW_BOARD_TITLE,
+              description,
+            }),
+      );
+      return;
+    }
+    const token = scope.capture();
     setBusy(true);
     setError('');
     try {
+      await scope.authenticate();
+      if (!scope.accepts(token)) return;
       const request = JSON.stringify({
         action,
         boardId: board?.id,
@@ -90,8 +134,9 @@ export function BoardDialog({
         description,
         idempotency.current.key,
       );
-      onSuccess(action, result.title);
+      if (scope.accepts(token)) onSuccess(action, result.title);
     } catch (failure) {
+      if (!scope.accepts(token)) return;
       if (failure instanceof ApiClientError && failure.code === 'VERSION_CONFLICT') {
         setConflicted(true);
         try {
@@ -118,7 +163,7 @@ export function BoardDialog({
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !busy) onClose();
+        if (!open && !busy && !locked) onClose();
       }}
     >
       <DialogContent
@@ -128,7 +173,7 @@ export function BoardDialog({
             returnFocus.focus();
           }
         }}
-        showCloseButton={!busy}
+        showCloseButton={!busy && !locked}
         className={editsText ? 'sm:max-w-lg' : 'sm:max-w-md'}
       >
         <form
@@ -140,7 +185,7 @@ export function BoardDialog({
             <DialogTitle>{ACTION_LABELS[action]}</DialogTitle>
             <DialogDescription>
               {action === 'duplicate'
-                ? 'Copies the committed server version into a new private board. Local demo changes are not included.'
+                ? 'Copies committed server content into a new private board. Unsynchronized local edits are excluded. Open the source board to wait for acknowledgment or download local JSON, then import it.'
                 : action === 'archive'
                   ? 'The board will move to Archived boards. Its content and access remain intact.'
                   : action === 'restore'
@@ -150,6 +195,23 @@ export function BoardDialog({
                       : 'Change the board title or description.'}
             </DialogDescription>
           </DialogHeader>
+          {action === 'duplicate' && (
+            <div className="grid gap-2">
+              {board && (
+                <Link to="/boards/$boardId" params={{ boardId: board.id }} className="underline">
+                  Open source to synchronize or download local JSON
+                </Link>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy || locked}
+                onClick={() => setSourceSelected(true)}
+              >
+                Use committed server content, excluding pending edits
+              </Button>
+            </div>
+          )}
           {editsText ? (
             <div className="grid gap-4">
               <div className="grid gap-2">
@@ -158,6 +220,7 @@ export function BoardDialog({
                   id="board-title"
                   autoFocus
                   value={title}
+                  disabled={busy || locked}
                   maxLength={MAX_BOARD_TITLE_CHARACTERS}
                   onChange={(event) => setTitle(event.target.value)}
                 />
@@ -168,6 +231,7 @@ export function BoardDialog({
                   <Textarea
                     id="board-description"
                     value={description}
+                    disabled={busy || locked}
                     maxLength={MAX_BOARD_DESCRIPTION_CHARACTERS}
                     onChange={(event) => setDescription(event.target.value)}
                   />
@@ -180,13 +244,28 @@ export function BoardDialog({
               {error}
             </p>
           ) : null}
+          {creates && <CreationFeedback {...creation} />}
+          {!!reviewedBoards.length && (
+            <details>
+              <summary>Reviewed visible boards; matching titles are not receipt proof</summary>
+              {reviewedBoards.map((row) => (
+                <p key={row}>{row}</p>
+              ))}
+            </details>
+          )}
           <DialogFooter>
-            <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+            <Button type="button" variant="outline" disabled={busy || locked} onClick={onClose}>
               Cancel
             </Button>
             <Button
               type="submit"
-              disabled={busy || conflicted}
+              disabled={
+                busy ||
+                conflicted ||
+                !scope.readable ||
+                (action === 'duplicate' && !sourceSelected) ||
+                (locked && !creation.intent?.retryable(Date.now()))
+              }
               variant={action === 'archive' ? 'destructive' : 'default'}
             >
               {busy ? 'Working…' : ACTION_LABELS[action]}

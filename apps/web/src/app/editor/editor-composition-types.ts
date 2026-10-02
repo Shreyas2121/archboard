@@ -8,6 +8,7 @@ import type { EditorViewState } from './editor-view-state';
 type Actions = ReturnType<typeof useEditorUiActions>;
 type ButtonRef = RefObject<HTMLButtonElement | null>;
 export interface EditorToolbarProps {
+  readonly portability?: ReactNode;
   readonly presentation?: ReactNode;
   readonly sharing?: ReactNode;
   readonly boardMode: boolean;
@@ -69,6 +70,9 @@ export interface EditorDialogsProps {
 }
 
 export interface EditorShellProps {
+  readonly boardDescription?: string;
+  readonly portability?: ReactNode;
+  readonly portabilityOpen?: boolean;
   readonly sharing?: ReactNode;
   readonly sharingOpen?: boolean;
   readonly narrowScreen: boolean;

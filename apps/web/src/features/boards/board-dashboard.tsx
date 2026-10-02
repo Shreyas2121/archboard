@@ -22,6 +22,7 @@ import { BoardActionsMenu } from './board-actions-menu';
 import { BoardListSkeleton } from './board-list-skeleton';
 import { useCurrentUser } from '@/features/auth';
 import { boardListQueryKey } from './board-resource-refresh';
+import { ImportControl } from '@/features/editor/portability/import-control';
 
 type Selection = { action: BoardAction; board: BoardSummary | null; intent: string };
 
@@ -84,9 +85,12 @@ export function BoardDashboard() {
             Manage your saved boards here. The local demo stays on this device.
           </p>
         </div>
-        <Button type="button" size="lg" onClick={() => openDialog('create')}>
-          <Plus /> New board
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {accountId && <ImportControl key={accountId} accountId={accountId} />}
+          <Button type="button" size="lg" onClick={() => openDialog('create')}>
+            <Plus /> New board
+          </Button>
+        </div>
       </div>
       <section className="mt-9" aria-label="Board list">
         <div className="flex flex-col gap-4 border-b border-border pb-5 sm:flex-row sm:items-end">
@@ -214,9 +218,10 @@ export function BoardDashboard() {
       <p className="sr-only" role="status" aria-live="polite">
         {announcement}
       </p>
-      {selection ? (
+      {selection && accountId ? (
         <BoardDialog
-          key={selection.intent}
+          key={`${accountId}:${selection.intent}`}
+          accountId={accountId}
           action={selection.action}
           board={selectedBoard}
           onClose={() => setSelection(null)}

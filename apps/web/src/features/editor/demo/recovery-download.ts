@@ -1,44 +1,47 @@
-import { graphProjectionSchema, type GraphProjection } from '@archboard/contracts';
+import type { ExportEnvelope, GraphProjection } from '@archboard/contracts';
+import { capturePortableEnvelope, serializePortableJson } from '@archboard/export';
+import { downloadPortableEnvelope } from '@/platform/download/portable-download';
 
-export const RECOVERY_FORMAT_MARKER = 'archboard-local-recovery-v1';
+export const RECOVERY_FORMAT_MARKER = 'archboard';
 export const RECOVERY_FILE_NAME = 'archboard-local-recovery.json';
-const JSON_INDENT_SPACES = 2;
-
-export interface RecoveryArtifact {
-  readonly format: typeof RECOVERY_FORMAT_MARKER;
-  readonly createdAt: string;
-  readonly state: 'local-only';
-  readonly graph: GraphProjection;
-}
+export type RecoveryArtifact = ExportEnvelope;
+const RECOVERY_DURABILITY = {
+  online: false,
+  authoritative: false,
+  acknowledged: false,
+  persistencePending: true,
+  outboxPending: true,
+};
 
 export function serializeRecoveryArtifact(
   projection: GraphProjection,
   createdAt = new Date(),
+  board = { title: 'Local recovery', description: '' },
 ): string {
-  const artifact: RecoveryArtifact = {
-    format: RECOVERY_FORMAT_MARKER,
-    createdAt: createdAt.toISOString(),
-    state: 'local-only',
-    graph: graphProjectionSchema.parse(projection),
-  };
-  return JSON.stringify(artifact, null, JSON_INDENT_SPACES)
-    .replaceAll('<', '\\u003c')
-    .replaceAll('>', '\\u003e')
-    .replaceAll('&', '\\u0026')
-    .replaceAll('\u2028', '\\u2028')
-    .replaceAll('\u2029', '\\u2029');
+  return serializePortableJson(
+    capturePortableEnvelope(
+      {
+        exportedAt: createdAt.toISOString(),
+        board,
+        graph: projection,
+      },
+      RECOVERY_DURABILITY,
+    ),
+  ).json;
 }
 
-export function downloadRecoveryArtifact(projection: GraphProjection): void {
-  const blob = new Blob([serializeRecoveryArtifact(projection)], { type: 'application/json' });
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = RECOVERY_FILE_NAME;
-  anchor.rel = 'noopener';
-  try {
-    anchor.click();
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
+export function downloadRecoveryArtifact(
+  projection: GraphProjection,
+  board = { title: 'Local recovery', description: '' },
+): boolean {
+  return downloadPortableEnvelope(
+    capturePortableEnvelope(
+      {
+        exportedAt: new Date().toISOString(),
+        board,
+        graph: projection,
+      },
+      RECOVERY_DURABILITY,
+    ),
+  );
 }

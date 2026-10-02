@@ -61,6 +61,7 @@ export async function apiRequest<T>(
     response = await fetch(new URL(`/api/v1${path}`, API_ORIGIN), {
       method: options.method ?? 'GET',
       credentials: 'include',
+      cache: 'no-store',
       ...(options.signal ? { signal: options.signal } : {}),
       headers: {
         accept: 'application/json',
