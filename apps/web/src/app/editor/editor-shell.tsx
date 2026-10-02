@@ -67,6 +67,7 @@ import { useLocalPresentation } from '@/features/editor/presentation/use-local-p
 import {
   PresentationControls,
   PresentationNotes,
+  PresenterControls,
 } from '@/features/editor/presentation/presentation-controls';
 import {
   captureHighlights,
@@ -143,6 +144,8 @@ export function EditorShell({
     projection?.steps ?? [],
     activeDialog !== null || storageOpen || serverReloadOpen || sharingOpen,
     canvasContainer,
+    sessionSnapshot,
+    viewState.editable,
   );
   const captureStep = () => {
     const container = canvasContainer.current;
@@ -539,6 +542,7 @@ export function EditorShell({
           <h1 id="canvas-heading" className="sr-only">
             {boardMode ? `${boardTitle} architecture canvas` : 'Local demo architecture canvas'}
           </h1>
+          {(boardMode || playback.presenting) && <PresenterControls playback={playback} />}
           {playback.presenting && <PresentationNotes playback={playback} />}
           {!playback.presenting && hasNotices && (
             <div className="grid max-h-[40%] shrink-0 gap-2 overflow-y-auto border-b bg-surface-panel p-3">
@@ -631,6 +635,7 @@ export function EditorShell({
                 onGeometryCommit={commitGeometry}
                 onReconnect={reconnectWithPointer}
                 onViewportChange={setViewport}
+                onUserViewportChange={playback.pan}
                 projection={projection}
               />
             )}

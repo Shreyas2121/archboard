@@ -57,6 +57,7 @@ interface GraphCanvasProps {
   readonly minimapVisible: boolean;
   readonly gridSnapEnabled: boolean;
   readonly onViewportChange: (viewport: Viewport) => void;
+  readonly onUserViewportChange?: () => void;
   readonly editable: boolean;
   readonly onConnect: (connection: Connection) => void;
   readonly onReconnect: (edgeId: string, connection: Connection) => void;
@@ -71,6 +72,7 @@ export function GraphCanvas({
   minimapVisible,
   gridSnapEnabled,
   onViewportChange,
+  onUserViewportChange,
   editable,
   onConnect,
   onReconnect,
@@ -474,6 +476,10 @@ export function GraphCanvas({
           );
       }}
       onViewportChange={onViewportChange}
+      onMoveStart={(event) => {
+        // Programmatic fits have no user event; only user movement releases follow.
+        if (event) onUserViewportChange?.();
+      }}
       panActivationKeyCode="Space"
       panOnDrag={presenting ? true : [1]}
       selectionMode={SelectionMode.Partial}

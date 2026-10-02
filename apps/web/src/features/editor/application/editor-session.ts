@@ -215,6 +215,10 @@ export class EditorSession {
     return this.syncClient?.presence ?? null;
   }
 
+  public get presenter() {
+    return this.syncClient?.presenter ?? null;
+  }
+
   public subscribe = (listener: SessionListener): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
