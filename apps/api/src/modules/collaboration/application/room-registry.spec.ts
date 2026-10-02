@@ -20,6 +20,43 @@ function loaded(): LoadedRoom {
 }
 
 describe('bounded collaboration room registry', () => {
+  it('serializes checkpoint work behind an active room operation and never opens a room for REST alone', async () => {
+    let loads = 0;
+    const registry = new CollaborationRoomRegistry({
+      load: async () => {
+        loads++;
+        return loaded();
+      },
+    });
+    expect(await registry.runForBoard(randomUUID(), async () => 'closed')).toBe('closed');
+    expect(loads).toBe(0);
+    const id = randomUUID();
+    const reservation = await registry.reserve(id);
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const events: string[] = [];
+    const graphWrite = reservation.room.run(async () => {
+      await barrier;
+      events.push('graph committed');
+    });
+    const capture = registry.runForBoard(id, async () => {
+      events.push('checkpoint captured');
+      return '1';
+    });
+    await Promise.resolve();
+    expect(events).toEqual([]);
+    release();
+    await graphWrite;
+    expect(await capture).toBe('1');
+    expect(events).toEqual(['graph committed', 'checkpoint captured']);
+    reservation.release();
+    await registry.close();
+    await expect(registry.runForBoard(id, async () => 'late')).rejects.toMatchObject({
+      code: ERROR_CODES.SERVER_BUSY,
+    });
+  });
   it.each(['bytes', 'count'] as const)(
     'bounds inactive subscriber %s and isolates a throwing teardown',
     async (limit) => {

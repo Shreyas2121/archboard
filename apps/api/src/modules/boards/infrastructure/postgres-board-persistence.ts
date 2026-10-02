@@ -90,7 +90,8 @@ export class PostgresBoardPersistence implements BoardPersistence {
     );
   }
 
-  private scope(runner: QueryRunner): BoardWriteScope {
+  /** Other board-owned adapters share this runner for atomic private initialization. */
+  public scope(runner: QueryRunner): BoardWriteScope {
     return {
       permissionTransaction: runner,
       lockOwnerAndCount: (actorUserId) =>

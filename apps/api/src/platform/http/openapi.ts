@@ -16,6 +16,14 @@ import {
   duplicateBoardSchema,
   importBoardSchema,
   importBoardResponseSchema,
+  checkpointPathSchema,
+  checkpointListQuerySchema,
+  checkpointListResponseSchema,
+  checkpointSummaryResponseSchema,
+  checkpointDetailResponseSchema,
+  createCheckpointSchema,
+  restoreCheckpointSchema,
+  restoreCheckpointResponseSchema,
   inviteAcceptanceResponseSchema,
   inviteListQuerySchema,
   invitePathSchema,
@@ -56,6 +64,12 @@ const HTTP_RATE_LIMITED = 429;
 const HTTP_UNAVAILABLE = 503;
 
 const schemas = {
+  CheckpointListResponse: checkpointListResponseSchema,
+  CheckpointSummaryResponse: checkpointSummaryResponseSchema,
+  CheckpointDetailResponse: checkpointDetailResponseSchema,
+  CreateCheckpointRequest: createCheckpointSchema,
+  RestoreCheckpointRequest: restoreCheckpointSchema,
+  RestoreCheckpointResponse: restoreCheckpointResponseSchema,
   ApiError: apiErrorEnvelopeSchema,
   CurrentUserResponse: currentUserResponseSchema,
   BoardDetailResponse: boardDetailResponseSchema,
@@ -91,6 +105,8 @@ const schemas = {
 
 type SchemaName = keyof typeof schemas;
 type ParameterSchema =
+  | typeof checkpointPathSchema
+  | typeof checkpointListQuerySchema
   | typeof boardIdPathSchema
   | typeof memberPathSchema
   | typeof invitePathSchema
@@ -116,6 +132,46 @@ interface RouteSpec {
 }
 
 const routes: readonly RouteSpec[] = [
+  {
+    method: 'get',
+    path: '/api/v1/boards/{id}/checkpoints',
+    summary: 'List immutable checkpoint metadata, newest first, for current readers',
+    pathSchema: boardIdPathSchema,
+    querySchema: checkpointListQuerySchema,
+    response: 'CheckpointListResponse',
+    errors: [HTTP_NOT_FOUND],
+  },
+  {
+    method: 'get',
+    path: '/api/v1/boards/{id}/checkpoints/{checkpointId}',
+    summary: 'Read a board-scoped checkpoint projection; archived readers allowed',
+    pathSchema: checkpointPathSchema,
+    response: 'CheckpointDetailResponse',
+    errors: [HTTP_NOT_FOUND, HTTP_UNAVAILABLE],
+  },
+  {
+    method: 'post',
+    path: '/api/v1/boards/{id}/checkpoints',
+    summary:
+      'Capture committed graph at expectedSeq; current active owner/editor, 100 checkpoint cap',
+    pathSchema: boardIdPathSchema,
+    request: 'CreateCheckpointRequest',
+    response: 'CheckpointSummaryResponse',
+    idempotent: true,
+    success: HTTP_CREATED,
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT, HTTP_PAYLOAD_TOO_LARGE],
+  },
+  {
+    method: 'post',
+    path: '/api/v1/boards/{id}/checkpoints/{checkpointId}/duplicate',
+    summary: 'Restore checkpoint as a fresh private board owned by the current reader',
+    pathSchema: checkpointPathSchema,
+    request: 'RestoreCheckpointRequest',
+    response: 'RestoreCheckpointResponse',
+    idempotent: true,
+    success: HTTP_CREATED,
+    errors: [HTTP_NOT_FOUND, HTTP_CONFLICT, HTTP_RATE_LIMITED],
+  },
   {
     method: 'patch',
     path: '/api/v1/boards/{id}/comments/{commentId}',

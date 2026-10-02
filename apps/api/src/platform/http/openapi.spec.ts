@@ -3,6 +3,8 @@ import {
   threadCreateResponseSchema,
   importBoardSchema,
   importBoardResponseSchema,
+  createCheckpointSchema,
+  checkpointDetailResponseSchema,
 } from '@archboard/contracts';
 import { z } from 'zod';
 
@@ -11,6 +13,25 @@ import { createOpenApiDocument } from './openapi.js';
 const anchorVariantCount = 3;
 
 describe('Phase 6 discussion OpenAPI', () => {
+  it('documents immutable board-scoped checkpoint reads, capture and restore creation only', () => {
+    const document = createOpenApiDocument();
+    expect(document.components.schemas.CreateCheckpointRequest).toEqual(
+      z.toJSONSchema(createCheckpointSchema, { io: 'input' }),
+    );
+    expect(document.components.schemas.CheckpointDetailResponse).toEqual(
+      z.toJSONSchema(checkpointDetailResponseSchema, { io: 'output' }),
+    );
+    expect(Object.keys(document.paths['/api/v1/boards/{id}/checkpoints'] ?? {})).toEqual([
+      'get',
+      'post',
+    ]);
+    expect(
+      Object.keys(document.paths['/api/v1/boards/{id}/checkpoints/{checkpointId}'] ?? {}),
+    ).toEqual(['get']);
+    expect(
+      Object.keys(document.paths['/api/v1/boards/{id}/checkpoints/{checkpointId}/duplicate'] ?? {}),
+    ).toEqual(['post']);
+  });
   it('documents strict import DTOs and an idempotent private creation route', () => {
     const document = createOpenApiDocument();
     expect(document.components.schemas.ImportBoardRequest).toEqual(

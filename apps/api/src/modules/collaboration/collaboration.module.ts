@@ -10,6 +10,8 @@ import {
 import { BOARD_ACCESS_NOTIFICATION } from '../boards/application/board-access-notification.js';
 import { CollaborationRoomRegistry } from './application/room-registry.js';
 import { CommittedAnchorReader } from './application/committed-anchor-reader.js';
+import { BoardOperationQueue, CommittedGraphReader } from './application/committed-graph-reader.js';
+import { PostgresCommittedGraphReader } from './infrastructure/room/postgres-committed-graph-reader.js';
 import { PostgresCommittedAnchorReader } from './infrastructure/room/postgres-committed-anchor-reader.js';
 import { RoomMaintenanceService } from './application/room-maintenance.service.js';
 import { CollaborationShutdownService } from './application/collaboration-shutdown.service.js';
@@ -43,6 +45,18 @@ export class CollaborationModule {
       module: CollaborationModule,
       imports: [auth, database, BoardAuthorityModule],
       providers: [
+        {
+          provide: CommittedGraphReader,
+          inject: [ValidationWorkerPool],
+          useFactory: (workers: ValidationWorkerPool) => new PostgresCommittedGraphReader(workers),
+        },
+        {
+          provide: BoardOperationQueue,
+          inject: [CollaborationRoomRegistry],
+          useFactory: (rooms: CollaborationRoomRegistry) => ({
+            run: <T>(boardId: string, work: () => Promise<T>) => rooms.runForBoard(boardId, work),
+          }),
+        },
         {
           provide: BOARD_RESOURCE_NOTIFICATION,
           inject: [CollaborationGateway],
@@ -105,6 +119,8 @@ export class CollaborationModule {
         },
       ],
       exports: [
+        CommittedGraphReader,
+        BoardOperationQueue,
         BOARD_ACCESS_NOTIFICATION,
         BOARD_RESOURCE_NOTIFICATION,
         ValidationWorkerPool,

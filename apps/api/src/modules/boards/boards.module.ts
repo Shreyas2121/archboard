@@ -22,6 +22,10 @@ import { InvitesController } from './invites.controller.js';
 import { PostgresBoardPersistence } from './infrastructure/postgres-board-persistence.js';
 import { PostgresInvitePersistence } from './infrastructure/postgres-invite-persistence.js';
 import { ValidationWorkerPool } from '../collaboration/infrastructure/validation-worker/index.js';
+import { BoardOperationQueue, CommittedGraphReader } from '../collaboration/application/index.js';
+import { CheckpointService } from './application/checkpoint-service.js';
+import { PostgresCheckpointPersistence } from './infrastructure/postgres-checkpoint-persistence.js';
+import { CheckpointsController } from './checkpoints.controller.js';
 
 @Module({})
 export class BoardsModule {
@@ -33,8 +37,45 @@ export class BoardsModule {
     return {
       module: BoardsModule,
       imports: [auth, collaboration, BoardAuthorityModule],
-      controllers: [BoardsController, InvitesController, DiscussionController],
+      controllers: [
+        BoardsController,
+        InvitesController,
+        DiscussionController,
+        CheckpointsController,
+      ],
       providers: [
+        {
+          provide: CheckpointService,
+          inject: [
+            DataSource,
+            BoardPermissionService,
+            BoardService,
+            CommittedGraphReader,
+            BoardOperationQueue,
+            ValidationWorkerPool,
+            BOARD_RESOURCE_NOTIFICATION,
+          ],
+          useFactory: (
+            dataSource: DataSource,
+            permissions: BoardPermissionService,
+            boards: BoardService,
+            reader: CommittedGraphReader,
+            queue: BoardOperationQueue,
+            workers: ValidationWorkerPool,
+            notify: BoardResourceNotification,
+          ) =>
+            new CheckpointService(
+              new PostgresCheckpointPersistence(
+                dataSource,
+                reader,
+                new PostgresBoardPersistence(dataSource, workers),
+              ),
+              permissions,
+              boards,
+              queue,
+              notify,
+            ),
+        },
         {
           provide: DiscussionService,
           inject: [
@@ -93,7 +134,7 @@ export class BoardsModule {
             ),
         },
       ],
-      exports: [BoardService, InviteService],
+      exports: [BoardService, InviteService, CheckpointService],
     };
   }
 }

@@ -13,6 +13,14 @@ import {
   boardMembersResponseSchema,
   boardListResponseSchema,
   currentUserResponseSchema,
+  checkpointSummaryResponseSchema,
+  checkpointDetailResponseSchema,
+  checkpointListResponseSchema,
+  restoreCheckpointResponseSchema,
+  importBoardResponseSchema,
+  MAX_CHECKPOINTS_PER_BOARD,
+  PROTOCOL_VERSION,
+  serverMessageSchema,
 } from '@archboard/contracts';
 import {
   createNode,
@@ -28,6 +36,10 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Pool } from 'pg';
 import { DataSource } from 'typeorm';
 import * as Y from 'yjs';
+import WebSocket from 'ws';
+import { once } from 'node:events';
+import { PostgresRoomCompactor } from '../collaboration/infrastructure/room/postgres-room-compactor.js';
+import { CollaborationGateway } from '../collaboration/infrastructure/websocket/collaboration.gateway.js';
 
 import { AppModule } from '../../app.module.js';
 import { configureCollaborationWebSockets } from '../collaboration/infrastructure/websocket/index.js';
@@ -57,6 +69,7 @@ const HTTP_NOT_FOUND = 404;
 const HTTP_CONFLICT = 409;
 const HTTP_RATE_LIMITED = 429;
 const HTTP_UNAVAILABLE = 503;
+const HTTP_PAYLOAD_TOO_LARGE = 413;
 const PAGE_SIZE = 2;
 const SCHEMA_SUFFIX_LENGTH = 8;
 const EXPECTED_MEMBER_COUNT = 3;
@@ -316,7 +329,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     ).toHaveLength(0);
     const first = await request('/boards/import', 'viewer', { method: 'POST', key, body });
     expect(first.status).toBe(HTTP_CREATED);
-    const imported = boardDetailResponseSchema.parse(await first.json()).data;
+    const imported = importBoardResponseSchema.parse(await first.json()).data;
     expect(imported).toMatchObject({
       title: body.title,
       description: file.board.description,
@@ -326,7 +339,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     expect(imported.owner.id).toBe(users.get('viewer')!.id);
     const replay = await request('/boards/import', 'viewer', { method: 'POST', key, body });
     expect(replay.status).toBe(HTTP_CREATED);
-    expect(boardDetailResponseSchema.parse(await replay.json()).data).toEqual(imported);
+    expect(importBoardResponseSchema.parse(await replay.json()).data).toEqual(imported);
     expect(
       (
         await request('/boards/import', 'viewer', {
@@ -401,6 +414,574 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       await database.query('ALTER TABLE board_snapshots DROP CONSTRAINT deny_p706_snapshot');
     }
   });
+  it('A16 captures full committed snapshot/log content, notifies once, and restores fresh content after source compaction', async () => {
+    const source = await create('owner', 'Checkpoint source');
+    const other = await create('owner', 'Different checkpoint namespace');
+    await database.query(
+      "INSERT INTO board_members (board_id,user_id,role) VALUES ($1,$2,'viewer')",
+      [source.id, users.get('viewer')!.id],
+    );
+    const document = hydrateGraphDocument(allEntityGraphFixture);
+    const base = Buffer.from(Y.encodeStateAsUpdate(document));
+    await database.query(
+      'UPDATE board_snapshots SET update_bytes=$2,byte_length=$3 WHERE board_id=$1',
+      [source.id, base, base.byteLength],
+    );
+    const vector = Y.encodeStateVector(document);
+    createNode(document, {
+      ...allEntityGraphFixture.nodes[0]!,
+      id: randomUUID(),
+      title: 'Committed at capture',
+    });
+    const update = Buffer.from(Y.encodeStateAsUpdate(document, vector));
+    await database.query(
+      'INSERT INTO board_updates (board_id,seq,update_id,actor_user_id,update_bytes) VALUES ($1,1,$2,$3,$4)',
+      [source.id, randomUUID(), users.get('owner')!.id, update],
+    );
+    await database.query('UPDATE boards SET latest_seq=1 WHERE id=$1', [source.id]);
+    const expectedGraph = projectGraphDocument(document);
+    const frames: ReturnType<typeof serverMessageSchema.parse>[] = [];
+    const socket = new WebSocket(`${apiOrigin.replace('http:', 'ws:')}/ws/boards/${source.id}`, {
+      origin: ORIGIN,
+      headers: { cookie: users.get('viewer')!.cookie },
+    });
+    socket.on('message', (raw) =>
+      frames.push(serverMessageSchema.parse(JSON.parse(raw.toString()))),
+    );
+    const ready = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('Checkpoint observer ready timed out')),
+        TEST_TIMEOUT_MS,
+      );
+      socket.on('message', (raw) => {
+        if (serverMessageSchema.parse(JSON.parse(raw.toString())).event === 'ready') {
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      socket.once('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+    });
+    try {
+      await once(socket, 'open');
+      socket.send(
+        JSON.stringify({
+          event: 'hello',
+          data: {
+            protocolVersion: PROTOCOL_VERSION,
+            schemaVersion: GRAPH_SCHEMA_VERSION,
+            tabId: randomUUID(),
+          },
+        }),
+      );
+      await ready;
+      const key = randomUUID();
+      const body = { name: ' Captured committed ', expectedSeq: '1' };
+      const response = await request(`/boards/${source.id}/checkpoints`, 'owner', {
+        method: 'POST',
+        key,
+        body,
+      });
+      expect(response.status).toBe(HTTP_CREATED);
+      const checkpoint = checkpointSummaryResponseSchema.parse(await response.json()).data;
+      expect(
+        (
+          await request(`/boards/${source.id}/checkpoints`, 'viewer', {
+            method: 'POST',
+            key: randomUUID(),
+            body,
+          })
+        ).status,
+      ).toBe(HTTP_FORBIDDEN);
+      expect(
+        (
+          await request(`/boards/${source.id}/checkpoints`, 'outsider', {
+            method: 'POST',
+            key: randomUUID(),
+            body,
+          })
+        ).status,
+      ).toBe(HTTP_NOT_FOUND);
+      expect(checkpoint).toMatchObject({
+        boardId: source.id,
+        name: 'Captured committed',
+        throughSeq: '1',
+        schemaVersion: GRAPH_SCHEMA_VERSION,
+        createdBy: { id: users.get('owner')!.id },
+      });
+      const stored = (await database.query(
+        'SELECT update_bytes,created_at,through_seq::text FROM checkpoints WHERE id=$1',
+        [checkpoint.id],
+      )) as { update_bytes: Buffer; created_at: Date; through_seq: string }[];
+      const frozen = Buffer.from(stored[0]!.update_bytes);
+      const detailPath = `/boards/${source.id}/checkpoints/${checkpoint.id}`;
+      const detailResponse = await request(detailPath, 'viewer');
+      expect(detailResponse.headers.get('cache-control')).toBe('no-store');
+      const detail = checkpointDetailResponseSchema.parse(await detailResponse.json()).data;
+      expect(detail.graph).toEqual(expectedGraph);
+      expect(
+        (await request(`/boards/${other.id}/checkpoints/${checkpoint.id}`, 'owner')).status,
+      ).toBe(HTTP_NOT_FOUND);
+      expect((await request(detailPath, 'outsider')).status).toBe(HTTP_NOT_FOUND);
+      const replay = await request(`/boards/${source.id}/checkpoints`, 'owner', {
+        method: 'POST',
+        key,
+        body,
+      });
+      expect(checkpointSummaryResponseSchema.parse(await replay.json()).data).toEqual(checkpoint);
+      await application.get(CollaborationGateway).drain();
+      const pong = once(socket, 'pong');
+      socket.ping();
+      await pong;
+      expect(
+        frames.filter(
+          (frame) => frame.event === 'invalidate' && frame.data.resource === 'checkpoints',
+        ),
+      ).toHaveLength(1);
+      expect(
+        frames.filter((frame) => frame.event === 'ack' || frame.event === 'update'),
+      ).toHaveLength(0);
+      const live = (await database.query('SELECT latest_seq::text FROM boards WHERE id=$1', [
+        source.id,
+      ])) as { latest_seq: string }[];
+      expect(live[0]!.latest_seq).toBe('1');
+      socket.close();
+      await once(socket, 'close');
+      const nextVector = Y.encodeStateVector(document);
+      createNode(document, {
+        ...allEntityGraphFixture.nodes[0]!,
+        id: randomUUID(),
+        title: 'After capture',
+      });
+      const next = Buffer.from(Y.encodeStateAsUpdate(document, nextVector));
+      await database.query(
+        'INSERT INTO board_updates (board_id,seq,update_id,actor_user_id,update_bytes) VALUES ($1,2,$2,$3,$4)',
+        [source.id, randomUUID(), users.get('owner')!.id, next],
+      );
+      await database.query('UPDATE boards SET latest_seq=2 WHERE id=$1', [source.id]);
+      await application
+        .get(PostgresRoomCompactor)
+        .compact(source.id, '2', Y.encodeStateAsUpdate(document));
+      const unchanged = (await database.query(
+        'SELECT update_bytes,created_at,through_seq::text FROM checkpoints WHERE id=$1',
+        [checkpoint.id],
+      )) as typeof stored;
+      expect(unchanged).toEqual(stored);
+      expect(unchanged[0]!.update_bytes).toEqual(frozen);
+      expect(
+        checkpointDetailResponseSchema.parse(await (await request(detailPath, 'viewer')).json())
+          .data,
+      ).toEqual(detail);
+      const advancedReplay = await request(`/boards/${source.id}/checkpoints`, 'owner', {
+        method: 'POST',
+        key,
+        body,
+      });
+      expect(checkpointSummaryResponseSchema.parse(await advancedReplay.json()).data).toEqual(
+        checkpoint,
+      );
+      const changed = await request(`/boards/${source.id}/checkpoints`, 'owner', {
+        method: 'POST',
+        key,
+        body: { name: 'Changed', expectedSeq: '2' },
+      });
+      expect(changed.status).toBe(HTTP_CONFLICT);
+      expect(
+        (
+          await request(`/boards/${source.id}/checkpoints`, 'owner', {
+            method: 'POST',
+            key: randomUUID(),
+            body,
+          })
+        ).status,
+      ).toBe(HTTP_CONFLICT);
+      const archived = await request(`/boards/${source.id}/archive`, 'owner', {
+        method: 'POST',
+        body: { expectedVersion: source.metadataVersion },
+      });
+      expect(archived.status).toBe(HTTP_OK);
+      const failedRestoreKey = randomUUID();
+      await database.query(
+        'ALTER TABLE board_snapshots ADD CONSTRAINT deny_p707_restore CHECK (false) NOT VALID',
+      );
+      try {
+        expect(
+          (
+            await request(`${detailPath}/duplicate`, 'viewer', {
+              method: 'POST',
+              key: failedRestoreKey,
+              body: { title: 'Restore rollback' },
+            })
+          ).status,
+        ).toBe(HTTP_UNAVAILABLE);
+        expect(
+          (await database.query('SELECT id FROM boards WHERE title=$1', [
+            'Restore rollback',
+          ])) as unknown[],
+        ).toHaveLength(0);
+        expect(
+          (await database.query('SELECT key FROM api_idempotency WHERE key=$1', [
+            failedRestoreKey,
+          ])) as unknown[],
+        ).toHaveLength(0);
+      } finally {
+        await database.query('ALTER TABLE board_snapshots DROP CONSTRAINT deny_p707_restore');
+      }
+      const restoreKey = randomUUID();
+      const restoreBody = { title: 'Restored checkpoint' };
+      const restoredResponse = await request(`${detailPath}/duplicate`, 'viewer', {
+        method: 'POST',
+        key: restoreKey,
+        body: restoreBody,
+      });
+      expect(restoredResponse.status).toBe(HTTP_CREATED);
+      const restored = restoreCheckpointResponseSchema.parse(await restoredResponse.json()).data;
+      expect(restored).toMatchObject({ effectiveRole: 'owner', latestSeq: '0' });
+      expect(restored.owner.id).toBe(users.get('viewer')!.id);
+      const snapshot = (await database.query(
+        'SELECT update_bytes FROM board_snapshots WHERE board_id=$1',
+        [restored.id],
+      )) as { update_bytes: Buffer }[];
+      const fresh = new Y.Doc();
+      Y.applyUpdate(fresh, snapshot[0]!.update_bytes);
+      validateGraphDocument(fresh);
+      const restoredGraph = projectGraphDocument(fresh);
+      fresh.destroy();
+      expect(restoredGraph.nodes.map(({ title }) => title).sort()).toEqual(
+        expectedGraph.nodes.map(({ title }) => title).sort(),
+      );
+      const oldIds = new Set(
+        [
+          ...expectedGraph.nodes,
+          ...expectedGraph.edges,
+          ...expectedGraph.boundaries,
+          ...expectedGraph.steps,
+        ].map(({ id }) => id),
+      );
+      expect(
+        [
+          ...restoredGraph.nodes,
+          ...restoredGraph.edges,
+          ...restoredGraph.boundaries,
+          ...restoredGraph.steps,
+        ].some(({ id }) => oldIds.has(id)),
+      ).toBe(false);
+      for (const table of [
+        'board_updates',
+        'board_members',
+        'checkpoints',
+        'comment_threads',
+        'update_receipts',
+      ])
+        expect(
+          (await database.query(`SELECT board_id FROM ${table} WHERE board_id=$1`, [
+            restored.id,
+          ])) as unknown[],
+        ).toHaveLength(0);
+      expect(
+        restoreCheckpointResponseSchema.parse(
+          await (
+            await request(`${detailPath}/duplicate`, 'viewer', {
+              method: 'POST',
+              key: restoreKey,
+              body: restoreBody,
+            })
+          ).json(),
+        ).data,
+      ).toEqual(restored);
+      await database.query('DELETE FROM board_members WHERE board_id=$1 AND user_id=$2', [
+        source.id,
+        users.get('viewer')!.id,
+      ]);
+      expect(
+        (
+          await request(`${detailPath}/duplicate`, 'viewer', {
+            method: 'POST',
+            key: restoreKey,
+            body: restoreBody,
+          })
+        ).status,
+      ).toBe(HTTP_NOT_FOUND);
+      expect((await request(`/boards/${restored.id}`, 'viewer')).status).toBe(HTTP_OK);
+    } finally {
+      socket.terminate();
+      document.destroy();
+    }
+  });
+
+  it('conflicts without an effect when a real accepted graph commit wins before capture', async () => {
+    const source = await create('owner', 'Checkpoint write race');
+    const actor = application.get<RequestActor>(AUTH_REQUEST_ACTOR);
+    const failpoints = new DurableUpdateFailpointController();
+    let reached!: () => void;
+    let release!: () => void;
+    const atCommit = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    failpoints.arm(DURABLE_UPDATE_FAILPOINTS.DATABASE_COMMIT, async () => {
+      reached();
+      await barrier;
+    });
+    const accepted = createGraphDocument();
+    const replica = new Y.Doc();
+    Y.applyUpdate(replica, Y.encodeStateAsUpdate(accepted));
+    const vector = Y.encodeStateVector(replica);
+    createNode(replica, {
+      ...allEntityGraphFixture.nodes[0]!,
+      id: randomUUID(),
+      title: 'Race winner',
+    });
+    const harness = new PostgresDurableUpdateHarness(
+      source.id,
+      accepted,
+      database,
+      { authenticate: async (cookie) => ({ userId: (await actor.require({ cookie })).user.id }) },
+      new BoardPermissionService(new PostgresBoardAuthorityReader(database)),
+      failpoints,
+    );
+    const write = harness.accept({
+      boardId: source.id,
+      updateId: randomUUID(),
+      sessionToken: users.get('owner')!.cookie,
+      updateBytes: Y.encodeStateAsUpdate(replica, vector),
+    });
+    await atCommit;
+    const key = randomUUID();
+    const path = `/boards/${source.id}/checkpoints`;
+    const capture = request(path, 'owner', {
+      method: 'POST',
+      key,
+      body: { name: 'Stale', expectedSeq: '0' },
+    });
+    try {
+      await waitForBoardLock(database);
+    } finally {
+      release();
+    }
+    try {
+      expect((await write).receipt.sequence).toBe('1');
+      expect((await capture).status).toBe(HTTP_CONFLICT);
+      expect(
+        (await database.query('SELECT id FROM checkpoints WHERE board_id=$1', [
+          source.id,
+        ])) as unknown[],
+      ).toHaveLength(0);
+      expect(
+        (await database.query('SELECT key FROM api_idempotency WHERE key=$1', [key])) as unknown[],
+      ).toHaveLength(0);
+      const refreshed = await request(path, 'owner', {
+        method: 'POST',
+        key: randomUUID(),
+        body: { name: 'Refreshed', expectedSeq: '1' },
+      });
+      expect(refreshed.status).toBe(HTTP_CREATED);
+      const checkpoint = checkpointSummaryResponseSchema.parse(await refreshed.json()).data;
+      const detail = checkpointDetailResponseSchema.parse(
+        await (await request(`${path}/${checkpoint.id}`, 'owner')).json(),
+      ).data;
+      expect(detail.graph.nodes.map(({ title }) => title)).toContain('Race winner');
+    } finally {
+      accepted.destroy();
+      replica.destroy();
+    }
+  });
+  it('serializes checkpoint cap races, replays at cap, and rolls back checkpoint/receipt failure', async () => {
+    const source = await create('owner', 'Checkpoint cap');
+    await database.query(
+      `INSERT INTO checkpoints (board_id,name,created_by,through_seq,schema_version,update_bytes) SELECT $1,'fixture',$2,0,1,snapshot.update_bytes FROM board_snapshots snapshot CROSS JOIN generate_series(1,$3) WHERE snapshot.board_id=$1`,
+      [source.id, users.get('owner')!.id, MAX_CHECKPOINTS_PER_BOARD - 1],
+    );
+    const key = randomUUID();
+    const body = { name: 'Race A', expectedSeq: '0' };
+    const path = `/boards/${source.id}/checkpoints`;
+    const outcomes = await Promise.all([
+      request(path, 'owner', { method: 'POST', key, body }),
+      request(path, 'owner', {
+        method: 'POST',
+        key: randomUUID(),
+        body: { ...body, name: 'Race B' },
+      }),
+    ]);
+    expect(outcomes.map(({ status }) => status).sort()).toEqual([
+      HTTP_CREATED,
+      HTTP_PAYLOAD_TOO_LARGE,
+    ]);
+    const count = (await database.query(
+      'SELECT count(*)::integer AS count FROM checkpoints WHERE board_id=$1',
+      [source.id],
+    )) as { count: number }[];
+    expect(count[0]!.count).toBe(MAX_CHECKPOINTS_PER_BOARD);
+    const listed: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = checkpointListResponseSchema.parse(
+        await (
+          await request(
+            `${path}?limit=${PAGE_SIZE}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+            'owner',
+          )
+        ).json(),
+      );
+      listed.push(...page.data.map(({ id }) => id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    expect(listed).toHaveLength(MAX_CHECKPOINTS_PER_BOARD);
+    expect(new Set(listed).size).toBe(MAX_CHECKPOINTS_PER_BOARD);
+    // Restore shares the active-owned-board cap even for a current source viewer.
+    const cappedActor = users.get('outsider')!.id;
+    await database.query(
+      "INSERT INTO board_members (board_id,user_id,role) VALUES ($1,$2,'viewer')",
+      [source.id, cappedActor],
+    );
+    const active = (await database.query(
+      'SELECT count(*)::integer AS count FROM boards WHERE owner_user_id=$1 AND archived_at IS NULL',
+      [cappedActor],
+    )) as { count: number }[];
+    const fixtureTitle = `Restore cap ${randomUUID()}`;
+    const capKey = randomUUID();
+    await database.query(
+      'INSERT INTO boards (owner_user_id,title) SELECT $1,$2 FROM generate_series(1,$3)',
+      [cappedActor, fixtureTitle, MAX_ACTIVE_OWNED_BOARDS - active[0]!.count],
+    );
+    try {
+      const response = await request(`${path}/${listed[0]}/duplicate`, 'outsider', {
+        method: 'POST',
+        key: capKey,
+        body: { title: 'Restore blocked at cap' },
+      });
+      expect(response.status).toBe(HTTP_RATE_LIMITED);
+      expect(
+        (await database.query('SELECT key FROM api_idempotency WHERE key=$1', [
+          capKey,
+        ])) as unknown[],
+      ).toHaveLength(0);
+      expect(
+        (await database.query('SELECT id FROM boards WHERE title=$1', [
+          'Restore blocked at cap',
+        ])) as unknown[],
+      ).toHaveLength(0);
+    } finally {
+      await database.query('DELETE FROM boards WHERE owner_user_id=$1 AND title=$2', [
+        cappedActor,
+        fixtureTitle,
+      ]);
+      await database.query('DELETE FROM board_members WHERE board_id=$1 AND user_id=$2', [
+        source.id,
+        cappedActor,
+      ]);
+    }
+    if (outcomes[0]!.status === HTTP_CREATED)
+      expect((await request(path, 'owner', { method: 'POST', key, body })).status).toBe(
+        HTTP_CREATED,
+      );
+    const rollback = await create('owner', 'Checkpoint rollback');
+    const failedKey = randomUUID();
+    await database.query(
+      'ALTER TABLE checkpoints ADD CONSTRAINT deny_p707_checkpoint CHECK (false) NOT VALID',
+    );
+    try {
+      expect(
+        (
+          await request(`/boards/${rollback.id}/checkpoints`, 'owner', {
+            method: 'POST',
+            key: failedKey,
+            body,
+          })
+        ).status,
+      ).toBe(HTTP_UNAVAILABLE);
+      expect(
+        (await database.query('SELECT id FROM checkpoints WHERE board_id=$1', [
+          rollback.id,
+        ])) as unknown[],
+      ).toHaveLength(0);
+      expect(
+        (await database.query('SELECT key FROM api_idempotency WHERE key=$1', [
+          failedKey,
+        ])) as unknown[],
+      ).toHaveLength(0);
+    } finally {
+      await database.query('ALTER TABLE checkpoints DROP CONSTRAINT deny_p707_checkpoint');
+    }
+  });
+
+  it.each(['archive', 'downgrade', 'remove', 'expire'] as const)(
+    'denies checkpoint capture when %s wins the board transaction',
+    async (transition) => {
+      const source = await create('owner', `Checkpoint ${transition} race`);
+      await database.query(
+        "INSERT INTO board_members (board_id,user_id,role) VALUES ($1,$2,'editor')",
+        [source.id, users.get('editor')!.id],
+      );
+      const runner = database.createQueryRunner();
+      await runner.connect();
+      await runner.startTransaction();
+      await runner.query('SELECT id FROM boards WHERE id=$1 FOR UPDATE', [source.id]);
+      let attempted: Promise<Response> | undefined;
+      const key = randomUUID();
+      try {
+        attempted = request(`/boards/${source.id}/checkpoints`, 'editor', {
+          method: 'POST',
+          key,
+          body: { name: 'Queued', expectedSeq: '0' },
+        });
+        await waitForBoardLock(database);
+        if (transition === 'archive')
+          await runner.query('UPDATE boards SET archived_at=CURRENT_TIMESTAMP WHERE id=$1', [
+            source.id,
+          ]);
+        if (transition === 'downgrade')
+          await runner.query(
+            "UPDATE board_members SET role='viewer' WHERE board_id=$1 AND user_id=$2",
+            [source.id, users.get('editor')!.id],
+          );
+        if (transition === 'remove')
+          await runner.query('DELETE FROM board_members WHERE board_id=$1 AND user_id=$2', [
+            source.id,
+            users.get('editor')!.id,
+          ]);
+        if (transition === 'expire')
+          await database.query(
+            `UPDATE session SET "expiresAt"=CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE "userId"=$1`,
+            [users.get('editor')!.id],
+          );
+        await runner.commitTransaction();
+        const response = await attempted;
+        expect(response.status).toBe(
+          transition === 'remove'
+            ? HTTP_NOT_FOUND
+            : transition === 'expire'
+              ? HTTP_UNAUTHORIZED
+              : transition === 'archive'
+                ? HTTP_CONFLICT
+                : HTTP_FORBIDDEN,
+        );
+        expect(
+          (await database.query('SELECT id FROM checkpoints WHERE board_id=$1', [
+            source.id,
+          ])) as unknown[],
+        ).toHaveLength(0);
+        expect(
+          (await database.query('SELECT key FROM api_idempotency WHERE key=$1', [
+            key,
+          ])) as unknown[],
+        ).toHaveLength(0);
+      } finally {
+        if (runner.isTransactionActive) await runner.rollbackTransaction();
+        await runner.release();
+        await attempted;
+        if (transition === 'expire')
+          await database.query(
+            `UPDATE session SET "expiresAt"=CURRENT_TIMESTAMP + INTERVAL '1 day' WHERE "userId"=$1`,
+            [users.get('editor')!.id],
+          );
+      }
+    },
+  );
   it('lists owned and joined boards with search, archive filter, stable cursor, and no outsider leakage', async () => {
     const joined = await create('editor', 'Joined architecture');
     const ownedA = await create('owner', 'Search Alpha');

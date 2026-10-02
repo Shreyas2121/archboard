@@ -274,6 +274,14 @@ export class CollaborationRoomRegistry {
   }
 
   /** Queue a committed access transition only when a room is already open. */
+  public async runForBoard<T>(boardId: string, work: () => Promise<T>): Promise<T> {
+    if (this.stopped) throw new RoomAdmissionError(ERROR_CODES.SERVER_BUSY);
+    const room = this.rooms.get(boardId) ?? (await this.opening.get(boardId));
+    if (this.stopped) throw new RoomAdmissionError(ERROR_CODES.SERVER_BUSY);
+    // A closed room has no candidate; the transaction's board row lock remains authoritative.
+    return room ? room.run(work) : work();
+  }
+
   public async runIfActive(boardId: string, work: () => Promise<void>): Promise<void> {
     if (this.stopped) return;
     const room = this.rooms.get(boardId) ?? (await this.opening.get(boardId));
