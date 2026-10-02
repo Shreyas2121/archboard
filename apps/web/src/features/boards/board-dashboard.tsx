@@ -80,7 +80,13 @@ export function BoardDashboard() {
     <main className="flex-1 py-10 sm:py-14">
       <div className="flex flex-wrap items-end justify-between gap-5">
         <div>
-          <h1 className="text-3xl leading-10 font-semibold tracking-tight">Your boards</h1>
+          <h1
+            id="boards-heading"
+            tabIndex={-1}
+            className="text-3xl leading-10 font-semibold tracking-tight focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            Your boards
+          </h1>
           <p className="mt-2 text-muted-foreground">
             Manage your saved boards here. The local demo stays on this device.
           </p>

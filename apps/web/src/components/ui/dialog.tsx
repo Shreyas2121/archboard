@@ -43,14 +43,36 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
 }) {
+  const opener = React.useRef<HTMLElement | null>(null);
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
+        onOpenAutoFocus={(event) => {
+          opener.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          onOpenAutoFocus?.(event);
+        }}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event);
+          if (event.defaultPrevented) return;
+          const target =
+            opener.current?.isConnected &&
+            opener.current.getClientRects().length > 0 &&
+            !opener.current.matches(':disabled')
+              ? opener.current
+              : document.getElementById('architecture-canvas');
+          if (target) {
+            event.preventDefault();
+            target.focus();
+          }
+        }}
         data-slot="dialog-content"
         className={cn(
           'fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl border border-border bg-popover p-4 shadow-lg sm:p-6 text-sm text-popover-foreground duration-150 outline-none motion-reduce:animate-none sm:max-w-lg data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0',

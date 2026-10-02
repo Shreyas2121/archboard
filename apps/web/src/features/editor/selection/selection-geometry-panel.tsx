@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { EditorSession } from '@/features/editor/application';
 import { SELECTION_KINDS, type SelectionReference } from '@/features/editor/state';
+import { geometryInputNumber as numberValue } from './geometry-input';
 
 const ALIGNMENTS: readonly { readonly value: NodeAlignment; readonly label: string }[] = [
   { value: NODE_ALIGNMENTS.LEFT, label: 'Left' },
@@ -24,8 +25,6 @@ interface GeometryValues {
   readonly width: string;
   readonly height: string;
 }
-
-const numberValue = (value: string): number => Number(value);
 
 interface SelectionGeometryPanelProps {
   readonly projection: GraphProjection;
@@ -66,6 +65,7 @@ export function SelectionGeometryPanel({
   const [values, setValues] = useState<GeometryValues>({ x: '', y: '', width: '', height: '' });
   const [deltaX, setDeltaX] = useState('0');
   const [deltaY, setDeltaY] = useState('0');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (singleRect === null) return;
@@ -80,13 +80,13 @@ export function SelectionGeometryPanel({
   const updateValue = (field: keyof GeometryValues, value: string): void =>
     setValues((current) => ({ ...current, [field]: value }));
   const applySingle = (): void => {
-    const rect = {
-      x: numberValue(values.x),
-      y: numberValue(values.y),
-      width: numberValue(values.width),
-      height: numberValue(values.height),
-    };
     try {
+      const rect = {
+        x: numberValue(values.x),
+        y: numberValue(values.y),
+        width: numberValue(values.width),
+        height: numberValue(values.height),
+      };
       const batch: GeometryBatch = singleNode
         ? {
             nodes: [
@@ -101,15 +101,18 @@ export function SelectionGeometryPanel({
           ? { boundaries: [{ id: singleBoundary.id, rect }] }
           : {};
       session.setGeometry(batch);
+      setError(null);
       onNotice('Geometry updated.');
     } catch {
-      onNotice('Enter geometry within the shared coordinate and size limits.');
+      setError(
+        'Enter a finite number in each field, within the shared coordinate and size limits.',
+      );
     }
   };
   const moveSelection = (): void => {
-    const x = numberValue(deltaX);
-    const y = numberValue(deltaY);
     try {
+      const x = numberValue(deltaX);
+      const y = numberValue(deltaY);
       session.setGeometry({
         nodes: selectedNodes.map((node) => ({
           id: node.id,
@@ -120,9 +123,10 @@ export function SelectionGeometryPanel({
           rect: { ...boundary.rect, x: boundary.rect.x + x, y: boundary.rect.y + y },
         })),
       });
+      setError(null);
       onNotice('Selection moved in one update.');
     } catch {
-      onNotice('The movement exceeds the shared coordinate limits.');
+      setError('Enter finite movement values within the shared coordinate limits.');
     }
   };
   const align = (alignment: NodeAlignment): void => {
@@ -131,9 +135,10 @@ export function SelectionGeometryPanel({
         selectedNodes.map(({ id }) => id),
         alignment,
       );
+      setError(null);
       onNotice('Cards aligned in one update.');
     } catch {
-      onNotice('The selected cards could not be aligned.');
+      setError('The selected cards could not be aligned.');
     }
   };
 
@@ -161,6 +166,8 @@ export function SelectionGeometryPanel({
                 </Label>
                 <Input
                   id={`geometry-${field}`}
+                  aria-invalid={error !== null}
+                  aria-describedby={error ? 'geometry-error' : undefined}
                   type="number"
                   value={values[field]}
                   disabled={disabled}
@@ -181,6 +188,8 @@ export function SelectionGeometryPanel({
               <Label htmlFor="selection-delta-x">Move X</Label>
               <Input
                 id="selection-delta-x"
+                aria-invalid={error !== null}
+                aria-describedby={error ? 'geometry-error' : undefined}
                 type="number"
                 value={deltaX}
                 disabled={disabled}
@@ -191,6 +200,8 @@ export function SelectionGeometryPanel({
               <Label htmlFor="selection-delta-y">Move Y</Label>
               <Input
                 id="selection-delta-y"
+                aria-invalid={error !== null}
+                aria-describedby={error ? 'geometry-error' : undefined}
                 type="number"
                 value={deltaY}
                 disabled={disabled}
@@ -222,6 +233,11 @@ export function SelectionGeometryPanel({
             ))}
           </div>
         </div>
+      )}
+      {error && (
+        <p id="geometry-error" role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
       )}
     </section>
   );

@@ -182,9 +182,15 @@ export function BoardDialog({
     >
       <DialogContent
         onCloseAutoFocus={(event) => {
-          if (returnFocus?.isConnected) {
+          const target =
+            returnFocus?.isConnected &&
+            returnFocus.getClientRects().length > 0 &&
+            !returnFocus.matches(':disabled')
+              ? returnFocus
+              : document.getElementById('boards-heading');
+          if (target) {
             event.preventDefault();
-            returnFocus.focus();
+            target.focus();
           }
         }}
         showCloseButton={!busy && !locked}
@@ -256,6 +262,7 @@ export function BoardDialog({
                 <Label htmlFor="board-title">Title</Label>
                 <Input
                   id="board-title"
+                  aria-describedby={error ? 'board-action-error' : undefined}
                   autoFocus
                   value={title}
                   disabled={busy || locked}
@@ -268,6 +275,7 @@ export function BoardDialog({
                   <Label htmlFor="board-description">Description (optional)</Label>
                   <Textarea
                     id="board-description"
+                    aria-describedby={error ? 'board-action-error' : undefined}
                     value={description}
                     disabled={busy || locked}
                     maxLength={MAX_BOARD_DESCRIPTION_CHARACTERS}

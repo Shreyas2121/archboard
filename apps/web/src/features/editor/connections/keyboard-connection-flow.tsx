@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { HANDLES, type GraphNode, type Handle } from '@archboard/contracts';
 import { Cable } from 'lucide-react';
 
@@ -36,14 +36,27 @@ interface ConnectionSelectProps {
   readonly value: string;
   readonly options: readonly SelectOption[];
   readonly onChange: (value: string) => void;
+  readonly invalid?: boolean;
 }
 
-function ConnectionSelect({ id, label, value, options, onChange }: ConnectionSelectProps) {
+function ConnectionSelect({
+  id,
+  label,
+  value,
+  options,
+  onChange,
+  invalid = false,
+}: ConnectionSelectProps) {
   return (
     <div className="grid gap-2" onKeyDown={(event) => event.stopPropagation()}>
       <Label htmlFor={id}>{label}</Label>
       <Select value={value} onValueChange={onChange}>
-        <SelectTrigger className="w-full" id={id}>
+        <SelectTrigger
+          className="w-full"
+          id={id}
+          aria-invalid={invalid}
+          aria-describedby={invalid ? 'connection-error' : undefined}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent position="popper">
@@ -80,6 +93,8 @@ export function KeyboardConnectionFlow({
   );
   const [targetHandle, setTargetHandle] = useState<Handle>(HANDLES.LEFT);
   const [error, setError] = useState<string | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const nodeOptions = nodes.map((node) => ({
     value: node.id,
     label: `${node.title || 'Untitled card'} (${node.kind})`,
@@ -98,6 +113,10 @@ export function KeyboardConnectionFlow({
     setOpen(true);
   };
   const review = (): void => {
+    if (!nodes.some(({ id }) => id === sourceId) || !nodes.some(({ id }) => id === targetId)) {
+      setError('An endpoint was deleted. Choose two existing cards.');
+      return;
+    }
     if (sourceId === targetId) {
       setError('A card cannot connect to itself. Choose a different target card.');
       return;
@@ -118,6 +137,7 @@ export function KeyboardConnectionFlow({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
+          ref={trigger}
           type="button"
           className="w-full"
           variant="outline"
@@ -130,11 +150,27 @@ export function KeyboardConnectionFlow({
       <p className="mt-2 text-xs leading-4 text-muted-foreground">
         {nodes.length < MINIMUM_CONNECTION_NODES
           ? 'Create another card to enable keyboard connection.'
-          : 'Keyboard flow: choose endpoints, review, then create.'}
+          : disabled
+            ? 'Connection creation is unavailable in this view or at the board limit.'
+            : 'Keyboard flow: choose endpoints, review, then create.'}
       </p>
-      <DialogContent onKeyDown={(event) => event.stopPropagation()}>
+      <DialogContent
+        ref={content}
+        onKeyDown={(event) => event.stopPropagation()}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (trigger.current?.isConnected && !trigger.current.disabled) trigger.current.focus();
+          else document.getElementById('browse-objects')?.focus();
+        }}
+      >
         <DialogHeader>
-          <DialogTitle>{reviewing ? 'Review connection' : 'Connect cards'}</DialogTitle>
+          <DialogTitle
+            id="connection-heading"
+            tabIndex={-1}
+            className="focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            {reviewing ? 'Review connection' : 'Connect cards'}
+          </DialogTitle>
           <DialogDescription>
             {reviewing
               ? 'Confirm the immutable endpoints and handles before creating.'
@@ -168,6 +204,7 @@ export function KeyboardConnectionFlow({
               value={sourceId}
               options={nodeOptions}
               onChange={setSourceId}
+              invalid={error !== null}
             />
             <ConnectionSelect
               id="connection-source-handle"
@@ -182,6 +219,7 @@ export function KeyboardConnectionFlow({
               value={targetId}
               options={nodeOptions}
               onChange={setTargetId}
+              invalid={error !== null}
             />
             <ConnectionSelect
               id="connection-target-handle"
@@ -193,7 +231,7 @@ export function KeyboardConnectionFlow({
           </div>
         )}
         {error !== null && (
-          <p className="text-xs text-destructive" role="alert">
+          <p id="connection-error" tabIndex={-1} className="text-xs text-destructive" role="alert">
             {error}
           </p>
         )}
@@ -203,15 +241,36 @@ export function KeyboardConnectionFlow({
           </Button>
           {reviewing ? (
             <>
-              <Button type="button" variant="outline" onClick={() => setReviewing(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setReviewing(false);
+                  requestAnimationFrame(() =>
+                    document.getElementById('connection-source-card')?.focus(),
+                  );
+                }}
+              >
                 Back
               </Button>
-              <Button type="button" onClick={create}>
+              <Button type="button" disabled={disabled} onClick={create}>
                 Create connection
               </Button>
             </>
           ) : (
-            <Button type="button" onClick={review}>
+            <Button
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                review();
+                requestAnimationFrame(() =>
+                  (
+                    document.getElementById('connection-error') ??
+                    document.getElementById('connection-heading')
+                  )?.focus(),
+                );
+              }}
+            >
               Review connection
             </Button>
           )}

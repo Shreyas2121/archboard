@@ -99,6 +99,8 @@ export function ImportControl({ accountId }: { readonly accountId: string }) {
         <Label htmlFor="portable-file">JSON file</Label>
         <Input
           id="portable-file"
+          aria-invalid={!!error}
+          aria-describedby={error ? 'portable-file-error' : undefined}
           type="file"
           accept=".json,application/json"
           disabled={creation.busy || creation.intent !== null}
@@ -107,7 +109,7 @@ export function ImportControl({ accountId }: { readonly accountId: string }) {
         {filename && <p className="break-all text-sm">Selected: {filename}</p>}
         {reading && <p role="status">Reading and validating the complete file…</p>}
         {error && (
-          <p role="alert" className="whitespace-pre-wrap text-destructive">
+          <p id="portable-file-error" role="alert" className="whitespace-pre-wrap text-destructive">
             {error}
           </p>
         )}

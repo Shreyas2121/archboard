@@ -498,6 +498,7 @@ function ScopedDiscussion({
             <Label htmlFor="discussion-x">World X</Label>
             <Input
               id="discussion-x"
+              aria-describedby={error ? 'discussion-action-error' : undefined}
               type="number"
               value={pointX}
               disabled={controlsLocked}
@@ -506,6 +507,7 @@ function ScopedDiscussion({
             <Label htmlFor="discussion-y">World Y</Label>
             <Input
               id="discussion-y"
+              aria-describedby={error ? 'discussion-action-error' : undefined}
               type="number"
               value={pointY}
               disabled={controlsLocked}
@@ -562,7 +564,8 @@ function ScopedDiscussion({
             id="discussion-body"
             value={body}
             disabled={!writable || request !== null}
-            aria-describedby="discussion-counter discussion-validation"
+            aria-invalid={!!body && !!validation}
+            aria-describedby={`discussion-counter discussion-validation${error ? ' discussion-action-error' : ''}`}
             onChange={(event) =>
               setDrafts((previous) => ({ ...previous, [context]: event.target.value }))
             }
@@ -637,7 +640,7 @@ function ScopedDiscussion({
         </form>
       )}
       {error && (
-        <p role="alert" className="text-sm text-destructive">
+        <p id="discussion-action-error" role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}

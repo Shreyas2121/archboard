@@ -57,7 +57,13 @@ export function EditorDialogs({
           if (!open) editorCommands.cancelDelete();
         }}
       >
-        <DialogContent className="sm:max-w-md">
+        <DialogContent
+          className="sm:max-w-md"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            document.getElementById('architecture-canvas')?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Delete selected objects?</DialogTitle>
             <DialogDescription>
@@ -259,7 +265,14 @@ export function EditorDialogs({
             </div>
           </dl>
           <p className="text-xs leading-5 text-muted-foreground">
-            Structural commands are excluded from Undo. Deleted objects can be restored until
+            Use Tab to reach Add to board and the inspector. In Properties, Browse objects selects
+            cards, boundaries and connections; Select only inspects one, and Add to selection builds
+            a group for numeric movement/alignment. Connect cards chooses source/target and fixed
+            handles without dragging. Steps has Earlier/Later ordering. Presentation uses Left/Right
+            and Escape. Board panels exposes read-only panels on narrow screens. Tab reaches
+            zoom/fit, discussion and exports; Return to canvas resumes canvas shortcuts. Shortcuts
+            are paused in fields, menus, composition and dialogs. Ctrl/Cmd +/- remains browser text
+            zoom. Structural commands are excluded from Undo. Deleted objects can be restored until
             reload.
           </p>
           <DialogFooter showCloseButton />

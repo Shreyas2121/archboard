@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MAX_GRAPH_COORDINATE,
+  MAX_LIVE_NODES,
+  MAX_LIVE_BOUNDARIES,
   NODE_KINDS,
   handleSchema,
   type NodeKind,
@@ -135,6 +137,10 @@ export function EditorShell({
   const storageButtonRef = useRef<HTMLButtonElement>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [imageExportOpen, setImageExportOpen] = useState(false);
+  const [compactPanelsOpen, setCompactPanelsOpen] = useState(false);
+  useEffect(() => {
+    if (!narrowScreen) setCompactPanelsOpen(false);
+  }, [narrowScreen]);
   const boardMode = boardTitle !== undefined;
   const viewState = editorSessionViewState(
     sessionSnapshot,
@@ -152,7 +158,8 @@ export function EditorShell({
       serverReloadOpen ||
       sharingOpen ||
       portabilityOpen ||
-      imageExportOpen,
+      imageExportOpen ||
+      compactPanelsOpen,
     canvasContainer,
     sessionSnapshot,
     viewState.editable,
@@ -351,7 +358,8 @@ export function EditorShell({
       serverReloadOpen ||
       sharingOpen ||
       portabilityOpen ||
-      imageExportOpen,
+      imageExportOpen ||
+      compactPanelsOpen,
     editable: viewState.editable && !playback.presenting,
     projection,
     selection,
@@ -360,6 +368,7 @@ export function EditorShell({
     onCreateNote: createNoteFromClipboard,
     onFitContent: fitContent,
     onNotice: setConnectionNotice,
+    onObjectsDeleted: () => canvasContainer.current?.focus(),
     onOpenHelp: () => actions.openDialog('help'),
     onZoomIn: () => zoomTo(viewport.zoom * CANVAS_ZOOM_STEP),
     onZoomOut: () => zoomTo(viewport.zoom / CANVAS_ZOOM_STEP),
@@ -448,12 +457,25 @@ export function EditorShell({
 
   return (
     <div
-      className="grid h-full grid-rows-[3.5rem_minmax(0,1fr)_2.75rem] overflow-hidden bg-background"
+      className="grid h-full grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden bg-background"
       data-phase={viewState.phase}
     >
       {playback.presenting && <PresentationControls playback={playback} />}
       <div className={playback.presenting ? 'hidden' : 'contents'}>
         <EditorToolbar
+          boardPanels={
+            narrowScreen && (
+              <Button
+                id="board-panels"
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setCompactPanelsOpen(true)}
+              >
+                Board panels
+              </Button>
+            )
+          }
           presentation={
             <Button
               id="present-local"
@@ -525,6 +547,8 @@ export function EditorShell({
             >
               {paletteOpen && <h2 className="text-sm font-semibold">Add to board</h2>}
               <IconButton
+                aria-expanded={paletteOpen}
+                aria-controls="palette-content"
                 label={paletteOpen ? 'Collapse palette' : 'Expand palette'}
                 variant="ghost"
                 onClick={actions.togglePalette}
@@ -532,17 +556,32 @@ export function EditorShell({
                 {paletteOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
               </IconButton>
             </div>
-            <CollapsibleContent className="h-[calc(100%-3.5rem)] overflow-y-auto p-3">
+            <CollapsibleContent
+              id="palette-content"
+              className="h-[calc(100%-3.5rem)] overflow-y-auto p-3"
+            >
               <p className="mb-3 text-xs leading-5 text-muted-foreground">
                 Choose a card or boundary to create it in the visible canvas.
               </p>
+              {projection && (
+                <p className="mb-3 text-xs text-muted-foreground">
+                  {projection.nodes.length}/{MAX_LIVE_NODES} cards; {projection.boundaries.length}/
+                  {MAX_LIVE_BOUNDARIES} boundaries. At a limit, delete unused objects before
+                  creating more.
+                </p>
+              )}
               <div className="grid gap-1">
                 {PALETTE_ITEMS.map((item) => (
                   <Button
                     type="button"
                     className="h-auto min-h-12 justify-start gap-3 px-2 py-2 text-left whitespace-normal"
                     variant="ghost"
-                    disabled={!viewState.editable}
+                    disabled={
+                      !viewState.editable ||
+                      (item.kind === 'boundary'
+                        ? (projection?.boundaries.length ?? 0) >= MAX_LIVE_BOUNDARIES
+                        : (projection?.nodes.length ?? 0) >= MAX_LIVE_NODES)
+                    }
                     key={item.label}
                     onClick={() =>
                       item.kind === 'boundary' ? createBoundary() : createCard(item.kind)
@@ -648,9 +687,11 @@ export function EditorShell({
           <div
             ref={canvasContainer}
             id="architecture-canvas"
-            tabIndex={-1}
+            tabIndex={0}
+            role="region"
+            aria-label="Architecture canvas. Browse objects in the Properties panel to select and inspect."
             className={cn(
-              'relative grid min-h-0 w-full flex-1 place-items-center overflow-hidden bg-surface-canvas',
+              'relative grid min-h-0 w-full flex-1 place-items-center overflow-hidden bg-surface-canvas focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]',
               playback.presenting && '[&_.react-flow__handle]:hidden',
             )}
             aria-describedby={showStatePanel ? 'canvas-status-detail' : undefined}
@@ -744,6 +785,9 @@ export function EditorShell({
 
         <div className={playback.presenting ? 'hidden' : 'contents'}>
           <EditorInspector
+            narrowScreen={narrowScreen}
+            compactOpen={compactPanelsOpen}
+            setCompactOpen={setCompactPanelsOpen}
             presentation={
               session !== null && projection !== null ? (
                 <StepsPanel
@@ -752,7 +796,10 @@ export function EditorShell({
                   editable={viewState.editable}
                   capture={captureStep}
                   highlights={() => captureHighlights(projection, selection)}
-                  present={playback.start}
+                  present={(id) => {
+                    setCompactPanelsOpen(false);
+                    playback.start(id);
+                  }}
                 />
               ) : undefined
             }
@@ -783,7 +830,7 @@ export function EditorShell({
 
       <footer
         className={cn(
-          'relative z-20 flex items-center justify-between border-t bg-background px-2 sm:px-3',
+          'relative z-20 flex min-h-11 flex-wrap items-center justify-between border-t bg-background px-2 sm:px-3',
           playback.presenting && 'invisible',
         )}
       >

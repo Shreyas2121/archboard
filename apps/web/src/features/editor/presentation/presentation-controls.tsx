@@ -15,7 +15,7 @@ export function PresentationControls({
   const index = playback.ordered.findIndex(({ id }) => id === playback.activeId);
   return (
     <header
-      className="flex min-w-0 items-center gap-2 border-b bg-surface-panel px-3"
+      className="flex min-h-14 min-w-0 flex-wrap items-center gap-2 border-b bg-surface-panel px-3 py-2"
       aria-label="Presentation controls"
     >
       <span className="min-w-0 flex-1 truncate text-sm" aria-live="polite">
@@ -50,7 +50,13 @@ export function PresentationControls({
       >
         Next
       </Button>
-      <Button type="button" size="sm" ref={exitButton} onClick={playback.exit}>
+      <Button
+        id="exit-presentation"
+        type="button"
+        size="sm"
+        ref={exitButton}
+        onClick={playback.exit}
+      >
         Exit presentation
       </Button>
     </header>

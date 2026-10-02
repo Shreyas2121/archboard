@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { shouldIgnoreEditorShortcut } from '@/features/editor/history/editor-shortcuts';
+import {
+  shouldIgnoreEditorShortcut,
+  editorViewShortcut,
+} from '@/features/editor/history/editor-shortcuts';
 
 class Target extends EventTarget {
   public constructor(private readonly matched: boolean) {
@@ -15,6 +18,15 @@ const scope = (open: boolean) =>
 afterEach(() => vi.unstubAllGlobals());
 
 describe('editor shortcut ownership', () => {
+  it('reserves native browser zoom and modified keys, while exposing unmodified canvas view commands', () => {
+    const modifiers = { ctrlKey: false, metaKey: false, altKey: false };
+    for (const key of ['+', '=', '-', 'f', '?']) {
+      expect(editorViewShortcut({ key, ...modifiers })).not.toBeNull();
+      for (const modifier of ['ctrlKey', 'metaKey', 'altKey'] as const)
+        expect(editorViewShortcut({ key, ...modifiers, [modifier]: true })).toBeNull();
+    }
+    expect(editorViewShortcut({ key: 'ArrowLeft', ...modifiers })).toBeNull();
+  });
   it('blocks explicit modal ownership before dialog content mounts', () => {
     expect(shouldIgnoreEditorShortcut(event, scope(false), true)).toBe(true);
   });

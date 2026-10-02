@@ -418,6 +418,8 @@ export function GraphCanvas({
       minZoom={presenting ? PRESENTATION_MIN_ZOOM : CANVAS_MIN_ZOOM}
       multiSelectionKeyCode="Shift"
       nodes={nodes}
+      nodesFocusable={false}
+      edgesFocusable={false}
       nodesConnectable={editable}
       nodesDraggable={editable}
       nodeTypes={NODE_TYPES}
