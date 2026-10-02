@@ -29,7 +29,12 @@ import {
   projectGraphDocument,
   validateGraphDocument,
 } from '@archboard/document-model';
-import { TEMPLATE_CHOICES, resolveTemplate, allEntityGraphFixture } from '@archboard/fixtures';
+import {
+  TEMPLATE_CHOICES,
+  resolveTemplate,
+  normalizeGraphFixtureIds,
+  allEntityGraphFixture,
+} from '@archboard/fixtures';
 import { jest } from '@jest/globals';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -305,6 +310,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
         Y.applyUpdate(doc, rows[0]!.update_bytes);
         const graph = projectGraphDocument(doc);
         const source = resolveTemplate(id);
+        expect(normalizeGraphFixtureIds(graph)).toEqual(normalizeGraphFixtureIds(source));
         expect(graph.nodes.map((n) => n.title).sort()).toEqual(
           source.nodes.map((n) => n.title).sort(),
         );
@@ -441,6 +447,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     Y.applyUpdate(decoded, snapshots[0]!.update_bytes);
     validateGraphDocument(decoded);
     const projection = projectGraphDocument(decoded);
+    expect(normalizeGraphFixtureIds(projection)).toEqual(normalizeGraphFixtureIds(file.graph));
     const sourceIds = new Set(
       [...file.graph.nodes, ...file.graph.edges, ...file.graph.boundaries, ...file.graph.steps].map(
         ({ id }) => id,
@@ -461,6 +468,76 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
         ])) as unknown[],
       ).toHaveLength(0);
     decoded.destroy();
+  });
+
+  it('A18 rejects complete unsafe raw import envelopes before any board or receipt effect', async () => {
+    const valid = {
+      format: 'archboard',
+      formatVersion: 1,
+      exportedAt: '2026-10-02T00:00:00.000Z',
+      syncStatusAtExport: 'local-only',
+      board: { title: 'Source', description: '' },
+      graph: allEntityGraphFixture,
+    };
+    const candidates = [
+      { ...valid, formatVersion: 2 },
+      { ...valid, ownerUserId: users.get('owner')!.id },
+      { ...valid, graph: { ...valid.graph, credentials: 'forged' } },
+      {
+        ...valid,
+        graph: {
+          ...valid.graph,
+          edges: [{ ...valid.graph.edges[0]!, targetId: valid.graph.edges[0]!.sourceId }],
+        },
+      },
+      {
+        ...valid,
+        graph: {
+          ...valid.graph,
+          edges: [{ ...valid.graph.edges[0]!, sourceHandle: 'unsupported' }],
+        },
+      },
+      {
+        ...valid,
+        graph: { ...valid.graph, steps: [{ ...valid.graph.steps[0]!, nodeIds: [randomUUID()] }] },
+      },
+      {
+        ...valid,
+        graph: {
+          ...valid.graph,
+          nodes: valid.graph.nodes.map((node) =>
+            node.kind === 'component'
+              ? { ...node, content: { ...node.content, externalUrl: 'javascript:alert(1)' } }
+              : node,
+          ),
+        },
+      },
+      JSON.parse(
+        JSON.stringify(valid).replace(
+          '"format":"archboard"',
+          '"__proto__":{"polluted":true},"format":"archboard"',
+        ),
+      ),
+    ];
+    for (const file of candidates) {
+      const key = randomUUID();
+      const title = 'P7-11 rejected ' + key;
+      const response = await request('/imports', 'owner', {
+        method: 'POST',
+        key,
+        body: { title, file },
+      });
+      expect(response.status).toBe(HTTP_BAD_REQUEST);
+      expect(apiErrorEnvelopeSchema.parse(await response.json()).error.code).toBe(
+        ERROR_CODES.VALIDATION_ERROR,
+      );
+      expect(await database.query('SELECT id FROM boards WHERE title = $1', [title])).toHaveLength(
+        0,
+      );
+      expect(
+        await database.query('SELECT key FROM api_idempotency WHERE key = $1', [key]),
+      ).toHaveLength(0);
+    }
   });
 
   it('rolls back import board, snapshot and receipt on a persistence failure', async () => {
@@ -731,6 +808,9 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       Y.applyUpdate(fresh, snapshot[0]!.update_bytes);
       validateGraphDocument(fresh);
       const restoredGraph = projectGraphDocument(fresh);
+      expect(normalizeGraphFixtureIds(restoredGraph)).toEqual(
+        normalizeGraphFixtureIds(expectedGraph),
+      );
       fresh.destroy();
       expect(restoredGraph.nodes.map(({ title }) => title).sort()).toEqual(
         expectedGraph.nodes.map(({ title }) => title).sort(),
@@ -1262,6 +1342,33 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     await database.query('UPDATE boards SET latest_seq = 1 WHERE id = $1', [source.id]);
     const key = randomUUID();
     const path = `/boards/${source.id}/duplicate`;
+    const failedCopyKey = randomUUID();
+    const failedCopyBody = { title: 'P7-11 rollback duplicate' };
+    await database.query(
+      'ALTER TABLE board_snapshots ADD CONSTRAINT deny_p711_duplicate CHECK (false) NOT VALID',
+    );
+    try {
+      const failedCopy = await request(path, 'viewer', {
+        method: 'POST',
+        key: failedCopyKey,
+        body: failedCopyBody,
+      });
+      expect(failedCopy.status).toBe(HTTP_UNAVAILABLE);
+      expect(
+        await database.query('SELECT id FROM boards WHERE title = $1', [failedCopyBody.title]),
+      ).toHaveLength(0);
+      expect(
+        await database.query('SELECT key FROM api_idempotency WHERE key = $1', [failedCopyKey]),
+      ).toHaveLength(0);
+    } finally {
+      await database.query('ALTER TABLE board_snapshots DROP CONSTRAINT deny_p711_duplicate');
+    }
+    const retriedCopy = await request(path, 'viewer', {
+      method: 'POST',
+      key: failedCopyKey,
+      body: failedCopyBody,
+    });
+    expect(retriedCopy.status).toBe(HTTP_CREATED);
     const response = await request(path, 'viewer', {
       method: 'POST',
       key,
@@ -1286,6 +1393,9 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     Y.applyUpdate(duplicated, snapshots[0]!.update_bytes);
     validateGraphDocument(duplicated);
     const projection = projectGraphDocument(duplicated);
+    expect(normalizeGraphFixtureIds(projection)).toEqual(
+      normalizeGraphFixtureIds(sourceProjection),
+    );
     expect(projection.nodes.map((node) => node.title).sort()).toEqual(
       sourceProjection.nodes.map((node) => node.title).sort(),
     );
@@ -1316,18 +1426,25 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     });
     expect(boardDetailResponseSchema.parse(await replay.json()).data).toEqual(copy);
     // Successful retry must remain the original effect after source advancement.
-    await database.query('UPDATE boards SET latest_seq = latest_seq + 1 WHERE id = $1', [
-      source.id,
-    ]);
+    const advancedVector = Y.encodeStateVector(document);
+    createNode(document, {
+      ...allEntityGraphFixture.nodes[0]!,
+      id: randomUUID(),
+      title: 'After duplicate capture',
+    });
+    const advancedUpdate = Buffer.from(Y.encodeStateAsUpdate(document, advancedVector));
+    await database.query(
+      'INSERT INTO board_updates (board_id, seq, update_id, actor_user_id, update_bytes) VALUES ($1, 2, $2, $3, $4)',
+      [source.id, randomUUID(), users.get('owner')!.id, advancedUpdate],
+    );
+    await database.query('UPDATE boards SET latest_seq = 2 WHERE id = $1', [source.id]);
     const advancedReplay = await request(path, 'viewer', {
       method: 'POST',
       key,
       body: { title: 'Private copy' },
     });
     expect(boardDetailResponseSchema.parse(await advancedReplay.json()).data).toEqual(copy);
-    await database.query('UPDATE boards SET latest_seq = latest_seq - 1 WHERE id = $1', [
-      source.id,
-    ]);
+    expect(projection.nodes.some((node) => node.title === 'After duplicate capture')).toBe(false);
     const conflict = await request(path, 'viewer', {
       method: 'POST',
       key,

@@ -32,7 +32,8 @@
     "test": "node scripts/run-workspace-tests.mjs",
     "test:browser": "node scripts/run-browser-unit-tests.mjs",
     "test:integration": "pnpm --filter @archboard/api run test:integration",
-    "typecheck": "pnpm -r --if-present run typecheck"
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "phase7:verify": "node scripts/phase7-verify.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

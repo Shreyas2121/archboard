@@ -221,6 +221,10 @@ try {
   await readerPage.getByRole('button', { name: 'Follow presenter', exact: true }).waitFor();
   assert.equal(await readerPage.getByRole('button', { name: 'Unfollow', exact: true }).count(), 0);
   stage = 'offline reconnect requires fresh opt-in';
+  await readerPage.evaluate(() => navigator.serviceWorker.ready);
+  await readerPage.reload();
+  await readerPage.waitForFunction(() => navigator.serviceWorker.controller !== null);
+  await readerPage.getByRole('button', { name: 'Follow presenter', exact: true }).waitFor();
   await ownerPage.getByRole('button', { name: 'Broadcast current step', exact: true }).click();
   await readerPage.getByRole('button', { name: 'Follow presenter', exact: true }).click();
   await reader.setOffline(true);

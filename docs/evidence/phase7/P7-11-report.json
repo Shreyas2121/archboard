@@ -1,0 +1,518 @@
+{
+  "mode": "implementation",
+  "results": [
+    {
+      "id": "format",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 12427,
+      "command": ["node", "<pnpm>", "format:check"],
+      "cwd": "."
+    },
+    {
+      "id": "lint",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 11506,
+      "command": ["node", "<pnpm>", "lint"],
+      "cwd": "."
+    },
+    {
+      "id": "types",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 42693,
+      "command": ["node", "<pnpm>", "typecheck"],
+      "cwd": "."
+    },
+    {
+      "id": "workspace-build",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 34873,
+      "command": ["node", "<pnpm>", "build"],
+      "cwd": "."
+    },
+    {
+      "id": "contracts-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 164,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "todo": 0,
+      "durationMs": 2220,
+      "command": ["node", "../../node_modules/vitest/vitest.mjs", "run"],
+      "cwd": "packages/contracts"
+    },
+    {
+      "id": "fixtures-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 23,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "todo": 0,
+      "durationMs": 1546,
+      "command": ["node", "../../node_modules/vitest/vitest.mjs", "run"],
+      "cwd": "packages/fixtures"
+    },
+    {
+      "id": "document-model-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 91,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "todo": 0,
+      "durationMs": 5124,
+      "command": ["node", "../../node_modules/vitest/vitest.mjs", "run"],
+      "cwd": "packages/document-model"
+    },
+    {
+      "id": "export-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 22,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "todo": 0,
+      "durationMs": 1394,
+      "command": ["node", "../../node_modules/vitest/vitest.mjs", "run"],
+      "cwd": "packages/export"
+    },
+    {
+      "id": "API-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 180,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "todo": 0,
+      "durationMs": 46141,
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "../../node_modules/jest/bin/jest.js",
+        "--config",
+        "jest.config.cjs",
+        "--runInBand"
+      ],
+      "cwd": "apps/api"
+    },
+    {
+      "id": "web-Node-units",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 68,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "todo": 0,
+      "durationMs": 3172,
+      "command": [
+        "node",
+        "node_modules/vitest/vitest.mjs",
+        "run",
+        "--config",
+        "apps/web/vitest.node.config.ts"
+      ],
+      "cwd": "."
+    },
+    {
+      "id": "presentation-portability-lifecycle",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 79,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "todo": 0,
+      "durationMs": 1729,
+      "command": [
+        "node",
+        "--experimental-vm-modules",
+        "--test",
+        "scripts/p7-03-presentation.node.test.mjs",
+        "scripts/p7-04-presenter.node.test.mjs",
+        "scripts/p7-05-presenter-follow.node.test.mjs",
+        "scripts/p7-08-portability.node.test.mjs",
+        "scripts/p7-09-image-export.node.test.mjs",
+        "scripts/p7-11-verifier.node.test.mjs",
+        "scripts/p6-10-lifecycle.node.test.mjs",
+        "scripts/p5-08-update-state.node.test.mjs",
+        "scripts/p5-09-storage-state.node.test.mjs"
+      ],
+      "cwd": "."
+    },
+    {
+      "id": "account-selection",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "tests": 1,
+      "failed": 0,
+      "skipped": 0,
+      "cancelled": 0,
+      "todo": 0,
+      "durationMs": 469,
+      "command": ["node", "--test", "scripts/account-selection.node.test.mjs"],
+      "cwd": "packages/sync-client"
+    },
+    {
+      "id": "production-bundle",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 130,
+      "command": ["node", "scripts/check-web-bundle.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "generated-cache-policy",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 61,
+      "command": ["node", "scripts/check-phase5-cache-policy.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "public-secret-scan",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 235,
+      "command": ["node", "apps/api/scripts/check-public-secrets.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "evidence-secret-scan",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 68,
+      "command": ["node", "scripts/check-phase7-evidence.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "dependency-boundaries",
+      "boundary": "implementation",
+      "status": "FAIL",
+      "exitCode": 1,
+      "durationMs": 1606,
+      "command": ["node", "<pnpm>", "boundary:check"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p7-03-local-presentation.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 54,
+      "command": ["node", "--check", "scripts/p7-03-local-presentation.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p7-03-board-presentation.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 56,
+      "command": ["node", "--check", "scripts/p7-03-board-presentation.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p7-05-presenter-follow.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 55,
+      "command": ["node", "--check", "scripts/p7-05-presenter-follow.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p7-08-portability.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 55,
+      "command": ["node", "--check", "scripts/p7-08-portability.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p7-09-image-export.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 54,
+      "command": ["node", "--check", "scripts/p7-09-image-export.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p7-10-templates.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 52,
+      "command": ["node", "--check", "scripts/p7-10-templates.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "syntax-p7-11-portability-lifecycle.browser.mjs",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 52,
+      "command": ["node", "--check", "scripts/p7-11-portability-lifecycle.browser.mjs"],
+      "cwd": "."
+    },
+    {
+      "id": "real-DB-session-HTTP-socket",
+      "boundary": "database",
+      "status": "UNRUN",
+      "reason": "deferred by user — until Version 1 implementation is complete",
+      "durationMs": 0
+    },
+    {
+      "id": "auth-schema",
+      "boundary": "database",
+      "status": "UNRUN",
+      "reason": "deferred by user — until Version 1 implementation is complete",
+      "durationMs": 0
+    },
+    {
+      "id": "configured-migrations",
+      "boundary": "database",
+      "status": "UNRUN",
+      "reason": "deferred by user — until Version 1 implementation is complete",
+      "durationMs": 0
+    },
+    {
+      "id": "native-browser-units",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p7-03-local-presentation.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p7-03-board-presentation.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p7-05-presenter-follow.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p7-08-portability.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p7-09-image-export.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p7-10-templates.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "served-p7-11-portability-lifecycle.browser.mjs",
+      "boundary": "browser",
+      "status": "UNRUN",
+      "reason": "deferred by user",
+      "durationMs": 0
+    },
+    {
+      "id": "combined-A10-A22-A24-recovery",
+      "boundary": "manual",
+      "status": "UNRUN",
+      "reason": "OPEN: real IndexedDB storage failure, above-cap full recovery, queued bytes and cross-tab sign-out/account late-result preservation require reviewed integrated evidence; see docs/phase7-verification.md.",
+      "durationMs": 0
+    },
+    {
+      "id": "A18-host-and-image-limits",
+      "boundary": "manual",
+      "status": "UNRUN",
+      "reason": "OPEN: production host CSP/rewrite headers and actual oversized/selected-edge image controls require reviewed served evidence; see docs/phase7-verification.md.",
+      "durationMs": 0
+    },
+    {
+      "id": "A28-and-template-legibility",
+      "boundary": "manual",
+      "status": "UNRUN",
+      "reason": "OPEN: spoken screen-reader, narrow-screen/light/dark template legibility and complete keyboard export/presentation observations require reviewed human evidence; see docs/phase7-verification.md.",
+      "durationMs": 0
+    },
+    {
+      "id": "sanitized-report-secret-scan",
+      "boundary": "implementation",
+      "status": "PASS",
+      "exitCode": 0,
+      "durationMs": 66,
+      "command": [
+        "node",
+        "scripts/check-phase7-evidence.mjs",
+        "--report",
+        "<temporary-sanitized-report>"
+      ],
+      "cwd": "."
+    }
+  ],
+  "fullGate": "OPEN",
+  "exitCode": 1,
+  "counts": {
+    "PASS": 24,
+    "FAIL": 1,
+    "UNRUN": 14
+  },
+  "environment": {
+    "platform": "win32",
+    "node": "v22.23.2",
+    "packageManager": "pnpm@11.24.0"
+  },
+  "parent": "a083cd8756804d4fdab57f32bdac66fc9837d497",
+  "treeState": "P7-11 implementation working tree before planned commit; documentation/report finalized afterward",
+  "sourceFingerprint": {
+    "sha256": "7f7935e04abd5da751f7f8c314412059de24086f89cd1da574c4c4202ac41f02",
+    "files": 508
+  },
+  "artifacts": [
+    {
+      "path": "apps/web/dist/assets/index-Bwqx27oB.js",
+      "sha256": "7a8095e59cad9b6214950bc89693839b1778fcac0811bae044ada6e80944bd42"
+    },
+    {
+      "path": "apps/web/dist/assets/index-C5JSv-mx.css",
+      "sha256": "549c9f667ebd36f4e574a5ee391261916861105063abd00bf84aa996af1ad839"
+    },
+    {
+      "path": "apps/web/dist/sw.js",
+      "sha256": "76fc7e44638ef973d6f7ba06683dcddce4281c72f97bc70f6a09f4a90483cf3f"
+    },
+    {
+      "path": "scripts/p7-03-board-presentation.browser.mjs",
+      "sha256": "b2a8f45ae610c699c9527f1cc82d3355bd15ef796534fc1120bba247a94d6ec7"
+    },
+    {
+      "path": "scripts/p7-03-local-presentation.browser.mjs",
+      "sha256": "28ec300793811a3583090d6822f904ca0d236b602262b8ff8b62f15b2ab7bf40"
+    },
+    {
+      "path": "scripts/p7-03-presentation.node.test.mjs",
+      "sha256": "8302f23882fbd71b1f8e96ec594436a65b813b7f230267a39059b446688389e5"
+    },
+    {
+      "path": "scripts/p7-04-presenter.node.test.mjs",
+      "sha256": "1293890b8107d7704d012bf1c19aa0fb6bbcff338b978279be961d0d3b55cb7e"
+    },
+    {
+      "path": "scripts/p7-05-presenter-follow.browser.mjs",
+      "sha256": "4c0f3ad871be944279e8746846f973aa71e95b186bc90e702119a10e9701ebbb"
+    },
+    {
+      "path": "scripts/p7-05-presenter-follow.node.test.mjs",
+      "sha256": "ec902a67555c6cfac00553e02542b9c28a689b65c2df6f7ddd1086987ee8084d"
+    },
+    {
+      "path": "scripts/p7-08-portability.browser.mjs",
+      "sha256": "bb10d4b79869ee644d037dfad65ed63371d360747bb31b5f601692913f2bfffb"
+    },
+    {
+      "path": "scripts/p7-08-portability.node.test.mjs",
+      "sha256": "255d61c2c44158eb7563fd20e005daebc0b60f7ccae4e92af8c7af327026d70c"
+    },
+    {
+      "path": "scripts/p7-09-image-export.browser.mjs",
+      "sha256": "9938a8dd5b81846eb66968ce14ead52693d2cb1994e13bf28a647cfcd208e488"
+    },
+    {
+      "path": "scripts/p7-09-image-export.node.test.mjs",
+      "sha256": "8a0d33f3b5932bdddb6acfa93c4f850c5db21b0881099a241a2e73687a982b5a"
+    },
+    {
+      "path": "scripts/p7-10-templates.browser.mjs",
+      "sha256": "b262bfa6ae3fbcb5b5e1330865cad5ddc010c2fdd29b55b86e1fb117d59277f7"
+    },
+    {
+      "path": "scripts/p7-11-portability-lifecycle.browser.mjs",
+      "sha256": "d0de4d4291b4f7e6904d28e5a20158749e56343af680158c49d7751aab6d6b61"
+    },
+    {
+      "path": "scripts/p7-11-verifier.node.test.mjs",
+      "sha256": "f33d2b6f3930710907f3e356b5c7352dee981f0725eeca79b3bbfbb6acde85a7"
+    }
+  ],
+  "totalTests": 628,
+  "finalSourceFingerprint": {
+    "sha256": "5836e2fb4a59a96a40f42be2cf3f695cf4b21d002794ec94c15bffc1cc3b21df",
+    "files": 508,
+    "note": "Only additional deferred duplicate rollback assertions changed executable source after the aggregate. Final API typecheck and focused lint passed; production and executed unit/harness sources are unchanged."
+  },
+  "postAggregateChecks": [
+    {
+      "command": ["pnpm", "--filter", "@archboard/api", "typecheck"],
+      "status": "PASS",
+      "boundary": "implementation"
+    },
+    {
+      "command": [
+        "node",
+        "node_modules/eslint/bin/eslint.js",
+        "apps/api/src/modules/boards/boards.integration-spec.ts"
+      ],
+      "status": "PASS",
+      "boundary": "implementation"
+    },
+    {
+      "command": [
+        "node",
+        "node_modules/prettier/bin/prettier.cjs",
+        "--check",
+        "README.md",
+        "docs/phase7-verification.md",
+        "docs/evidence/phase7/P7-11.md",
+        "docs/evidence/phase7/P7-11-report.json"
+      ],
+      "status": "PASS",
+      "boundary": "implementation"
+    }
+  ]
+}

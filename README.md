@@ -86,6 +86,9 @@ starts the API compiler, API process, and Vite development server together. `Ctr
 | `pnpm phase6:verify --implementation` | Database-free Phase 6 checks; full acceptance stays OPEN                                    |
 | `pnpm phase6:verify --non-browser`    | Includes DB/session/socket/schema checks; deferred until final Version 1 verification       |
 | `pnpm phase6:verify`                  | Full automated Phase 6 checks; browser/DB pauses and missing human proof keep the gate OPEN |
+| `pnpm phase7:verify --implementation` | Database-free Phase 7 checks; full acceptance stays OPEN                                    |
+| `pnpm phase7:verify --non-browser`    | Includes real DB/session/socket/schema checks; deferred until final Version 1 verification  |
+| `pnpm phase7:verify`                  | Adds served/native browser checks; pauses and missing reviewed evidence keep the gate OPEN  |
 
 **Version 1 test policy:** Defer all database checks/tests until the entire Version 1
 implementation (M00–M08) is complete, then run a consolidated final verification pass.
@@ -104,6 +107,8 @@ phase/release PASS. Historical results remain unchanged. Follow the complete
 commands, not a direction to run deferred ones.
 See [Phase 6 verification](docs/phase6-verification.md) for child commands, fail-propagating
 results, sanitized reports, independent synthetic fixtures and required human proof.
+See [Phase 7 verification](docs/phase7-verification.md) for presentation/portability
+mode boundaries, A16–A18/A21 coverage and recoverable deferred commands.
 
 The browser-backed sync-client units use Playwright with an installed stable Google Chrome. Package
 installation does not download a second browser binary. The web application does not retain an

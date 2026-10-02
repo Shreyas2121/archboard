@@ -14,3 +14,5 @@ export {
   createTypicalGraphFixture,
   minimalGraphFixture,
 } from './fixtures.js';
+
+export { normalizeGraphFixtureIds } from './copy-evidence.js';
