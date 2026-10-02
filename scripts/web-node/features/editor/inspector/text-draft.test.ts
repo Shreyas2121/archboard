@@ -8,7 +8,7 @@ import {
 } from '@archboard/document-model';
 import { COLOR_TOKENS, MAX_NODE_TITLE_CHARACTERS } from '@archboard/contracts';
 
-import { TextDraft } from './text-draft';
+import { TextDraft } from '@/features/editor/inspector/text-draft';
 
 function setup(baseline = 'abcd') {
   const document = createGraphDocument();

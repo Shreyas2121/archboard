@@ -1,7 +1,10 @@
 import { expect, it, vi } from 'vitest';
 import { createLimitGraphFixture } from '@archboard/fixtures';
-import { CanvasProjectionAdapter, type CanvasNode } from './projection-adapter';
-import { CanvasRenderCache } from './canvas-render-cache';
+import {
+  CanvasProjectionAdapter,
+  type CanvasNode,
+} from '@/features/editor/canvas/projection-adapter';
+import { CanvasRenderCache } from '@/features/editor/canvas/canvas-render-cache';
 
 it('retains unrelated final node and data identities on a large graph', () => {
   const fixture = createLimitGraphFixture();

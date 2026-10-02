@@ -15,7 +15,7 @@ vi.mock('@/platform/api', () => ({
   getCurrentUser: mocks.me,
   setUnauthorizedListener: mocks.unauthorized,
 }));
-vi.mock('./auth-client', () => ({ authClient: { signOut: mocks.signOut } }));
+vi.mock('@/features/auth/auth-client', () => ({ authClient: { signOut: mocks.signOut } }));
 vi.mock('@archboard/sync-client', async (original) => ({
   ...(await original()),
   forgetSelectedLocalAccount: mocks.forget,
@@ -32,8 +32,8 @@ import {
   loadCurrentUser,
   setPendingAccountSwitch,
   subscribePendingAccountSwitch,
-} from './auth-transition-coordinator';
-import { CURRENT_USER_QUERY_KEY, queryClient } from './session-query-definitions';
+} from '@/features/auth/auth-transition-coordinator';
+import { CURRENT_USER_QUERY_KEY, queryClient } from '@/features/auth/session-query-definitions';
 
 const user: CurrentUser = {
   id: 'next-user',

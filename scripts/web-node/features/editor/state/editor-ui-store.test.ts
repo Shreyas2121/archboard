@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createEditorUiStore, SELECTION_KINDS } from './editor-ui-store';
+import { createEditorUiStore, SELECTION_KINDS } from '@/features/editor/state/editor-ui-store';
 
 describe('initial editor palette preference', () => {
   it.each([true, false])('initializes to %s only once', (open) => {

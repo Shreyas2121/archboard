@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Node } from '@xyflow/react';
 
-import { CanvasGestures, reconcileCanvasNodes } from './canvas-gestures';
+import { CanvasGestures, reconcileCanvasNodes } from '@/features/editor/canvas/canvas-gestures';
 
 const INITIAL_WIDTH = 240;
 const RESIZED_WIDTH = 320;

@@ -11,6 +11,11 @@ import { Worker } from 'node:worker_threads';
 import { existsSync } from 'node:fs';
 import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
 import { MAX_REPLAY_BYTES, MAX_REPLAY_RECORDS } from '../room/committed-graph.js';
+import type {
+  CandidateValidator,
+  CandidateValidationInput,
+} from '../../application/candidate-validator.js';
+export type { CandidateValidationInput } from '../../application/candidate-validator.js';
 
 import {
   VALIDATION_FAILURE_KINDS,
@@ -21,12 +26,6 @@ import {
   type ValidationWorkerResponse,
   type ValidationWorkerSuccess,
 } from './validation-worker.protocol.js';
-
-export interface CandidateValidationInput {
-  readonly acceptedState: Uint8Array;
-  readonly update: Uint8Array;
-  readonly reconstruction?: ValidationWorkerRequest['reconstruction'];
-}
 
 export interface ValidationWorkerPoolOptions {
   readonly timeoutMs?: number;
@@ -72,7 +71,7 @@ function defaultWorkerUrl(): URL {
   );
 }
 
-export class ValidationWorkerPool {
+export class ValidationWorkerPool implements CandidateValidator {
   readonly timeoutMs: number;
   readonly maxWorkers: number;
   readonly maxQueueDepth: number;

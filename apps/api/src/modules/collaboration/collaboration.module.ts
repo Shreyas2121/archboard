@@ -1,20 +1,25 @@
-import { Module, type DynamicModule } from '@nestjs/common';
+import { Module, type DynamicModule, type Type } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import type { ApiConfig } from '../../platform/config/index.js';
-import { BoardAuthorityModule } from '../boards/board-authority.module.js';
 import {
   BoardPermissionService,
   BOARD_RESOURCE_NOTIFICATION,
   type BoardResource,
+  BOARD_ACCESS_NOTIFICATION,
+  BoardSequenceAccess,
 } from '../boards/application/index.js';
-import { BOARD_ACCESS_NOTIFICATION } from '../boards/application/board-access-notification.js';
 import { CollaborationRoomRegistry } from './application/room-registry.js';
 import { CommittedAnchorReader } from './application/committed-anchor-reader.js';
-import { BoardOperationQueue, CommittedGraphReader } from './application/committed-graph-reader.js';
+import {
+  BoardOperationQueue,
+  CommittedGraphReader,
+  CommittedGraphCopier,
+} from './application/committed-graph-reader.js';
+import { CandidateValidator } from './application/candidate-validator.js';
 import { PostgresCommittedGraphReader } from './infrastructure/room/postgres-committed-graph-reader.js';
 import { PostgresCommittedAnchorReader } from './infrastructure/room/postgres-committed-anchor-reader.js';
-import { RoomMaintenanceService } from './application/room-maintenance.service.js';
-import { CollaborationShutdownService } from './application/collaboration-shutdown.service.js';
+import { RoomMaintenanceService } from './infrastructure/lifecycle/room-maintenance.service.js';
+import { CollaborationShutdownService } from './infrastructure/lifecycle/collaboration-shutdown.service.js';
 import { CollaborationUpdateService } from './application/collaboration-update-service.js';
 import {
   DURABLE_UPDATE_PERSISTENCE,
@@ -40,11 +45,14 @@ export class CollaborationModule {
     config: ApiConfig,
     auth: DynamicModule,
     database: DynamicModule,
+    authority: Type<unknown>,
   ): DynamicModule {
     return {
       module: CollaborationModule,
-      imports: [auth, database, BoardAuthorityModule],
+      imports: [auth, database, authority],
       providers: [
+        { provide: CandidateValidator, useExisting: ValidationWorkerPool },
+        { provide: CommittedGraphCopier, useExisting: CommittedGraphReader },
         {
           provide: CommittedGraphReader,
           inject: [ValidationWorkerPool],
@@ -70,7 +78,15 @@ export class CollaborationModule {
         CollaborationUpgradeService,
         PostgresRoomLoader,
         CompactionFailpointController,
-        PostgresRoomCompactor,
+        {
+          provide: PostgresRoomCompactor,
+          inject: [DataSource, CompactionFailpointController, BoardSequenceAccess],
+          useFactory: (
+            source: DataSource,
+            failpoints: CompactionFailpointController,
+            sequences: BoardSequenceAccess,
+          ) => new PostgresRoomCompactor(source, failpoints, sequences),
+        },
         RoomMaintenanceService,
         CollaborationShutdownService,
         DurableUpdateFailpointController,
@@ -87,21 +103,22 @@ export class CollaborationModule {
         },
         {
           provide: DURABLE_UPDATE_PERSISTENCE,
-          inject: [DataSource],
-          useFactory: (dataSource: DataSource) => new PostgresDurableUpdatePersistence(dataSource),
+          inject: [DataSource, BoardSequenceAccess],
+          useFactory: (dataSource: DataSource, sequences: BoardSequenceAccess) =>
+            new PostgresDurableUpdatePersistence(dataSource, sequences),
         },
         {
           provide: CollaborationUpdateService,
           inject: [
             DURABLE_UPDATE_PERSISTENCE,
             BoardPermissionService,
-            ValidationWorkerPool,
+            CandidateValidator,
             DurableUpdateFailpointController,
           ],
           useFactory: (
             persistence: DurableUpdatePersistence,
             permissions: BoardPermissionService,
-            validator: ValidationWorkerPool,
+            validator: CandidateValidator,
             failpoints: DurableUpdateFailpointController,
           ) => new CollaborationUpdateService(persistence, permissions, validator, failpoints),
         },
@@ -120,6 +137,8 @@ export class CollaborationModule {
       ],
       exports: [
         CommittedGraphReader,
+        CommittedGraphCopier,
+        CandidateValidator,
         BoardOperationQueue,
         BOARD_ACCESS_NOTIFICATION,
         BOARD_RESOURCE_NOTIFICATION,

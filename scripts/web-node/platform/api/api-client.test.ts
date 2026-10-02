@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-import { apiRequest, serverUnavailable, setUnauthorizedListener } from './api-client';
+import { apiRequest, serverUnavailable, setUnauthorizedListener } from '@/platform/api/api-client';
 
 vi.mock('@/platform/config', () => ({
   loadWebConfig: () => ({ apiOrigin: 'https://api.example.test' }),

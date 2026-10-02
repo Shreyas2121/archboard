@@ -1,7 +1,7 @@
 import { Inject, Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 
-import { PostgresRoomCompactor } from '../infrastructure/room/postgres-room-compactor.js';
-import { CollaborationRoomRegistry, type RoomCompactor } from './room-registry.js';
+import { PostgresRoomCompactor } from '../room/postgres-room-compactor.js';
+import { CollaborationRoomRegistry, type RoomCompactor } from '../../application/room-registry.js';
 
 const MAINTENANCE_INTERVAL_MS = 1_000;
 

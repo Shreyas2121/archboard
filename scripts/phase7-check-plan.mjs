@@ -67,7 +67,7 @@ export function phase7CheckPlan() {
     ),
     node(
       'web-Node-units',
-      ['node_modules/vitest/vitest.mjs', 'run', '--config', 'apps/web/vitest.node.config.ts'],
+      ['node_modules/vitest/vitest.mjs', 'run', '--config', 'scripts/web-node/vitest.config.ts'],
       { requires: ['workspace-build'], requireTests: true },
     ),
     node(

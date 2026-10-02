@@ -3,8 +3,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
 
-import { BoardTransaction } from '../../../boards/infrastructure/board-transaction.js';
-import { BoardEntity } from '../../../boards/infrastructure/entities/board.entity.js';
+import type { BoardSequenceAccess } from '../../../boards/application/index.js';
+import { PostgresTransaction } from '../../../../platform/database/postgres-transaction.js';
 import { BoardSnapshotEntity } from '../entities/board-snapshot.entity.js';
 import { BoardUpdateEntity } from '../entities/board-update.entity.js';
 import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
@@ -36,13 +36,14 @@ export class CompactionFailpointController {
 
 @Injectable()
 export class PostgresRoomCompactor {
-  private readonly transactions: BoardTransaction;
+  private readonly transactions: PostgresTransaction;
 
   public constructor(
     @InjectDataSource() dataSource: DataSource,
     private readonly failpoints: CompactionFailpointController,
+    private readonly sequences: BoardSequenceAccess,
   ) {
-    this.transactions = new BoardTransaction(dataSource);
+    this.transactions = new PostgresTransaction(dataSource);
   }
 
   public async compact(
@@ -56,14 +57,8 @@ export class PostgresRoomCompactor {
       throw new Error('Room snapshot exceeds the encoded state limit.');
     }
     await this.transactions.run(async (runner) => {
-      const board = await runner.manager
-        .getRepository(BoardEntity)
-        .createQueryBuilder('board')
-        .where('board.id = :boardId', { boardId })
-        .setLock('pessimistic_write')
-        .getOne();
-      if (board?.latestSeq !== throughSeq)
-        throw new Error('Room sequence changed before compaction.');
+      const latestSeq = await this.sequences.lock(runner, boardId);
+      if (latestSeq !== throughSeq) throw new Error('Room sequence changed before compaction.');
       const snapshot = await runner.manager
         .getRepository(BoardSnapshotEntity)
         .findOneBy({ boardId });

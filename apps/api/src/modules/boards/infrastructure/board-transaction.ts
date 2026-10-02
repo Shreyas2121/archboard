@@ -1,4 +1,6 @@
-import { IsNull, type DataSource, type QueryRunner } from 'typeorm';
+import { IsNull, type QueryRunner } from 'typeorm';
+
+import { PostgresTransaction } from '../../../platform/database/postgres-transaction.js';
 
 import { BoardEntity } from './entities/board.entity.js';
 import { BoardMemberEntity } from './entities/board-member.entity.js';
@@ -12,25 +14,7 @@ export interface LockedBoard {
   readonly memberRole: 'editor' | 'viewer' | null;
 }
 
-export class BoardTransaction {
-  public constructor(private readonly dataSource: DataSource) {}
-
-  public async run<T>(work: (runner: QueryRunner) => Promise<T>): Promise<T> {
-    const runner = this.dataSource.createQueryRunner();
-    try {
-      await runner.connect();
-      await runner.startTransaction();
-      const result = await work(runner);
-      await runner.commitTransaction();
-      return result;
-    } catch (error) {
-      if (runner.isTransactionActive) await runner.rollbackTransaction();
-      throw error;
-    } finally {
-      await runner.release();
-    }
-  }
-
+export class BoardTransaction extends PostgresTransaction {
   public async lockBoard(
     runner: QueryRunner,
     boardId: string,

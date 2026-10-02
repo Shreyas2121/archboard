@@ -22,7 +22,7 @@ describe('theme initialization before React mounts', () => {
       const matchMedia = vi.fn(() => ({ matches: systemDark }));
       vi.stubGlobal('window', { localStorage: { getItem: () => stored }, matchMedia });
       vi.stubGlobal('document', { documentElement: root });
-      const { initializeTheme } = await import('./theme-provider');
+      const { initializeTheme } = await import('@/app/theme/theme-provider');
 
       initializeTheme();
 
@@ -51,7 +51,7 @@ describe('theme initialization before React mounts', () => {
     };
     vi.stubGlobal('window', blockedWindow);
     vi.stubGlobal('document', { documentElement: root });
-    const { initializeTheme } = await import('./theme-provider');
+    const { initializeTheme } = await import('@/app/theme/theme-provider');
     const { themePreferenceStorage } = await import('@/platform/theme/theme-preference-storage');
 
     expect(() => initializeTheme()).not.toThrow();

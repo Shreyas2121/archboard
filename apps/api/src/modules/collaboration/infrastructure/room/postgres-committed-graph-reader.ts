@@ -10,12 +10,20 @@ import * as Y from 'yjs';
 import {
   CommittedGraphReader,
   CommittedGraphReadError,
+  type CommittedGraphCopier,
 } from '../../application/committed-graph-reader.js';
 import type { CommittedAnchorTransaction } from '../../application/committed-anchor-reader.js';
 import { ValidationWorkerError, type ValidationWorkerPool } from '../validation-worker/index.js';
-import { readCommittedGraph, requireCommittedRecords } from './committed-graph.js';
+import {
+  CommittedGraphError,
+  readCommittedGraph,
+  requireCommittedRecords,
+} from './committed-graph.js';
 
-export class PostgresCommittedGraphReader extends CommittedGraphReader {
+export class PostgresCommittedGraphReader
+  extends CommittedGraphReader
+  implements CommittedGraphCopier
+{
   public constructor(private readonly workers: ValidationWorkerPool) {
     super();
   }
@@ -25,23 +33,52 @@ export class PostgresCommittedGraphReader extends CommittedGraphReader {
     boardId: string,
     latestSeq: string,
   ): Promise<Uint8Array> {
-    if (!transaction.isTransactionActive)
-      throw new Error('Committed capture requires an active board transaction.');
     try {
-      const records = await readCommittedGraph((transaction as QueryRunner).manager, boardId);
-      requireCommittedRecords(records, latestSeq);
-      const result = await this.workers.validate({
-        acceptedState: records.snapshot.updateBytes,
-        update: new Uint8Array(),
-        reconstruction: {
-          updates: records.updates.map((entry) => entry.updateBytes),
-          remap: false,
-        },
-      });
-      return result.candidateState;
+      return await this.reconstruct(transaction, boardId, latestSeq, false);
     } catch (error) {
+      if (!transaction.isTransactionActive) throw error;
       throw this.safeError(error);
     }
+  }
+
+  public async copy(
+    transaction: CommittedAnchorTransaction,
+    boardId: string,
+    latestSeq: string,
+  ): Promise<Uint8Array> {
+    try {
+      return await this.reconstruct(transaction, boardId, latestSeq, true);
+    } catch (error) {
+      const code =
+        error instanceof CommittedGraphError || error instanceof ValidationWorkerError
+          ? error.code
+          : ERROR_CODES.DOCUMENT_INVALID;
+      throw new CommittedGraphReadError(
+        code === ERROR_CODES.CAUSAL_GAP ? ERROR_CODES.DOCUMENT_INVALID : code,
+        'Committed board content is invalid.',
+      );
+    }
+  }
+
+  private async reconstruct(
+    transaction: CommittedAnchorTransaction,
+    boardId: string,
+    latestSeq: string,
+    remap: boolean,
+  ): Promise<Uint8Array> {
+    if (!transaction.isTransactionActive)
+      throw new Error('Committed capture requires an active board transaction.');
+    const records = await readCommittedGraph((transaction as QueryRunner).manager, boardId);
+    requireCommittedRecords(records, latestSeq);
+    const result = await this.workers.validate({
+      acceptedState: records.snapshot.updateBytes,
+      update: new Uint8Array(),
+      reconstruction: {
+        updates: records.updates.map((entry) => entry.updateBytes),
+        remap,
+      },
+    });
+    return result.candidateState;
   }
 
   public async project(bytes: Uint8Array, schemaVersion: number): Promise<GraphProjection> {

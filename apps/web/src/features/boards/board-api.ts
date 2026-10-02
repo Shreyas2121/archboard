@@ -1,6 +1,7 @@
 import {
   boardListResponseSchema,
   boardDetailResponseSchema,
+  boardSummaryResponseSchema,
   createBoardSchema,
   duplicateBoardSchema,
   patchBoardSchema,
@@ -53,7 +54,7 @@ export async function submitBoardAction(
       title: title.trim() || DEFAULT_NEW_BOARD_TITLE,
       description,
     });
-    const response = await apiRequest('/boards', boardDetailResponseSchema, {
+    const response = await apiRequest('/boards', boardSummaryResponseSchema, {
       method: 'POST',
       body,
       headers: { 'Idempotency-Key': idempotencyKey },

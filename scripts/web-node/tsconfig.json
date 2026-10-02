@@ -1,0 +1,14 @@
+{
+  "extends": "../../apps/web/tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "@/*": ["../../apps/web/src/*"],
+      "@archboard/*": ["../../packages/*/dist/index.d.ts"],
+      "@xyflow/react": ["../../apps/web/node_modules/@xyflow/react"],
+      "yjs": ["../../apps/web/node_modules/yjs"],
+      "zod": ["../../apps/web/node_modules/zod"]
+    }
+  },
+  "include": ["**/*.ts"]
+}

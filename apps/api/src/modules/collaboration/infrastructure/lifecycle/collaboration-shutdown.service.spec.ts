@@ -6,16 +6,13 @@ import { createGraphDocument } from '@archboard/document-model';
 import { Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
-import {
-  ValidationWorkerPool,
-  VALIDATION_WORKER_DIRECTIVES,
-} from '../infrastructure/validation-worker/index.js';
-import { createTypicalValidationFixture } from '../infrastructure/validation-worker/validation-worker.fixtures.js';
-import { CollaborationGateway } from '../infrastructure/websocket/collaboration.gateway.js';
-import { CollaborationUpgradeService } from '../infrastructure/websocket/collaboration-upgrade.service.js';
+import { ValidationWorkerPool, VALIDATION_WORKER_DIRECTIVES } from '../validation-worker/index.js';
+import { createTypicalValidationFixture } from '../validation-worker/validation-worker.fixtures.js';
+import { CollaborationGateway } from '../websocket/collaboration.gateway.js';
+import { CollaborationUpgradeService } from '../websocket/collaboration-upgrade.service.js';
 import { CollaborationShutdownService } from './collaboration-shutdown.service.js';
 import { RoomMaintenanceService } from './room-maintenance.service.js';
-import { CollaborationRoomRegistry } from './room-registry.js';
+import { CollaborationRoomRegistry } from '../../application/room-registry.js';
 
 const SHUTDOWN_TEST_TIMEOUT_MS = 15_000;
 const DESTROYED_DOCUMENTS = 2;

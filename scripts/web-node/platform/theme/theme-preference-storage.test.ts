@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createThemePreferenceStorage } from './theme-preference-storage';
-import { THEME_OPTIONS, THEME_STORAGE_KEY } from './theme-preferences';
+import { createThemePreferenceStorage } from '@/platform/theme/theme-preference-storage';
+import { THEME_OPTIONS, THEME_STORAGE_KEY } from '@/platform/theme/theme-preferences';
 
 describe('theme preference storage', () => {
   it.each(THEME_OPTIONS)(

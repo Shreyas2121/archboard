@@ -13,8 +13,8 @@ import {
 } from '@archboard/sync-client';
 import * as Y from 'yjs';
 
-import { EditorSession } from './editor-session';
-import { closeEditorSession } from './close-editor-session';
+import { EditorSession } from '@/features/editor/application/editor-session';
+import { closeEditorSession } from '@/features/editor/application/close-editor-session';
 
 const mocks = vi.hoisted(() => ({ writer: vi.fn(), sync: vi.fn() }));
 vi.mock('@archboard/sync-client', async (original) => ({

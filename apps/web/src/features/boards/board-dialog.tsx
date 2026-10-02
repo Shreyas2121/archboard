@@ -6,6 +6,7 @@ import {
   boardTitleSchema,
   boardDescriptionSchema,
   boardDetailResponseSchema,
+  boardSummaryResponseSchema,
   createTemplateBoardSchema,
   templateIdSchema,
   duplicateBoardSchema,
@@ -80,13 +81,15 @@ export function BoardDialog({
   const [sourceSelected, setSourceSelected] = useState(false);
   const [reviewedBoards, setReviewedBoards] = useState<string[]>([]);
   const scope = usePortabilityScope(accountId, board?.id ?? 'create');
-  const creation = usePortableCreation(
+  const creation = usePortableCreation<{ data: BoardSummary }>(
     scope,
     action === 'duplicate' ? `/boards/${board?.id ?? ''}/duplicate` : '/boards',
-    boardDetailResponseSchema.refine(
-      (result) =>
-        isNewPrivateBoard(result.data, accountId, board?.id) && result.data.memberCount === 1,
-    ),
+    action === 'duplicate'
+      ? boardDetailResponseSchema.refine(
+          (result) =>
+            isNewPrivateBoard(result.data, accountId, board?.id) && result.data.memberCount === 1,
+        )
+      : boardSummaryResponseSchema.refine((result) => isNewPrivateBoard(result.data, accountId)),
     (result) => onSuccess(action, result.data.title),
     async () => setReviewedBoards(await inspectVisibleBoards(scope)),
   );

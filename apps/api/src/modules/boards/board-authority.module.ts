@@ -4,10 +4,13 @@ import { BoardPermissionService, BoardAuthorityTransaction } from './application
 import type { BoardPermissionTransaction } from './application/index.js';
 import { BoardTransaction } from './infrastructure/board-transaction.js';
 import { PostgresBoardAuthorityReader } from './infrastructure/postgres-board-authority-reader.js';
+import { BoardSequenceAccess } from './application/index.js';
+import { PostgresBoardSequenceAccess } from './infrastructure/postgres-board-sequence-access.js';
 
 /** Shared authority port avoids a Boards/Collaboration module dependency cycle. */
 @Module({
   providers: [
+    { provide: BoardSequenceAccess, useFactory: () => new PostgresBoardSequenceAccess() },
     {
       provide: BoardAuthorityTransaction,
       inject: [DataSource],
@@ -23,6 +26,6 @@ import { PostgresBoardAuthorityReader } from './infrastructure/postgres-board-au
         new BoardPermissionService(new PostgresBoardAuthorityReader(dataSource)),
     },
   ],
-  exports: [BoardPermissionService, BoardAuthorityTransaction],
+  exports: [BoardPermissionService, BoardAuthorityTransaction, BoardSequenceAccess],
 })
 export class BoardAuthorityModule {}

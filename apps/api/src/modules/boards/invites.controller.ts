@@ -7,7 +7,7 @@ import {
 import { Body, Controller, HttpCode, HttpStatus, Inject, Post, UseGuards } from '@nestjs/common';
 
 import type { AuthenticatedSession } from '../auth/application/index.js';
-import { AuthenticatedSessionGuard, CurrentSession } from '../auth/authenticated-session.js';
+import { AuthenticatedSessionGuard, CurrentSession } from '../auth/application/index.js';
 import { fail, validate } from '../../platform/http/api-boundary.js';
 import { InviteService } from './application/invite-service.js';
 

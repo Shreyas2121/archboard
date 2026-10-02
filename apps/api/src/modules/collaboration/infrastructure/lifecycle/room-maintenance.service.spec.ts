@@ -4,7 +4,7 @@ import { ROOM_IDLE_EVICTION_MS } from '@archboard/contracts';
 import { createGraphDocument } from '@archboard/document-model';
 
 import { RoomMaintenanceService } from './room-maintenance.service.js';
-import { CollaborationRoomRegistry } from './room-registry.js';
+import { CollaborationRoomRegistry } from '../../application/room-registry.js';
 
 describe('collaboration room maintenance', () => {
   it('evicts unrelated idle rooms even when a dirty room fails compaction', async () => {

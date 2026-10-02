@@ -1,10 +1,10 @@
 import { Inject, Injectable, type OnModuleDestroy } from '@nestjs/common';
 
-import { ValidationWorkerPool } from '../infrastructure/validation-worker/index.js';
-import { CollaborationGateway } from '../infrastructure/websocket/collaboration.gateway.js';
-import { CollaborationUpgradeService } from '../infrastructure/websocket/collaboration-upgrade.service.js';
+import { ValidationWorkerPool } from '../validation-worker/index.js';
+import { CollaborationGateway } from '../websocket/collaboration.gateway.js';
+import { CollaborationUpgradeService } from '../websocket/collaboration-upgrade.service.js';
 import { RoomMaintenanceService } from './room-maintenance.service.js';
-import { CollaborationRoomRegistry } from './room-registry.js';
+import { CollaborationRoomRegistry } from '../../application/room-registry.js';
 
 /** Completes during module destruction, before auth/database application-shutdown hooks. */
 @Injectable()

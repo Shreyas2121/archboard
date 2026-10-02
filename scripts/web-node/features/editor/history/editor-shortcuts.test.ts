@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { shouldIgnoreEditorShortcut } from './editor-shortcuts';
+import { shouldIgnoreEditorShortcut } from '@/features/editor/history/editor-shortcuts';
 
 class Target extends EventTarget {
   public constructor(private readonly matched: boolean) {

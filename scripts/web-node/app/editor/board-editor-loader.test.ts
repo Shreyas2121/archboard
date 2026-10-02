@@ -5,7 +5,7 @@ import {
   BoardEditorLoader,
   type BoardEditorIdentity,
   type BoardEditorLoadState,
-} from './board-editor-loader';
+} from '@/app/editor/board-editor-loader';
 import { ApiClientError } from '@/platform/api';
 
 const mocks = vi.hoisted(() => ({

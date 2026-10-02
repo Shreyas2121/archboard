@@ -3,8 +3,8 @@ import { BOARD_ROLES } from '@archboard/contracts';
 import { minimalGraphFixture } from '@archboard/fixtures';
 import { WRITER_SESSION_PHASES } from '@archboard/sync-client';
 import type { EditorSessionSnapshot } from '@/features/editor/application';
-import { editorSessionViewState, phaseForSession } from './editor-status-policy';
-import { EDITOR_VIEW_PHASES } from './editor-view-state';
+import { editorSessionViewState, phaseForSession } from '@/app/editor/editor-status-policy';
+import { EDITOR_VIEW_PHASES } from '@/app/editor/editor-view-state';
 
 const ready: EditorSessionSnapshot = {
   revision: 0,

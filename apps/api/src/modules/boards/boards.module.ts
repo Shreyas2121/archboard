@@ -21,7 +21,7 @@ import { CommittedAnchorReader } from '../collaboration/application/index.js';
 import { InvitesController } from './invites.controller.js';
 import { PostgresBoardPersistence } from './infrastructure/postgres-board-persistence.js';
 import { PostgresInvitePersistence } from './infrastructure/postgres-invite-persistence.js';
-import { ValidationWorkerPool } from '../collaboration/infrastructure/validation-worker/index.js';
+import { CommittedGraphCopier } from '../collaboration/application/index.js';
 import { BoardOperationQueue, CommittedGraphReader } from '../collaboration/application/index.js';
 import { CheckpointService } from './application/checkpoint-service.js';
 import { PostgresCheckpointPersistence } from './infrastructure/postgres-checkpoint-persistence.js';
@@ -54,7 +54,7 @@ export class BoardsModule {
             BoardService,
             CommittedGraphReader,
             BoardOperationQueue,
-            ValidationWorkerPool,
+            CommittedGraphCopier,
             BOARD_RESOURCE_NOTIFICATION,
           ],
           useFactory: (
@@ -63,14 +63,14 @@ export class BoardsModule {
             boards: BoardService,
             reader: CommittedGraphReader,
             queue: BoardOperationQueue,
-            workers: ValidationWorkerPool,
+            copier: CommittedGraphCopier,
             notify: BoardResourceNotification,
           ) =>
             new CheckpointService(
               new PostgresCheckpointPersistence(
                 dataSource,
                 reader,
-                new PostgresBoardPersistence(dataSource, workers),
+                new PostgresBoardPersistence(dataSource, copier),
               ),
               permissions,
               boards,
@@ -104,18 +104,18 @@ export class BoardsModule {
             DataSource,
             BoardPermissionService,
             BOARD_ACCESS_NOTIFICATION,
-            ValidationWorkerPool,
+            CommittedGraphCopier,
             BOARD_RESOURCE_NOTIFICATION,
           ],
           useFactory: (
             dataSource: DataSource,
             permissions: BoardPermissionService,
             notify: BoardAccessNotification,
-            workers: ValidationWorkerPool,
+            copier: CommittedGraphCopier,
             resourcesChanged: BoardResourceNotification,
           ) =>
             new BoardService(
-              new PostgresBoardPersistence(dataSource, workers),
+              new PostgresBoardPersistence(dataSource, copier),
               permissions,
               notify,
               resourcesChanged,

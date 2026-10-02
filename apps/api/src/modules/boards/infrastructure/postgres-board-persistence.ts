@@ -2,14 +2,9 @@ import { In, type DataSource, type QueryRunner } from 'typeorm';
 
 import { ERROR_CODES, GRAPH_SCHEMA_VERSION, type BoardListQuery } from '@archboard/contracts';
 import {
-  CommittedGraphError,
-  readCommittedGraph,
-  requireCommittedRecords,
-} from '../../collaboration/infrastructure/room/committed-graph.js';
-import {
-  ValidationWorkerError,
-  ValidationWorkerPool,
-} from '../../collaboration/infrastructure/validation-worker/index.js';
+  CommittedGraphReadError,
+  type CommittedGraphCopier,
+} from '../../collaboration/application/index.js';
 
 import type { BoardPersistence, BoardView, BoardWriteScope } from '../application/board-service.js';
 import { BoardServiceError } from '../application/board-service.js';
@@ -41,7 +36,7 @@ export class PostgresBoardPersistence implements BoardPersistence {
 
   public constructor(
     dataSource: DataSource,
-    private readonly workers = new ValidationWorkerPool(),
+    private readonly copier: CommittedGraphCopier,
   ) {
     this.transactions = new BoardTransaction(dataSource);
     this.idempotency = new IdempotencyService(dataSource);
@@ -112,20 +107,10 @@ export class PostgresBoardPersistence implements BoardPersistence {
         }),
       loadCommittedGraph: async (boardId, latestSeq) => {
         try {
-          const graph = await readCommittedGraph(runner.manager, boardId);
-          requireCommittedRecords(graph, latestSeq);
-          const result = await this.workers.validate({
-            acceptedState: graph.snapshot.updateBytes,
-            update: new Uint8Array(),
-            reconstruction: {
-              updates: graph.updates.map((update) => update.updateBytes),
-              remap: true,
-            },
-          });
-          return result.candidateState;
+          return await this.copier.copy(runner, boardId, latestSeq);
         } catch (error) {
           if (error instanceof BoardServiceError) throw error;
-          if (error instanceof CommittedGraphError || error instanceof ValidationWorkerError)
+          if (error instanceof CommittedGraphReadError)
             throw new BoardServiceError(
               error.code === ERROR_CODES.CAUSAL_GAP ? ERROR_CODES.DOCUMENT_INVALID : error.code,
               'Committed board content is invalid.',

@@ -71,7 +71,7 @@ export function phase6CheckPlan() {
         'node_modules/vitest/vitest.mjs',
         'run',
         '--config',
-        'apps/web/vitest.node.config.ts',
+        'scripts/web-node/vitest.config.ts',
         'auth-transition-coordinator',
         'editor-session',
         'board-editor-loader',

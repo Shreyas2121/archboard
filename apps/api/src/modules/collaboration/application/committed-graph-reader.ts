@@ -23,3 +23,12 @@ export abstract class CommittedGraphReader {
 export abstract class BoardOperationQueue {
   public abstract run<T>(boardId: string, work: () => Promise<T>): Promise<T>;
 }
+
+/** Fresh-ID copy of committed content, reconstructed on the caller's locked transaction. */
+export abstract class CommittedGraphCopier {
+  public abstract copy(
+    transaction: CommittedAnchorTransaction,
+    boardId: string,
+    latestSeq: string,
+  ): Promise<Uint8Array>;
+}

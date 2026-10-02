@@ -31,6 +31,9 @@ import {
   PostgresRoomCompactor,
 } from './postgres-room-compactor.js';
 import { PostgresRoomLoader } from './postgres-room-loader.js';
+import { PostgresBoardSequenceAccess } from '../../../boards/infrastructure/postgres-board-sequence-access.js';
+import { PostgresCommittedGraphReader } from './postgres-committed-graph-reader.js';
+import { ValidationWorkerPool } from '../validation-worker/index.js';
 import { PostgresBoardPersistence } from '../../../boards/infrastructure/postgres-board-persistence.js';
 import { createCausalGapFixtures } from '../yjs-compatibility/causal-gap.fixtures.js';
 
@@ -80,6 +83,7 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
   let dataSource: DataSource;
   let boardId: string;
   let expected: Y.Doc;
+  const workers = new ValidationWorkerPool();
 
   beforeAll(async () => {
     const settings = config();
@@ -174,6 +178,7 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
   });
 
   afterAll(async () => {
+    await workers.close();
     if (dataSource?.isInitialized) await dataSource.destroy();
     if (admin?.isInitialized) {
       await admin.query(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`);
@@ -206,8 +211,8 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
         code: ERROR_CODES.DOCUMENT_INVALID,
       });
       await expect(
-        new PostgresBoardPersistence(dataSource).run((scope) =>
-          scope.loadCommittedGraph(boardId, NEXT_SEQUENCE),
+        new PostgresBoardPersistence(dataSource, new PostgresCommittedGraphReader(workers)).run(
+          (scope) => scope.loadCommittedGraph(boardId, NEXT_SEQUENCE),
         ),
       ).rejects.toMatchObject({ code: ERROR_CODES.DOCUMENT_INVALID });
     },
@@ -324,7 +329,11 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
       .getRepository(UpdateReceiptEntity)
       .find({ where: { boardId }, order: { updateId: 'ASC' } });
     const before = await new PostgresRoomLoader(dataSource).load(boardId);
-    const compactor = new PostgresRoomCompactor(dataSource, new CompactionFailpointController());
+    const compactor = new PostgresRoomCompactor(
+      dataSource,
+      new CompactionFailpointController(),
+      new PostgresBoardSequenceAccess(),
+    );
     await compactor.compact(boardId, NEXT_SEQUENCE, Y.encodeStateAsUpdate(before.document));
     const snapshot = await dataSource
       .getRepository(BoardSnapshotEntity)
@@ -366,7 +375,11 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
       failpoints.arm(stage, async () => {
         throw new Error('Injected compaction stop.');
       });
-      const compactor = new PostgresRoomCompactor(dataSource, failpoints);
+      const compactor = new PostgresRoomCompactor(
+        dataSource,
+        failpoints,
+        new PostgresBoardSequenceAccess(),
+      );
       await expect(
         compactor.compact(boardId, NEXT_SEQUENCE, Y.encodeStateAsUpdate(expected)),
       ).rejects.toThrow('Injected compaction stop.');
@@ -390,7 +403,11 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
     failpoints.arm(COMPACTION_FAILPOINTS.AFTER_COMMIT, async () => {
       throw new Error('Injected post-commit stop.');
     });
-    const compactor = new PostgresRoomCompactor(dataSource, failpoints);
+    const compactor = new PostgresRoomCompactor(
+      dataSource,
+      failpoints,
+      new PostgresBoardSequenceAccess(),
+    );
     await expect(
       compactor.compact(boardId, NEXT_SEQUENCE, Y.encodeStateAsUpdate(expected)),
     ).rejects.toThrow('Injected post-commit stop.');
@@ -433,11 +450,11 @@ describe('real PostgreSQL collaboration room reconstruction', () => {
       return runner;
     });
     try {
-      await new PostgresRoomCompactor(dataSource, new CompactionFailpointController()).compact(
-        boardId,
-        NEXT_SEQUENCE,
-        Y.encodeStateAsUpdate(expected),
-      );
+      await new PostgresRoomCompactor(
+        dataSource,
+        new CompactionFailpointController(),
+        new PostgresBoardSequenceAccess(),
+      ).compact(boardId, NEXT_SEQUENCE, Y.encodeStateAsUpdate(expected));
     } finally {
       query.mockRestore();
     }
