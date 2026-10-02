@@ -16,6 +16,7 @@ import {
   type PatchBoard,
   importBoardSchema,
   type ImportBoard,
+  boardSummarySchema,
 } from '@archboard/contracts';
 import { createFreshGraphUpdate } from '@archboard/document-model';
 import { parsePortableJson, PortableFileError } from '@archboard/export';
@@ -82,6 +83,13 @@ export class BoardServiceError extends Error {
   ) {
     super(message);
   }
+}
+
+/** Creation services retain detail internally; portable creation routes return summary DTOs. */
+export function boardSummaryFromDetail(detail: BoardDetail): BoardSummary {
+  const data: Partial<BoardDetail> = { ...detail };
+  delete data.memberCount;
+  return boardSummarySchema.parse(data);
 }
 
 function requireReadable(

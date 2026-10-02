@@ -308,7 +308,7 @@ const routes: readonly RouteSpec[] = [
   },
   {
     method: 'post',
-    path: '/api/v1/boards/import',
+    path: '/api/v1/imports',
     summary: 'Import a validated portable graph as a new private board (5 MiB file limit)',
     request: 'ImportBoardRequest',
     response: 'ImportBoardResponse',

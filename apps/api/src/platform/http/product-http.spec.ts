@@ -4,7 +4,7 @@ import { configureProductHttp } from './product-http.js';
 
 const ORDINARY_LIMIT_BYTES = 65_536;
 const INVALID_UTF8_BYTE = 255;
-const IMPORT_PATH = '/api/v1/boards/import';
+const IMPORT_PATH = '/api/v1/imports';
 
 describe('portable request parser boundary', () => {
   function verify(url: string, bytes: Buffer): void {

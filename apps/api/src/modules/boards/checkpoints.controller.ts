@@ -34,7 +34,7 @@ import {
 } from '../auth/application/index.js';
 import { validate } from '../../platform/http/api-boundary.js';
 import { CheckpointService, type CheckpointActor } from './application/checkpoint-service.js';
-import { BoardServiceError } from './application/board-service.js';
+import { BoardServiceError, boardSummaryFromDetail } from './application/board-service.js';
 
 @UseGuards(AuthenticatedSessionGuard)
 @Controller('api/v1/boards')
@@ -108,7 +108,7 @@ export class CheckpointsController {
       validate(idempotencyKeySchema, key),
       validate(restoreCheckpointSchema, body),
     );
-    return restoreCheckpointResponseSchema.parse({ data: result.board });
+    return restoreCheckpointResponseSchema.parse({ data: boardSummaryFromDetail(result.board) });
   }
   private actor(session: AuthenticatedSession, request: IncomingMessage): CheckpointActor {
     return {

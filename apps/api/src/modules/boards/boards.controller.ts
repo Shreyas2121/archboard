@@ -17,8 +17,6 @@ import {
   invitePathSchema,
   memberPathSchema,
   patchBoardSchema,
-  importBoardSchema,
-  importBoardResponseSchema,
 } from '@archboard/contracts';
 import {
   Body,
@@ -66,20 +64,6 @@ export class BoardsController {
     return boardListResponseSchema.parse({
       ...(await this.boards.list(session.user.id, validate(boardListQuerySchema, query))),
     });
-  }
-
-  @Post('import')
-  public async import(
-    @CurrentSession() session: AuthenticatedSession,
-    @Headers('idempotency-key') key: unknown,
-    @Body() body: unknown,
-  ) {
-    const result = await this.boards.import(
-      session.user.id,
-      validate(idempotencyKeySchema, key),
-      validate(importBoardSchema, body),
-    );
-    return importBoardResponseSchema.parse({ data: result.board });
   }
 
   @Get(':id')

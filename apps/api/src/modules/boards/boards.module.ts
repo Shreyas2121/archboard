@@ -26,6 +26,7 @@ import { BoardOperationQueue, CommittedGraphReader } from '../collaboration/appl
 import { CheckpointService } from './application/checkpoint-service.js';
 import { PostgresCheckpointPersistence } from './infrastructure/postgres-checkpoint-persistence.js';
 import { CheckpointsController } from './checkpoints.controller.js';
+import { ImportsController } from './imports.controller.js';
 
 @Module({})
 export class BoardsModule {
@@ -42,6 +43,7 @@ export class BoardsModule {
         InvitesController,
         DiscussionController,
         CheckpointsController,
+        ImportsController,
       ],
       providers: [
         {

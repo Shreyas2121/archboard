@@ -127,7 +127,7 @@ export function configureProductHttp(application: NestExpressApplication): void 
   application.useBodyParser('json', {
     limit: MAX_JSON_BYTES,
     verify: (request: IncomingMessage, _response: ServerResponse, bytes: Buffer) => {
-      if (request.url?.split('?')[0] === '/api/v1/boards/import') {
+      if (request.url?.split('?')[0] === '/api/v1/imports') {
         try {
           parseBoundedJson(bytes, MAX_IMPORT_REQUEST_BYTES);
         } catch (error) {

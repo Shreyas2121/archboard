@@ -306,11 +306,11 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     };
     const key = randomUUID();
     const body = { title: 'Imported graph', file };
-    expect((await request('/boards/import', undefined, { method: 'POST', key, body })).status).toBe(
+    expect((await request('/imports', undefined, { method: 'POST', key, body })).status).toBe(
       HTTP_UNAUTHORIZED,
     );
     const invalidKey = randomUUID();
-    const malformed = await request('/boards/import', 'viewer', {
+    const malformed = await request('/imports', 'viewer', {
       method: 'POST',
       key: invalidKey,
       body: {
@@ -327,7 +327,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
         invalidKey,
       ])) as unknown[],
     ).toHaveLength(0);
-    const first = await request('/boards/import', 'viewer', { method: 'POST', key, body });
+    const first = await request('/imports', 'viewer', { method: 'POST', key, body });
     expect(first.status).toBe(HTTP_CREATED);
     const imported = importBoardResponseSchema.parse(await first.json()).data;
     expect(imported).toMatchObject({
@@ -337,12 +337,12 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       latestSeq: '0',
     });
     expect(imported.owner.id).toBe(users.get('viewer')!.id);
-    const replay = await request('/boards/import', 'viewer', { method: 'POST', key, body });
+    const replay = await request('/imports', 'viewer', { method: 'POST', key, body });
     expect(replay.status).toBe(HTTP_CREATED);
     expect(importBoardResponseSchema.parse(await replay.json()).data).toEqual(imported);
     expect(
       (
-        await request('/boards/import', 'viewer', {
+        await request('/imports', 'viewer', {
           method: 'POST',
           key,
           body: { ...body, title: 'Changed' },
@@ -394,7 +394,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
         board: { title: 'Source', description: '' },
         graph: allEntityGraphFixture,
       };
-      const response = await request('/boards/import', 'editor', {
+      const response = await request('/imports', 'editor', {
         method: 'POST',
         key,
         body: { title: 'Import rollback', file },
@@ -1839,7 +1839,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
         key: randomUUID(),
         body: { title: 'limit A' },
       }),
-      request('/boards/import', 'owner', {
+      request('/imports', 'owner', {
         method: 'POST',
         key: randomUUID(),
         body: {

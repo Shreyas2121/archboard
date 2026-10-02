@@ -40,7 +40,7 @@ describe('Phase 6 discussion OpenAPI', () => {
     expect(document.components.schemas.ImportBoardResponse).toEqual(
       z.toJSONSchema(importBoardResponseSchema, { io: 'output' }),
     );
-    const route = document.paths['/api/v1/boards/import'];
+    const route = document.paths['/api/v1/imports'];
     expect(Object.keys(route ?? {})).toEqual(['post']);
     expect(JSON.stringify(route)).toContain('Idempotency-Key');
   });
