@@ -14,7 +14,11 @@ import {
   type BoardVersionRequest,
   type ErrorCode,
   type PatchBoard,
+  importBoardSchema,
+  type ImportBoard,
 } from '@archboard/contracts';
+import { createFreshGraphUpdate } from '@archboard/document-model';
+import { parsePortableJson, PortableFileError } from '@archboard/export';
 import type { BoardAccessNotification } from './board-access-notification.js';
 import type { BoardResourceNotification } from './board-resource-notification.js';
 
@@ -67,6 +71,7 @@ export interface BoardPersistence {
     key: string,
     request: unknown,
     work: (scope: BoardWriteScope) => Promise<{ status: number; body: T }>,
+    authorize?: (scope: BoardWriteScope) => Promise<void>,
   ): Promise<{ status: number; body: T; replayed: boolean }>;
 }
 
@@ -117,6 +122,59 @@ export class BoardService {
     private readonly resourcesChanged: BoardResourceNotification = async () => undefined,
   ) {}
 
+  /** Shared by import now and checkpoint/template creation in subsequent tasks. */
+  public async initializePrivateBoard(
+    scope: BoardWriteScope,
+    actorUserId: string,
+    title: string,
+    description: string,
+    bytes?: Uint8Array,
+  ): Promise<BoardDetail> {
+    const count = await scope.lockOwnerAndCount(actorUserId);
+    if (count >= MAX_ACTIVE_OWNED_BOARDS)
+      throw new BoardServiceError(ERROR_CODES.RATE_LIMITED, 'Active board limit reached.');
+    const boardId = await scope.create(actorUserId, title, description);
+    if (bytes) await scope.createSnapshot(boardId, bytes);
+    else await scope.createEmptySnapshot(boardId);
+    const readable = requireReadable(await scope.load(boardId, actorUserId), actorUserId);
+    return detail(readable.view, readable.role);
+  }
+
+  public async import(
+    actorUserId: string,
+    key: string,
+    input: ImportBoard,
+  ): Promise<{ board: BoardDetail; replayed: boolean }> {
+    const request = importBoardSchema.parse(input);
+    try {
+      parsePortableJson(JSON.stringify(request.file));
+    } catch (error) {
+      if (error instanceof PortableFileError)
+        throw new BoardServiceError(
+          error.reason === 'size' ? ERROR_CODES.PAYLOAD_TOO_LARGE : ERROR_CODES.VALIDATION_ERROR,
+          error.message,
+        );
+      throw error;
+    }
+    const result = await this.persistence.idempotent(
+      actorUserId,
+      'board.import',
+      key,
+      request,
+      async (scope) => ({
+        status: 201,
+        body: await this.initializePrivateBoard(
+          scope,
+          actorUserId,
+          request.title,
+          request.file.board.description,
+          createFreshGraphUpdate(request.file.graph),
+        ),
+      }),
+    );
+    return { board: result.body, replayed: result.replayed };
+  }
+
   public async create(
     actorUserId: string,
     key: string,
@@ -129,15 +187,15 @@ export class BoardService {
       key,
       request,
       async (scope) => {
-        const count = await scope.lockOwnerAndCount(actorUserId);
-        if (count >= MAX_ACTIVE_OWNED_BOARDS) {
-          throw new BoardServiceError(ERROR_CODES.RATE_LIMITED, 'Active board limit reached.');
-        }
-        const boardId = await scope.create(actorUserId, request.title, request.description);
-        await scope.createEmptySnapshot(boardId);
-        const view = await scope.load(boardId, actorUserId);
-        const readable = requireReadable(view, actorUserId);
-        return { status: 201, body: detail(readable.view, readable.role) };
+        return {
+          status: 201,
+          body: await this.initializePrivateBoard(
+            scope,
+            actorUserId,
+            request.title,
+            request.description,
+          ),
+        };
       },
     );
     return { board: result.body, replayed: result.replayed };
@@ -273,9 +331,6 @@ export class BoardService {
       key,
       { sourceId, title: input.title },
       async (scope) => {
-        const count = await scope.lockOwnerAndCount(actorUserId);
-        if (count >= MAX_ACTIVE_OWNED_BOARDS)
-          throw new BoardServiceError(ERROR_CODES.RATE_LIMITED, 'Active board limit reached.');
         const decision = await this.permissions.readLocked(
           scope.permissionTransaction,
           sourceId,
@@ -283,11 +338,27 @@ export class BoardService {
         );
         if (!decision.allowed) throw new BoardServiceError(decision.code, 'Board not found.');
         const bytes = await scope.loadCommittedGraph(sourceId, decision.board.latestSeq);
-        const boardId = await scope.create(actorUserId, input.title, '');
-        await scope.createSnapshot(boardId, bytes);
-        const view = await scope.load(boardId, actorUserId);
-        const readable = requireReadable(view, actorUserId);
-        return { status: 201, body: detail(readable.view, readable.role) };
+        const source = await scope.load(sourceId, actorUserId);
+        return {
+          status: 201,
+          body: await this.initializePrivateBoard(
+            scope,
+            actorUserId,
+            input.title,
+            source?.description ?? '',
+            bytes,
+          ),
+        };
+      },
+      async (scope) => {
+        // Preserve owner-before-board lock order, including successful receipt replay.
+        await scope.lockOwnerAndCount(actorUserId);
+        const decision = await this.permissions.readLocked(
+          scope.permissionTransaction,
+          sourceId,
+          actorUserId,
+        );
+        if (!decision.allowed) throw new BoardServiceError(decision.code, 'Board not found.');
       },
     );
     return { board: result.body, replayed: result.replayed };

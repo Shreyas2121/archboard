@@ -8,9 +8,8 @@ import {
   type ErrorCode,
 } from '@archboard/contracts';
 import {
-  hydrateGraphDocument,
+  createFreshGraphUpdate,
   projectGraphDocument,
-  remapGraphProjection,
   validateGraphDocument,
 } from '@archboard/document-model';
 import type { EntityManager } from 'typeorm';
@@ -149,7 +148,6 @@ export function reconstructGraphBytes(
   )
     throw new CommittedGraphError(ERROR_CODES.DOCUMENT_LIMIT);
   const document = new Y.Doc();
-  let copy: Y.Doc | undefined;
   try {
     Y.applyUpdate(document, snapshot);
     assertCausallyComplete(document);
@@ -162,14 +160,11 @@ export function reconstructGraphBytes(
     if (state.byteLength > MAX_ENCODED_YJS_STATE_BYTES)
       throw new CommittedGraphError(ERROR_CODES.DOCUMENT_LIMIT);
     if (!remap) return state;
-    copy = hydrateGraphDocument(remapGraphProjection(projectGraphDocument(document)));
-    validateGraphDocument(copy);
-    const result = Y.encodeStateAsUpdate(copy);
+    const result = createFreshGraphUpdate(projectGraphDocument(document));
     if (result.byteLength > MAX_ENCODED_YJS_STATE_BYTES)
       throw new CommittedGraphError(ERROR_CODES.DOCUMENT_LIMIT);
     return result;
   } finally {
-    copy?.destroy();
     document.destroy();
   }
 }

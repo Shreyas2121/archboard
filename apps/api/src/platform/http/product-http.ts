@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { performance } from 'node:perf_hooks';
 
-import { ERROR_CODES } from '@archboard/contracts';
+import { ERROR_CODES, MAX_IMPORT_REQUEST_BYTES } from '@archboard/contracts';
+import { parseBoundedJson, PortableFileError } from '@archboard/export';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 
 import { errorEnvelope, requestContext } from './api-boundary.js';
@@ -10,7 +11,9 @@ import { errorEnvelope, requestContext } from './api-boundary.js';
 const MAX_REQUEST_TARGET_CHARACTERS = 4_096;
 const MAX_QUERY_CHARACTERS = 2_048;
 const MAX_QUERY_FIELDS = 32;
-const MAX_JSON_BYTES = '64kb';
+const MAX_JSON_BYTES = MAX_IMPORT_REQUEST_BYTES;
+const MAX_ORDINARY_JSON_BYTES = 65_536;
+const HTTP_BAD_REQUEST = 400;
 const HTTP_PAYLOAD_TOO_LARGE = 413;
 const HTTP_RATE_LIMITED = 429;
 const INVITE_WINDOW_MS = 60_000;
@@ -121,5 +124,22 @@ export function configureProductHttp(application: NestExpressApplication): void 
     });
   });
   // Better Auth is registered before this parser and receives its original request stream.
-  application.useBodyParser('json', { limit: MAX_JSON_BYTES });
+  application.useBodyParser('json', {
+    limit: MAX_JSON_BYTES,
+    verify: (request: IncomingMessage, _response: ServerResponse, bytes: Buffer) => {
+      if (request.url?.split('?')[0] === '/api/v1/boards/import') {
+        try {
+          parseBoundedJson(bytes, MAX_IMPORT_REQUEST_BYTES);
+        } catch (error) {
+          throw Object.assign(new Error('Invalid portable request.'), {
+            status:
+              error instanceof PortableFileError && error.reason === 'size'
+                ? HTTP_PAYLOAD_TOO_LARGE
+                : HTTP_BAD_REQUEST,
+          });
+        }
+      } else if (bytes.byteLength > MAX_ORDINARY_JSON_BYTES)
+        throw Object.assign(new Error('Request is too large.'), { status: HTTP_PAYLOAD_TOO_LARGE });
+    },
+  });
 }

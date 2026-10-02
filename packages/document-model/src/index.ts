@@ -1,7 +1,11 @@
 export { createGraphDocument, hydrateGraphDocument } from './schema/index.js';
 export * from './access/index.js';
 export * from './commands/index.js';
-export { projectGraphDocument, remapGraphProjection } from './projection/index.js';
+export {
+  projectGraphDocument,
+  remapGraphProjection,
+  createFreshGraphUpdate,
+} from './projection/index.js';
 export * from './undo/index.js';
 export {
   DocumentValidationError,

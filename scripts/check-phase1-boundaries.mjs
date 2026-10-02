@@ -8,14 +8,16 @@ const workspace = fileURLToPath(new URL('..', import.meta.url));
 const apiModules = join(workspace, 'apps/api/src/modules');
 const webRoot = join(workspace, 'apps/web');
 const exactVersionPattern = /^\d+\.\d+\.\d+$/;
-const sharedPackages = ['contracts', 'document-model', 'fixtures', 'sync-client'];
+const sharedPackages = ['contracts', 'document-model', 'fixtures', 'sync-client', 'export'];
 const allowedRuntimeDependencies = {
+  export: new Set(['@archboard/contracts']),
   contracts: new Set(['zod']),
   'document-model': new Set(['@archboard/contracts', 'yjs']),
   fixtures: new Set(['@archboard/contracts']),
   'sync-client': new Set(['@archboard/contracts', '@archboard/document-model', 'idb', 'yjs']),
 };
 const expectedWorkspaceDependencies = {
+  export: new Set(['@archboard/contracts']),
   contracts: new Set(),
   'document-model': new Set(['@archboard/contracts']),
   fixtures: new Set(['@archboard/contracts']),
@@ -23,6 +25,7 @@ const expectedWorkspaceDependencies = {
 };
 const testFileSuffixes = ['.test.ts', '.spec.ts', '.integration-spec.ts'];
 const phase2ForbiddenImports = {
+  export: ['react', 'react-dom', '@xyflow/react', 'zustand', '@nestjs/common', 'yjs'],
   contracts: ['react', 'react-dom', '@xyflow/react', 'zustand'],
   'document-model': ['react', 'react-dom', '@xyflow/react', 'zustand'],
   'sync-client': ['react', 'react-dom'],

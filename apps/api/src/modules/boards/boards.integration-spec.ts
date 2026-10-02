@@ -282,6 +282,125 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
     }
   });
 
+  it('imports privately with fresh IDs, exact replay and payload conflict', async () => {
+    const file = {
+      format: 'archboard',
+      formatVersion: 1,
+      exportedAt: '2026-10-02T00:00:00.000Z',
+      syncStatusAtExport: 'local-only',
+      board: { title: 'Portable source', description: 'Preserved metadata' },
+      graph: allEntityGraphFixture,
+    };
+    const key = randomUUID();
+    const body = { title: 'Imported graph', file };
+    expect((await request('/boards/import', undefined, { method: 'POST', key, body })).status).toBe(
+      HTTP_UNAUTHORIZED,
+    );
+    const invalidKey = randomUUID();
+    const malformed = await request('/boards/import', 'viewer', {
+      method: 'POST',
+      key: invalidKey,
+      body: {
+        ...body,
+        file: {
+          ...file,
+          graph: { ...file.graph, edges: [{ ...file.graph.edges[0]!, targetId: randomUUID() }] },
+        },
+      },
+    });
+    expect(malformed.status).toBe(HTTP_BAD_REQUEST);
+    expect(
+      (await database.query('SELECT key FROM api_idempotency WHERE key = $1', [
+        invalidKey,
+      ])) as unknown[],
+    ).toHaveLength(0);
+    const first = await request('/boards/import', 'viewer', { method: 'POST', key, body });
+    expect(first.status).toBe(HTTP_CREATED);
+    const imported = boardDetailResponseSchema.parse(await first.json()).data;
+    expect(imported).toMatchObject({
+      title: body.title,
+      description: file.board.description,
+      effectiveRole: 'owner',
+      latestSeq: '0',
+    });
+    expect(imported.owner.id).toBe(users.get('viewer')!.id);
+    const replay = await request('/boards/import', 'viewer', { method: 'POST', key, body });
+    expect(replay.status).toBe(HTTP_CREATED);
+    expect(boardDetailResponseSchema.parse(await replay.json()).data).toEqual(imported);
+    expect(
+      (
+        await request('/boards/import', 'viewer', {
+          method: 'POST',
+          key,
+          body: { ...body, title: 'Changed' },
+        })
+      ).status,
+    ).toBe(HTTP_CONFLICT);
+    expect((await request(`/boards/${imported.id}`, 'owner')).status).toBe(HTTP_NOT_FOUND);
+    const snapshots = (await database.query(
+      'SELECT update_bytes FROM board_snapshots WHERE board_id = $1',
+      [imported.id],
+    )) as { update_bytes: Buffer }[];
+    const decoded = new Y.Doc();
+    Y.applyUpdate(decoded, snapshots[0]!.update_bytes);
+    validateGraphDocument(decoded);
+    const projection = projectGraphDocument(decoded);
+    const sourceIds = new Set(
+      [...file.graph.nodes, ...file.graph.edges, ...file.graph.boundaries, ...file.graph.steps].map(
+        ({ id }) => id,
+      ),
+    );
+    expect(
+      [
+        ...projection.nodes,
+        ...projection.edges,
+        ...projection.boundaries,
+        ...projection.steps,
+      ].some(({ id }) => sourceIds.has(id)),
+    ).toBe(false);
+    for (const table of ['board_members', 'board_updates', 'checkpoints', 'comment_threads'])
+      expect(
+        (await database.query(`SELECT board_id FROM ${table} WHERE board_id = $1`, [
+          imported.id,
+        ])) as unknown[],
+      ).toHaveLength(0);
+    decoded.destroy();
+  });
+
+  it('rolls back import board, snapshot and receipt on a persistence failure', async () => {
+    await database.query(
+      'ALTER TABLE board_snapshots ADD CONSTRAINT deny_p706_snapshot CHECK (false) NOT VALID',
+    );
+    const key = randomUUID();
+    try {
+      const file = {
+        format: 'archboard',
+        formatVersion: 1,
+        exportedAt: '2026-10-02T00:00:00.000Z',
+        syncStatusAtExport: 'local-only',
+        board: { title: 'Source', description: '' },
+        graph: allEntityGraphFixture,
+      };
+      const response = await request('/boards/import', 'editor', {
+        method: 'POST',
+        key,
+        body: { title: 'Import rollback', file },
+      });
+      expect(response.status).toBe(HTTP_UNAVAILABLE);
+      expect(
+        (await database.query('SELECT id FROM boards WHERE title = $1', [
+          'Import rollback',
+        ])) as unknown[],
+      ).toHaveLength(0);
+      expect(
+        (await database.query('SELECT key FROM api_idempotency WHERE key = $1', [
+          key,
+        ])) as unknown[],
+      ).toHaveLength(0);
+    } finally {
+      await database.query('ALTER TABLE board_snapshots DROP CONSTRAINT deny_p706_snapshot');
+    }
+  });
   it('lists owned and joined boards with search, archive filter, stable cursor, and no outsider leakage', async () => {
     const joined = await create('editor', 'Joined architecture');
     const ownedA = await create('owner', 'Search Alpha');
@@ -532,6 +651,19 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       body: { title: 'Private copy' },
     });
     expect(boardDetailResponseSchema.parse(await replay.json()).data).toEqual(copy);
+    // Successful retry must remain the original effect after source advancement.
+    await database.query('UPDATE boards SET latest_seq = latest_seq + 1 WHERE id = $1', [
+      source.id,
+    ]);
+    const advancedReplay = await request(path, 'viewer', {
+      method: 'POST',
+      key,
+      body: { title: 'Private copy' },
+    });
+    expect(boardDetailResponseSchema.parse(await advancedReplay.json()).data).toEqual(copy);
+    await database.query('UPDATE boards SET latest_seq = latest_seq - 1 WHERE id = $1', [
+      source.id,
+    ]);
     const conflict = await request(path, 'viewer', {
       method: 'POST',
       key,
@@ -552,6 +684,18 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       body: { title: 'Archived copy' },
     });
     expect(archivedCopy.status).toBe(HTTP_CREATED);
+    await database.query('DELETE FROM board_members WHERE board_id = $1 AND user_id = $2', [
+      source.id,
+      users.get('viewer')!.id,
+    ]);
+    expect(
+      (await request(path, 'viewer', { method: 'POST', key, body: { title: 'Private copy' } }))
+        .status,
+    ).toBe(HTTP_NOT_FOUND);
+    await database.query(
+      'INSERT INTO board_members (board_id, user_id, role) VALUES ($1, $2, $3)',
+      [source.id, users.get('viewer')!.id, 'viewer'],
+    );
     await database.query('UPDATE board_snapshots SET schema_version = $2 WHERE board_id = $1', [
       source.id,
       GRAPH_SCHEMA_VERSION + 1,
@@ -1114,10 +1258,20 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
         key: randomUUID(),
         body: { title: 'limit A' },
       }),
-      request('/boards', 'owner', {
+      request('/boards/import', 'owner', {
         method: 'POST',
         key: randomUUID(),
-        body: { title: 'limit B' },
+        body: {
+          title: 'limit B',
+          file: {
+            format: 'archboard',
+            formatVersion: 1,
+            exportedAt: '2026-10-02T00:00:00.000Z',
+            syncStatusAtExport: 'local-only',
+            board: { title: 'Source', description: '' },
+            graph: allEntityGraphFixture,
+          },
+        },
       }),
     ]);
     expect(outcomes.map((response) => response.status).sort()).toEqual([

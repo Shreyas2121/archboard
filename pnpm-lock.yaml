@@ -125,6 +125,9 @@ importers:
       '@archboard/document-model':
         specifier: workspace:*
         version: link:../../packages/document-model
+      '@archboard/export':
+        specifier: workspace:*
+        version: link:../../packages/export
       '@nestjs/common':
         specifier: 12.0.1
         version: 12.0.1(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.1.1)
@@ -295,6 +298,16 @@ importers:
       yjs:
         specifier: 13.6.32
         version: 13.6.32
+    devDependencies:
+      '@archboard/fixtures':
+        specifier: workspace:*
+        version: link:../fixtures
+
+  packages/export:
+    dependencies:
+      '@archboard/contracts':
+        specifier: workspace:*
+        version: link:../contracts
     devDependencies:
       '@archboard/fixtures':
         specifier: workspace:*

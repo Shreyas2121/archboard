@@ -1,4 +1,9 @@
-import { deleteCommentSchema, threadCreateResponseSchema } from '@archboard/contracts';
+import {
+  deleteCommentSchema,
+  threadCreateResponseSchema,
+  importBoardSchema,
+  importBoardResponseSchema,
+} from '@archboard/contracts';
 import { z } from 'zod';
 
 import { createOpenApiDocument } from './openapi.js';
@@ -6,6 +11,18 @@ import { createOpenApiDocument } from './openapi.js';
 const anchorVariantCount = 3;
 
 describe('Phase 6 discussion OpenAPI', () => {
+  it('documents strict import DTOs and an idempotent private creation route', () => {
+    const document = createOpenApiDocument();
+    expect(document.components.schemas.ImportBoardRequest).toEqual(
+      z.toJSONSchema(importBoardSchema, { io: 'input' }),
+    );
+    expect(document.components.schemas.ImportBoardResponse).toEqual(
+      z.toJSONSchema(importBoardResponseSchema, { io: 'output' }),
+    );
+    const route = document.paths['/api/v1/boards/import'];
+    expect(Object.keys(route ?? {})).toEqual(['post']);
+    expect(JSON.stringify(route)).toContain('Idempotency-Key');
+  });
   it('maps shared discussion DTOs and advertises only implemented discussion operations', () => {
     const document = createOpenApiDocument();
     expect(document.components.schemas.DeleteCommentRequest).toEqual(

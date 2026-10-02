@@ -78,9 +78,15 @@ export class PostgresBoardPersistence implements BoardPersistence {
     key: string,
     request: unknown,
     work: (scope: BoardWriteScope) => Promise<{ status: number; body: T }>,
+    authorize?: (scope: BoardWriteScope) => Promise<void>,
   ): Promise<{ status: number; body: T; replayed: boolean }> {
-    return this.idempotency.execute(actorUserId, operation, key, request, (runner) =>
-      work(this.scope(runner)),
+    return this.idempotency.execute(
+      actorUserId,
+      operation,
+      key,
+      request,
+      (runner) => work(this.scope(runner)),
+      authorize ? (runner) => authorize(this.scope(runner)) : undefined,
     );
   }
 
