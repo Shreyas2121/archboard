@@ -40,6 +40,7 @@ import WebSocket from 'ws';
 import type { RawData, WebSocketServer } from 'ws';
 import { fromNodeHeaders } from 'better-auth/node';
 import * as Y from 'yjs';
+import { projectGraphDocument } from '@archboard/document-model';
 
 import {
   BoardPermissionService,
@@ -93,6 +94,8 @@ interface ConnectionState extends AuthorizedBoardSocket {
   readonly sessionHeaders: Headers;
   lastPongAt: number;
   presenceTimes: number[];
+  presenterTimes: number[];
+  presenterDeadline?: NodeJS.Timeout;
   presence?: ServerPresenceMessage;
   presenceExpiry?: NodeJS.Timeout;
   joining: boolean;
@@ -179,6 +182,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       }, WS_PING_INTERVAL_MS),
       lastPongAt: Date.now(),
       presenceTimes: [],
+      presenterTimes: [],
       joining: false,
       ready: false,
       closed: false,
@@ -194,6 +198,8 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     this.connections.set(websocket, state);
     websocket.on('pong', () => {
       state.lastPongAt = Date.now();
+      if (state.reservation?.room.presenter.snapshot().connectionId === state.connectionId)
+        void this.presenterOperation(state, websocket, 'heartbeat');
     });
     websocket.on('error', () => undefined);
     websocket.on('message', (raw, isBinary) => {
@@ -206,6 +212,8 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     if (state === undefined) return;
     this.removePresence(state);
     state.closed = true;
+    clearTimeout(state.presenterDeadline);
+    void this.presenterOperation(state, websocket, 'disconnect');
     clearTimeout(state.helloDeadline);
     clearInterval(state.liveness);
     clearTimeout(state.sessionDeadline);
@@ -221,14 +229,18 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
 
   /** Called after a board access transaction commits; the room queue orders socket state with updates. */
   public accessChanged(boardId: string, userId?: string): Promise<void> {
-    return this.track(this.refreshAccess(boardId, userId));
+    return this.track(
+      this.refreshAccess(boardId, userId).then(() => this.refreshPresenter(boardId)),
+    );
   }
 
   public resourcesChanged(
     boardId: string,
     resources: readonly InvalidateMessage['data']['resource'][],
   ): Promise<void> {
-    return this.track(this.refreshAccess(boardId, undefined, resources));
+    return this.track(
+      this.refreshAccess(boardId, undefined, resources).then(() => this.refreshPresenter(boardId)),
+    );
   }
 
   private async refreshAccess(
@@ -351,6 +363,28 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       this.acceptPresence(state, message.data);
       return;
     }
+    if (
+      message.event === CLIENT_EVENT_NAMES.PRESENTER_ACQUIRE ||
+      message.event === CLIENT_EVENT_NAMES.PRESENTER_STEP ||
+      message.event === CLIENT_EVENT_NAMES.PRESENTER_RELEASE
+    ) {
+      const now = Date.now();
+      state.presenterTimes = state.presenterTimes.filter(
+        (time) => now - time < MILLISECONDS_PER_SECOND,
+      );
+      if (state.presenterTimes.length >= PRESENCE_UPDATES_PER_SECOND) {
+        this.sendError(websocket, ERROR_CODES.PRESENTER_DENIED, false);
+        return;
+      }
+      state.presenterTimes.push(now);
+      void this.presenterOperation(
+        state,
+        websocket,
+        message.event,
+        message.event === CLIENT_EVENT_NAMES.PRESENTER_STEP ? message.data.stepId : undefined,
+      );
+      return;
+    }
     if (message.event === CLIENT_EVENT_NAMES.UPDATE) {
       if (!this.consumeUpdateBudget(state)) {
         this.sendError(websocket, ERROR_CODES.RATE_LIMITED, true, message.data.updateId);
@@ -367,6 +401,131 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       return;
     }
     this.sendError(websocket, ERROR_CODES.SERVER_BUSY, true);
+  }
+
+  private refreshPresenter(boardId: string): Promise<void> {
+    const entry = [...this.connections].find(
+      ([, state]) => state.boardId === boardId && state.ready,
+    );
+    return entry === undefined ? Promise.resolve() : this.presenterOperation(entry[1], entry[0]);
+  }
+
+  /** Queue and board transaction lock cover control and every protected delivery. */
+  private presenterOperation(
+    source: ConnectionState,
+    socket: WebSocket,
+    action?: string,
+    stepId?: string,
+  ): Promise<void> {
+    const room = source.reservation?.room;
+    if (room === undefined) return Promise.resolve();
+    return this.track(
+      room
+        .run(async () => {
+          await this.authorityTransactions.run(async (transaction) => {
+            const lease = room.presenter;
+            lease.expire(Date.now());
+            if (action === 'disconnect') lease.release(source.connectionId);
+            const holder = [...this.connections].find(
+              ([, peer]) =>
+                peer.boardId === source.boardId &&
+                peer.connectionId === lease.snapshot().connectionId,
+            );
+            if (lease.snapshot().connectionId !== null) {
+              if (
+                holder === undefined ||
+                !this.isOpen(holder[0], holder[1]) ||
+                !(await this.revalidateSession(holder[0], holder[1])) ||
+                !(await this.permissions.editGraph(transaction, source.boardId, holder[1].userId))
+                  .allowed
+              )
+                lease.clear();
+            }
+            if (
+              action !== undefined &&
+              action !== 'disconnect' &&
+              action !== 'expiry' &&
+              action !== 'join' &&
+              this.isOpen(socket, source) &&
+              source.ready
+            ) {
+              const permission = await this.permissions.editGraph(
+                transaction,
+                source.boardId,
+                source.userId,
+              );
+              if (!(await this.revalidateSession(socket, source))) return;
+              if (!permission.allowed) this.sendError(socket, permission.code, false);
+              else {
+                lease.expire(Date.now());
+                let accepted = false;
+                if (action === CLIENT_EVENT_NAMES.PRESENTER_ACQUIRE)
+                  accepted = lease.acquire(source.connectionId, Date.now());
+                else if (action === CLIENT_EVENT_NAMES.PRESENTER_RELEASE)
+                  accepted = lease.release(source.connectionId);
+                else if (action === 'heartbeat')
+                  accepted = lease.heartbeat(source.connectionId, source.lastPongAt);
+                else if (action === CLIENT_EVENT_NAMES.PRESENTER_STEP && stepId !== undefined)
+                  accepted = lease.select(
+                    source.connectionId,
+                    stepId,
+                    projectGraphDocument(room.document).steps.some((step) => step.id === stepId),
+                  );
+                if (!accepted && action !== 'heartbeat')
+                  this.sendError(socket, ERROR_CODES.PRESENTER_DENIED, false);
+              }
+            }
+            lease.expire(Date.now());
+            const publishAll = lease.consumeChange();
+            const publishSource =
+              action === 'join' ||
+              action === CLIENT_EVENT_NAMES.PRESENTER_ACQUIRE ||
+              action === CLIENT_EVENT_NAMES.PRESENTER_RELEASE ||
+              action === CLIENT_EVENT_NAMES.PRESENTER_STEP;
+            for (const [peerSocket, peer] of this.connections) {
+              if (!publishAll && !(publishSource && peer === source)) continue;
+              if (peer.boardId !== source.boardId || !peer.ready || !this.isOpen(peerSocket, peer))
+                continue;
+              const permission = await this.permissions.readLocked(
+                transaction,
+                source.boardId,
+                peer.userId,
+              );
+              if (!permission.allowed || !(await this.revalidateSession(peerSocket, peer)))
+                continue;
+              lease.expire(Date.now());
+              if (holder !== undefined && !this.isOpen(holder[0], holder[1]))
+                lease.release(holder[1].connectionId);
+              this.send(peerSocket, {
+                event: SERVER_EVENT_NAMES.PRESENTER,
+                data: lease.snapshot(),
+              });
+            }
+            const snapshot = lease.snapshot();
+            if (lease.hasChanges()) void this.presenterOperation(source, socket);
+            // An independent deadline, never the 45-second socket timeout. Nonholders cannot renew it.
+            for (const [peerSocket, peer] of this.connections) {
+              if (peer.boardId !== source.boardId) continue;
+              clearTimeout(peer.presenterDeadline);
+              if (peer.connectionId === snapshot.connectionId && snapshot.expiresAt !== null) {
+                peer.presenterDeadline = setTimeout(
+                  () => {
+                    void this.presenterOperation(peer, peerSocket, 'expiry');
+                  },
+                  Math.max(0, Date.parse(snapshot.expiresAt) - Date.now()),
+                );
+                peer.presenterDeadline.unref();
+              }
+            }
+          });
+        })
+        .catch(() => {
+          // Fail closed on unavailable authority; destruction also clears the room lease.
+          room.presenter.clear();
+          for (const [peerSocket, peer] of this.connections)
+            if (peer.boardId === source.boardId) this.terminate(peerSocket);
+        }),
+    );
   }
 
   private acceptPresence(state: ConnectionState, presence: PresenceState): void {
@@ -559,6 +718,8 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
                   });
                 }
                 subscription.activate();
+                // Queued after buffered update deliveries, with current locked authority.
+                void this.presenterOperation(state, websocket, 'join');
                 for (const peer of this.connections.values()) {
                   if (
                     peer !== state &&
@@ -673,6 +834,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         });
         if (!result.duplicate) {
           room.publishCommittedUpdate({ seq: result.sequence, updateBase64 }, state.deliverUpdate);
+          void this.presenterOperation(state, websocket);
         }
       });
     } catch (error) {

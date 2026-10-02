@@ -20,12 +20,16 @@ import {
   PROTOCOL_VERSION,
   SERVER_EVENT_NAMES,
   WS_PING_INTERVAL_MS,
+  PRESENTER_LEASE_TIMEOUT_MS,
+  WS_PONG_TIMEOUT_MS,
   serverMessageSchema,
 } from '@archboard/contracts';
 import {
   createEdge,
   createGraphDocument,
   createNode,
+  createPresentationStep,
+  tombstonePresentationStep,
   editGraphText,
   hydrateGraphDocument,
   moveNode,
@@ -34,7 +38,12 @@ import {
   tombstoneNode,
   validateGraphDocument,
 } from '@archboard/document-model';
-import { concurrencyScenarios, FIXED_IDS, type FixtureOperation } from '@archboard/fixtures';
+import {
+  allEntityGraphFixture,
+  concurrencyScenarios,
+  FIXED_IDS,
+  type FixtureOperation,
+} from '@archboard/fixtures';
 import { jest } from '@jest/globals';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -145,7 +154,11 @@ function waitForMessage(websocket: WebSocket): Promise<RawData> {
   });
 }
 
-function waitForEvent(websocket: WebSocket, event: string) {
+function waitForEvent(
+  websocket: WebSocket,
+  event: string | readonly string[],
+  accept: (message: ReturnType<typeof serverMessageSchema.parse>) => boolean = () => true,
+) {
   return new Promise<ReturnType<typeof serverMessageSchema.parse>>((resolve, reject) => {
     const timeout = setTimeout(() => {
       websocket.off('message', onMessage);
@@ -153,7 +166,11 @@ function waitForEvent(websocket: WebSocket, event: string) {
     }, CLIENT_EVENT_TIMEOUT_MS);
     const onMessage = (raw: RawData) => {
       const message = serverMessageSchema.parse(JSON.parse(raw.toString()));
-      if (message.event !== event) return;
+      if (
+        !(typeof event === 'string' ? message.event === event : event.includes(message.event)) ||
+        !accept(message)
+      )
+        return;
       clearTimeout(timeout);
       websocket.off('message', onMessage);
       resolve(message);
@@ -227,6 +244,44 @@ async function joinRoom(url: string, cookie: string) {
   return { socket, ready: response.data };
 }
 
+// P7-04: capture initial transient state before hello so ready/current-state ordering is observable.
+async function joinPresenterRoom(url: string, cookie: string, autoPong = true) {
+  const socket = new WebSocket(url, {
+    ...websocketOptions(ALLOWED_FRONTEND_ORIGIN, cookie),
+    autoPong,
+  });
+  const ready = waitForEvent(socket, SERVER_EVENT_NAMES.READY);
+  const presenter = waitForEvent(socket, SERVER_EVENT_NAMES.PRESENTER);
+  await waitForOpen(socket);
+  socket.send(
+    JSON.stringify({
+      event: 'hello',
+      data: {
+        protocolVersion: PROTOCOL_VERSION,
+        schemaVersion: GRAPH_SCHEMA_VERSION,
+        tabId: randomUUID(),
+      },
+    }),
+  );
+  const initialReady = await ready;
+  const initialPresenter = await presenter;
+  if (
+    initialReady.event !== SERVER_EVENT_NAMES.READY ||
+    initialPresenter.event !== SERVER_EVENT_NAMES.PRESENTER
+  )
+    throw new Error('Presenter join expected.');
+  return { socket, ready: initialReady.data, presenter: initialPresenter.data };
+}
+
+function waitForPresenter(socket: WebSocket, connectionId: string | null) {
+  return waitForEvent(
+    socket,
+    SERVER_EVENT_NAMES.PRESENTER,
+    (message) =>
+      message.event === SERVER_EVENT_NAMES.PRESENTER && message.data.connectionId === connectionId,
+  );
+}
+
 function makeNodeUpdate(snapshotBase64: string, title: string) {
   const document = new Y.Doc();
   try {
@@ -254,14 +309,20 @@ function makeNodeUpdate(snapshotBase64: string, title: string) {
 }
 
 async function sendUpdate(socket: WebSocket, updateId: string, bytes: Uint8Array) {
-  const responsePromise = waitForMessage(socket);
+  const responsePromise = waitForEvent(
+    socket,
+    [SERVER_EVENT_NAMES.ACK, SERVER_EVENT_NAMES.ERROR],
+    (message) =>
+      (message.event === SERVER_EVENT_NAMES.ACK || message.event === SERVER_EVENT_NAMES.ERROR) &&
+      message.data.updateId === updateId,
+  );
   socket.send(
     JSON.stringify({
       event: 'update',
       data: { updateId, updateBase64: Buffer.from(bytes).toString('base64') },
     }),
   );
-  return serverMessageSchema.parse(JSON.parse((await responsePromise).toString()));
+  return responsePromise;
 }
 
 async function sendUpdateAndWaitForAck(socket: WebSocket, bytes: Uint8Array) {
@@ -591,6 +652,236 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
       application.get(CollaborationRoomRegistry).evictIdle(Date.now() + ROOM_IDLE_EVICTION_MS + 1);
     }
   });
+
+  it('P7-04: rejects same-account tab and viewer controls, returns current state on join, and preserves durable rows', async () => {
+    const board = await createUpdateBoard(true);
+    const owner = await joinPresenterRoom(board.url, sessionCookie);
+    const tab = await joinPresenterRoom(board.url, sessionCookie);
+    const viewer = await joinPresenterRoom(board.url, viewerCookie);
+    const before = await database.getRepository(BoardEntity).findOneByOrFail({ id: board.id });
+    try {
+      const acquired = waitForPresenter(viewer.socket, owner.ready.connectionId);
+      owner.socket.send(JSON.stringify({ event: 'presenter.acquire', data: {} }));
+      expect(await acquired).toMatchObject({ data: { connectionId: owner.ready.connectionId } });
+      for (const [socket, event, code] of [
+        [tab.socket, 'presenter.acquire', ERROR_CODES.PRESENTER_DENIED],
+        [tab.socket, 'presenter.release', ERROR_CODES.PRESENTER_DENIED],
+        [viewer.socket, 'presenter.acquire', ERROR_CODES.FORBIDDEN],
+      ] as const) {
+        const denied = waitForEvent(socket, SERVER_EVENT_NAMES.ERROR);
+        socket.send(JSON.stringify({ event, data: {} }));
+        expect(await denied).toMatchObject({ data: { code } });
+      }
+      const rejoined = await joinPresenterRoom(board.url, viewerCookie);
+      expect(rejoined.presenter.connectionId).toBe(owner.ready.connectionId);
+      await closeWebSocket(rejoined.socket);
+      const after = await database.getRepository(BoardEntity).findOneByOrFail({ id: board.id });
+      expect(after.latestSeq).toBe(before.latestSeq);
+      expect(after.contentUpdatedAt).toEqual(before.contentUpdatedAt);
+      expect(await database.getRepository(BoardUpdateEntity).countBy({ boardId: board.id })).toBe(
+        0,
+      );
+      expect(await database.getRepository(UpdateReceiptEntity).countBy({ boardId: board.id })).toBe(
+        0,
+      );
+      const cleared = waitForPresenter(viewer.socket, null);
+      owner.socket.send(JSON.stringify({ event: 'presenter.release', data: {} }));
+      expect(await cleared).toMatchObject({ data: { connectionId: null } });
+    } finally {
+      await Promise.all([owner.socket, tab.socket, viewer.socket].map(closeWebSocket));
+    }
+  });
+
+  it('P7-04: rejects pending/deleted IDs and orders committed step deletion after graph delivery', async () => {
+    const board = await createUpdateBoard(true);
+    const holder = await joinPresenterRoom(board.url, sessionCookie);
+    const reader = await joinPresenterRoom(board.url, viewerCookie);
+    const document = new Y.Doc();
+    try {
+      Y.applyUpdate(document, Buffer.from(holder.ready.snapshotBase64, 'base64'));
+      const stepId = randomUUID();
+      const before = Y.encodeStateVector(document);
+      createPresentationStep(document, {
+        ...allEntityGraphFixture.steps[0]!,
+        id: stepId,
+        nodeIds: [],
+        edgeIds: [],
+      });
+      const pending = Y.encodeStateAsUpdate(document, before);
+      const acquired = waitForPresenter(reader.socket, holder.ready.connectionId);
+      holder.socket.send(JSON.stringify({ event: 'presenter.acquire', data: {} }));
+      await acquired;
+      const denied = waitForEvent(holder.socket, SERVER_EVENT_NAMES.ERROR);
+      holder.socket.send(JSON.stringify({ event: 'presenter.step', data: { stepId } }));
+      expect(await denied).toMatchObject({ data: { code: ERROR_CODES.PRESENTER_DENIED } });
+      await sendUpdate(holder.socket, randomUUID(), pending);
+      const selected = waitForEvent(
+        reader.socket,
+        SERVER_EVENT_NAMES.PRESENTER,
+        (message) =>
+          message.event === SERVER_EVENT_NAMES.PRESENTER && message.data.stepId === stepId,
+      );
+      holder.socket.send(JSON.stringify({ event: 'presenter.step', data: { stepId } }));
+      await selected;
+      const events: string[] = [];
+      reader.socket.on('message', (raw) =>
+        events.push(serverMessageSchema.parse(JSON.parse(raw.toString())).event),
+      );
+      const vector = Y.encodeStateVector(document);
+      tombstonePresentationStep(document, stepId);
+      const cleared = waitForEvent(
+        reader.socket,
+        SERVER_EVENT_NAMES.PRESENTER,
+        (message) => message.event === SERVER_EVENT_NAMES.PRESENTER && message.data.stepId === null,
+      );
+      await sendUpdate(holder.socket, randomUUID(), Y.encodeStateAsUpdate(document, vector));
+      expect(await cleared).toMatchObject({ data: { connectionId: holder.ready.connectionId } });
+      expect(events.indexOf(SERVER_EVENT_NAMES.UPDATE)).toBeLessThan(
+        events.indexOf(SERVER_EVENT_NAMES.PRESENTER),
+      );
+      const deleted = waitForEvent(holder.socket, SERVER_EVENT_NAMES.ERROR);
+      holder.socket.send(JSON.stringify({ event: 'presenter.step', data: { stepId } }));
+      expect(await deleted).toMatchObject({ data: { code: ERROR_CODES.PRESENTER_DENIED } });
+    } finally {
+      document.destroy();
+      await Promise.all([holder.socket, reader.socket].map(closeWebSocket));
+    }
+  });
+
+  it('P7-04: serializes simultaneous acquisitions by independent authenticated editors', async () => {
+    const board = await createUpdateBoard(true);
+    await application
+      .get(BoardService)
+      .changeMemberRole(ownerId, board.id, viewerId, { role: 'editor' });
+    const a = await joinPresenterRoom(board.url, sessionCookie);
+    const b = await joinPresenterRoom(board.url, viewerCookie);
+    const denied = new Promise<unknown>((resolve) => {
+      for (const socket of [a.socket, b.socket])
+        socket.on('message', (raw) => {
+          const message = serverMessageSchema.parse(JSON.parse(raw.toString()));
+          if (message.event === SERVER_EVENT_NAMES.ERROR) resolve(message.data.code);
+        });
+    });
+    try {
+      for (const socket of [a.socket, b.socket])
+        socket.send(JSON.stringify({ event: 'presenter.acquire', data: {} }));
+      expect(await denied).toBe(ERROR_CODES.PRESENTER_DENIED);
+      const joined = await joinPresenterRoom(board.url, sessionCookie);
+      expect([a.ready.connectionId, b.ready.connectionId]).toContain(joined.presenter.connectionId);
+      await closeWebSocket(joined.socket);
+    } finally {
+      await Promise.all([a.socket, b.socket].map(closeWebSocket));
+    }
+  });
+
+  it('P7-04: releases a holder on disconnect and revocation of its real session', async () => {
+    const users = (await database.query('SELECT email FROM "user" WHERE id = $1', [viewerId])) as {
+      email: string;
+    }[];
+    const signedIn = await fetch(`${authUrl}/api/auth/sign-in/email`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: ALLOWED_FRONTEND_ORIGIN },
+      body: JSON.stringify({ email: users[0]!.email, password: 'correct-horse-battery-staple' }),
+    });
+    expect(signedIn.status).toBe(HTTP_OK);
+    const holderCookie = signedIn.headers
+      .getSetCookie()
+      .find((header) => header.includes('.session_token='))!
+      .split(';', 1)[0]!;
+    const board = await createUpdateBoard(true);
+    await application
+      .get(BoardService)
+      .changeMemberRole(ownerId, board.id, viewerId, { role: 'editor' });
+    const reader = await joinPresenterRoom(board.url, sessionCookie);
+    const holder = await joinPresenterRoom(board.url, holderCookie);
+    try {
+      const acquired = waitForPresenter(reader.socket, holder.ready.connectionId);
+      holder.socket.send(JSON.stringify({ event: 'presenter.acquire', data: {} }));
+      await acquired;
+      const cleared = waitForPresenter(reader.socket, null);
+      const revoked = await fetch(`${authUrl}/api/auth/sign-out`, {
+        method: 'POST',
+        headers: { cookie: holderCookie, origin: ALLOWED_FRONTEND_ORIGIN },
+      });
+      expect(revoked.status).toBe(HTTP_OK);
+      // Control forces current-session authorization without waiting for the periodic heartbeat.
+      holder.socket.send(JSON.stringify({ event: 'presenter.acquire', data: {} }));
+      expect(await cleared).toMatchObject({ data: { connectionId: null } });
+      const ownerAcquired = waitForPresenter(reader.socket, reader.ready.connectionId);
+      reader.socket.send(JSON.stringify({ event: 'presenter.acquire', data: {} }));
+      await ownerAcquired;
+      const follower = await joinPresenterRoom(board.url, sessionCookie);
+      const disconnected = waitForPresenter(follower.socket, null);
+      await closeWebSocket(reader.socket);
+      expect(await disconnected).toMatchObject({ data: { connectionId: null } });
+      await closeWebSocket(follower.socket);
+    } finally {
+      await Promise.all([reader.socket, holder.socket].map(closeWebSocket));
+    }
+  });
+
+  it(
+    'P7-04: expires a silent holder at its lease deadline before socket termination',
+    async () => {
+      const board = await createUpdateBoard(true);
+      const holder = await joinPresenterRoom(board.url, sessionCookie, false);
+      const reader = await joinPresenterRoom(board.url, viewerCookie);
+      try {
+        const acquired = waitForPresenter(reader.socket, holder.ready.connectionId);
+        holder.socket.send(JSON.stringify({ event: 'presenter.acquire', data: {} }));
+        expect(await acquired).toMatchObject({ data: { connectionId: holder.ready.connectionId } });
+        // The ordinary event helper has a short request timeout; expiry uses its own bounded waiter.
+        const cleared = new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('Presenter lease did not expire.')),
+            PRESENTER_LEASE_TIMEOUT_MS + CLIENT_EVENT_TIMEOUT_MS,
+          );
+          reader.socket.on('message', (raw) => {
+            const message = serverMessageSchema.parse(JSON.parse(raw.toString()));
+            if (
+              message.event === SERVER_EVENT_NAMES.PRESENTER &&
+              message.data.connectionId === null
+            ) {
+              clearTimeout(timer);
+              resolve();
+            }
+          });
+        });
+        await cleared;
+        expect(holder.socket.readyState).toBe(WebSocket.OPEN);
+      } finally {
+        await Promise.all([holder.socket, reader.socket].map(closeWebSocket));
+      }
+    },
+    WS_PONG_TIMEOUT_MS,
+  );
+
+  it.each(['demote', 'archive', 'remove'] as const)(
+    'P7-04: clears an editor lease on real %s',
+    async (transition) => {
+      const board = await createUpdateBoard(true);
+      const boards = application.get(BoardService);
+      await boards.changeMemberRole(ownerId, board.id, viewerId, { role: 'editor' });
+      const editor = await joinPresenterRoom(board.url, viewerCookie);
+      const reader = await joinPresenterRoom(board.url, sessionCookie);
+      try {
+        const acquired = waitForPresenter(reader.socket, editor.ready.connectionId);
+        editor.socket.send(JSON.stringify({ event: 'presenter.acquire', data: {} }));
+        await acquired;
+        const cleared = waitForPresenter(reader.socket, null);
+        if (transition === 'demote')
+          await boards.changeMemberRole(ownerId, board.id, viewerId, { role: 'viewer' });
+        else if (transition === 'archive')
+          await boards.archive(ownerId, board.id, { expectedVersion: 1 });
+        else await boards.removeMember(ownerId, board.id, viewerId);
+        expect(await cleared).toMatchObject({
+          data: { connectionId: null, stepId: null, expiresAt: null },
+        });
+      } finally {
+        await Promise.all([editor.socket, reader.socket].map(closeWebSocket));
+      }
+    },
+  );
 
   it('bounds session-derived presence, isolates rooms, drops excess traffic, and never writes graph data', async () => {
     const board = await createUpdateBoard(true);
@@ -933,7 +1224,7 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
     try {
       const updateId = randomUUID();
       const { bytes, nodeId } = makeNodeUpdate(owner.ready.snapshotBase64, 'Durable socket node');
-      const peerMessage = waitForMessage(peer.socket);
+      const peerMessage = waitForEvent(peer.socket, SERVER_EVENT_NAMES.UPDATE);
       void peerMessage.catch(() => undefined);
       const acknowledgement = await sendUpdate(owner.socket, updateId, bytes);
       if (acknowledgement.event === SERVER_EVENT_NAMES.ERROR)
@@ -942,7 +1233,7 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
         event: SERVER_EVENT_NAMES.ACK,
         data: { updateId, seq: '1' },
       });
-      const broadcast = serverMessageSchema.parse(JSON.parse((await peerMessage).toString()));
+      const broadcast = await peerMessage;
       expect(broadcast).toMatchObject({ event: SERVER_EVENT_NAMES.UPDATE, data: { seq: '1' } });
       if (broadcast.event === SERVER_EVENT_NAMES.UPDATE)
         expect(Buffer.from(broadcast.data.updateBase64, 'base64')).toEqual(Buffer.from(bytes));
@@ -1103,12 +1394,12 @@ describe('authenticated Nest collaboration WebSocket gateway', () => {
       const room = await application.get(CollaborationRoomRegistry).reserve(board.id);
       expect(room.room.latestSeq).toBe('0');
       room.release();
-      const peerMessage = waitForMessage(peer.socket);
+      const peerMessage = waitForEvent(peer.socket, SERVER_EVENT_NAMES.UPDATE);
       expect(await sendUpdate(owner.socket, updateId, bytes)).toMatchObject({
         event: SERVER_EVENT_NAMES.ACK,
         data: { updateId, seq: '1' },
       });
-      expect(serverMessageSchema.parse(JSON.parse((await peerMessage).toString()))).toMatchObject({
+      expect(await peerMessage).toMatchObject({
         event: SERVER_EVENT_NAMES.UPDATE,
         data: { seq: '1' },
       });

@@ -26,7 +26,7 @@ describe('WebSocket frame parsing', () => {
   it.each([
     ['invalid UTF-8', invalidUtf8],
     ['malformed JSON', encoder.encode('{"event":')],
-    ['unknown event', encoder.encode('{"event":"presenter.acquire","data":{}}')],
+    ['unknown event', encoder.encode('{"event":"presenter.unknown","data":{}}')],
     [
       'unsupported version',
       encoder.encode(

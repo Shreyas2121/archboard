@@ -31,6 +31,9 @@ export const CLIENT_EVENT_NAMES = {
   HELLO: 'hello',
   UPDATE: 'update',
   PRESENCE: 'presence',
+  PRESENTER_ACQUIRE: 'presenter.acquire',
+  PRESENTER_STEP: 'presenter.step',
+  PRESENTER_RELEASE: 'presenter.release',
 } as const;
 
 export const SERVER_EVENT_NAMES = {
@@ -41,9 +44,10 @@ export const SERVER_EVENT_NAMES = {
   ERROR: 'error',
   ACCESS_CHANGED: 'access.changed',
   INVALIDATE: 'invalidate',
+  PRESENTER: 'presenter',
 } as const;
 
-// These event names are reserved for later phases. They are not accepted as Phase 4 client messages.
+// Compatibility aliases for the names reserved in Phase 4, activated in Phase 7.
 export const RESERVED_CLIENT_EVENT_NAMES = {
   PRESENTER_ACQUIRE: 'presenter.acquire',
   PRESENTER_STEP: 'presenter.step',
@@ -252,10 +256,26 @@ export const clientPresenceMessageSchema = z.strictObject({
   data: presenceStateSchema,
 });
 
+export const presenterAcquireMessageSchema = z.strictObject({
+  event: z.literal(CLIENT_EVENT_NAMES.PRESENTER_ACQUIRE),
+  data: z.strictObject({}),
+});
+export const presenterReleaseMessageSchema = z.strictObject({
+  event: z.literal(CLIENT_EVENT_NAMES.PRESENTER_RELEASE),
+  data: z.strictObject({}),
+});
+export const presenterStepMessageSchema = z.strictObject({
+  event: z.literal(CLIENT_EVENT_NAMES.PRESENTER_STEP),
+  data: z.strictObject({ stepId: applicationIdSchema }),
+});
+
 export const clientMessageSchema = z.discriminatedUnion('event', [
   helloMessageSchema,
   clientUpdateMessageSchema,
   clientPresenceMessageSchema,
+  presenterAcquireMessageSchema,
+  presenterReleaseMessageSchema,
+  presenterStepMessageSchema,
 ]);
 
 export const readyMessageSchema = z.strictObject({
@@ -325,6 +345,28 @@ export const invalidateMessageSchema = z.strictObject({
   }),
 });
 
+export const presenterStateSchema = z
+  .strictObject({
+    connectionId: applicationIdSchema.nullable(),
+    stepId: applicationIdSchema.nullable(),
+    expiresAt: z.iso.datetime().nullable(),
+  })
+  .refine((state) =>
+    state.connectionId === null
+      ? state.stepId === null && state.expiresAt === null
+      : state.expiresAt !== null,
+  );
+
+export const presenterMessageSchema = z.strictObject({
+  event: z.literal(SERVER_EVENT_NAMES.PRESENTER),
+  data: presenterStateSchema,
+});
+export type PresenterState = z.infer<typeof presenterStateSchema>;
+export type PresenterAcquireMessage = z.infer<typeof presenterAcquireMessageSchema>;
+export type PresenterReleaseMessage = z.infer<typeof presenterReleaseMessageSchema>;
+export type PresenterStepMessage = z.infer<typeof presenterStepMessageSchema>;
+export type PresenterMessage = z.infer<typeof presenterMessageSchema>;
+
 export const serverMessageSchema = z.discriminatedUnion('event', [
   readyMessageSchema,
   acknowledgementMessageSchema,
@@ -333,6 +375,7 @@ export const serverMessageSchema = z.discriminatedUnion('event', [
   errorMessageSchema,
   accessChangedMessageSchema,
   invalidateMessageSchema,
+  presenterMessageSchema,
 ]);
 
 export type ServerSequence = z.infer<typeof serverSequenceSchema>;

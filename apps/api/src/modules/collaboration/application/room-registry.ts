@@ -9,6 +9,8 @@ import {
   type ServerSequence,
 } from '@archboard/contracts';
 import * as Y from 'yjs';
+import { projectGraphDocument } from '@archboard/document-model';
+import { PresenterLease } from './presenter-lease.js';
 import { MAX_PENDING_ROOM_UPDATE_BYTES, MAX_PENDING_ROOM_UPDATES } from './collaboration-limits.js';
 
 export interface BufferedRoomUpdate {
@@ -46,6 +48,7 @@ export class RoomAdmissionError extends Error {
 }
 
 export class CollaborationRoom {
+  public readonly presenter = new PresenterLease();
   private tail: Promise<void> = Promise.resolve();
   private queued = 0;
   private connections = 0;
@@ -85,6 +88,7 @@ export class CollaborationRoom {
     const previous = this.currentDocument;
     this.currentDocument = candidate;
     this.currentSequence = sequence;
+    this.presenter.reconcile(projectGraphDocument(candidate).steps.map((step) => step.id));
     this.lastActivityAt = this.now();
     previous.destroy();
   }
@@ -143,11 +147,13 @@ export class CollaborationRoom {
   }
 
   public destroy(): void {
+    this.presenter.clear();
     this.currentDocument.destroy();
     this.subscribers.clear();
   }
 
   public stopAdmission(): void {
+    this.presenter.clear();
     this.closing = true;
   }
 

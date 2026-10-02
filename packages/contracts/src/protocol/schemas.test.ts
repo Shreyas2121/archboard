@@ -33,6 +33,29 @@ const TAB_INDEX = 1;
 const UPDATE_INDEX = 2;
 const CONNECTION_INDEX = 3;
 const OBJECT_INDEX = 4;
+
+describe('version 1 presenter frames', () => {
+  it('accepts only the planned empty controls and bounded step identity', () => {
+    for (const event of ['presenter.acquire', 'presenter.release']) {
+      expect(clientMessageSchema.safeParse({ event, data: {} }).success).toBe(true);
+      expect(
+        clientMessageSchema.safeParse({ event, data: { connectionId: 'spoof' } }).success,
+      ).toBe(false);
+    }
+    expect(
+      clientMessageSchema.safeParse({ event: 'presenter.step', data: { stepId: 'bad' } }).success,
+    ).toBe(false);
+  });
+  it('rejects partial clear states and extra authority fields', () => {
+    const cleared = { connectionId: null, stepId: null, expiresAt: null };
+    expect(serverMessageSchema.safeParse({ event: 'presenter', data: cleared }).success).toBe(true);
+    for (const extra of [{ userId: 'spoof' }, { expiresAt: new Date().toISOString() }])
+      expect(
+        serverMessageSchema.safeParse({ event: 'presenter', data: { ...cleared, ...extra } })
+          .success,
+      ).toBe(false);
+  });
+});
 const POSTGRES_BIGINT_MAX_STRING = '9223372036854775807';
 const POSTGRES_BIGINT_OVERFLOW_STRING = '9223372036854775808';
 

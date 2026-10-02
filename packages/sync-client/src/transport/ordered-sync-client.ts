@@ -15,6 +15,7 @@ import {
 
 import { LOCAL_PERSISTENCE_PHASES, type LocalPersistenceAdapter } from '../persistence/index.js';
 import { TransientPresence } from './transient-presence.js';
+import { TransientPresenter } from './transient-presenter.js';
 import { ResourceRefreshEvents } from './resource-refresh-events.js';
 
 const INITIAL_RETRY_MS = 1_000;
@@ -79,6 +80,19 @@ function isWritableRole(role: BoardRole | null): boolean {
 }
 
 export class OrderedSyncClient {
+  public readonly presenter = new TransientPresenter((message) => {
+    if (
+      !this.handshakeComplete ||
+      this.socket?.readyState !== WebSocket.OPEN ||
+      this.stopped ||
+      this.archived ||
+      !isWritableRole(this.role) ||
+      this.accessDenied
+    )
+      return false;
+    this.socket.send(JSON.stringify(message));
+    return true;
+  });
   public readonly resourceEvents = new ResourceRefreshEvents();
   public readonly presence = new TransientPresence((message) => {
     if (!this.handshakeComplete || this.socket?.readyState !== WebSocket.OPEN || this.stopped)
@@ -163,6 +177,7 @@ export class OrderedSyncClient {
   }
 
   public stop(): void {
+    this.presenter.clear();
     this.presence.clear();
     this.stopped = true;
     this.unsubscribePersistence?.();
@@ -246,6 +261,7 @@ export class OrderedSyncClient {
     socket.onclose = () => {
       if (this.socket !== socket) return;
       this.presence.clear();
+      this.presenter.clear();
       this.socket = null;
       this.handshakeComplete = false;
       this.inFlightId = null;
@@ -303,6 +319,7 @@ export class OrderedSyncClient {
       if (this.socket !== socket || this.stopped) return;
       this.handshakeComplete = true;
       this.presence.connect(message.data.connectionId);
+      this.presenter.connect(message.data.connectionId);
       this.retryDelay = INITIAL_RETRY_MS;
       this.publish();
       await this.drain();
@@ -316,6 +333,10 @@ export class OrderedSyncClient {
     }
     if (message.event === SERVER_EVENT_NAMES.PRESENCE) {
       this.presence.receive(message.data);
+      return;
+    }
+    if (message.event === SERVER_EVENT_NAMES.PRESENTER) {
+      this.presenter.receive(message.data);
       return;
     }
     if (message.event === SERVER_EVENT_NAMES.INVALIDATE) {
@@ -356,6 +377,13 @@ export class OrderedSyncClient {
     } else if (message.event === SERVER_EVENT_NAMES.ACCESS_CHANGED) {
       this.role = message.data.role;
       this.archived = message.data.archived;
+      if (message.data.role === null) this.presenter.clear();
+      else if (
+        message.data.archived ||
+        (message.data.role === BOARD_ROLES.VIEWER &&
+          this.presenter.getSnapshot().connectionId === this.presenter.getConnectionId())
+      )
+        this.presenter.reset();
       this.accessChanged = true;
       this.accessDenied = this.archived || !isWritableRole(this.role);
       this.denialCode = null;
@@ -375,6 +403,10 @@ export class OrderedSyncClient {
     retryable: boolean;
     updateId?: string | undefined;
   }): void {
+    if (error.code === ERROR_CODES.PRESENTER_DENIED && error.updateId === undefined) {
+      this.presenter.deny();
+      return;
+    }
     if (error.updateId !== undefined && error.updateId !== this.inFlightId) return;
     if (error.code === ERROR_CODES.CAUSAL_GAP && this.inFlightId !== null) {
       if (this.causalGapId === this.inFlightId) {
@@ -496,6 +528,7 @@ export class OrderedSyncClient {
   }
 
   private reconnectForProtocolError(): void {
+    this.presenter.clear();
     this.presence.clear();
     this.handshakeComplete = false;
     this.inFlightId = null;

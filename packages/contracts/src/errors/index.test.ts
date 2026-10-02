@@ -8,6 +8,7 @@ describe('canonical collaboration errors', () => {
       'VALIDATION_ERROR',
       'UNAUTHENTICATED',
       'FORBIDDEN',
+      'PRESENTER_DENIED',
       'NOT_FOUND',
       'BOARD_ARCHIVED',
       'VERSION_CONFLICT',

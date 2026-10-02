@@ -4,6 +4,8 @@ export const ERROR_CODES = {
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   UNAUTHENTICATED: 'UNAUTHENTICATED',
   FORBIDDEN: 'FORBIDDEN',
+  // Transient contention/invalid-step/rate denial must not suspend the durable update stream.
+  PRESENTER_DENIED: 'PRESENTER_DENIED',
   NOT_FOUND: 'NOT_FOUND',
   BOARD_ARCHIVED: 'BOARD_ARCHIVED',
   VERSION_CONFLICT: 'VERSION_CONFLICT',
