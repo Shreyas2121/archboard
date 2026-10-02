@@ -8,6 +8,7 @@ import type { EditorViewState } from './editor-view-state';
 type Actions = ReturnType<typeof useEditorUiActions>;
 type ButtonRef = RefObject<HTMLButtonElement | null>;
 export interface EditorToolbarProps {
+  readonly imageExport?: ReactNode;
   readonly portability?: ReactNode;
   readonly presentation?: ReactNode;
   readonly sharing?: ReactNode;

@@ -37,6 +37,7 @@ import {
   GraphCanvas,
 } from '@/features/editor/canvas';
 import { downloadRecoveryArtifact } from '@/features/editor/demo';
+import { ImageExportControl } from '@/features/editor/portability/image-export-control';
 import {
   createClipboardNote,
   shortcutModifierLabel,
@@ -133,6 +134,7 @@ export function EditorShell({
   const [storageOpen, setStorageOpen] = useState(false);
   const storageButtonRef = useRef<HTMLButtonElement>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [imageExportOpen, setImageExportOpen] = useState(false);
   const boardMode = boardTitle !== undefined;
   const viewState = editorSessionViewState(
     sessionSnapshot,
@@ -145,7 +147,12 @@ export function EditorShell({
   const playback = useLocalPresentation(
     session,
     projection?.steps ?? [],
-    activeDialog !== null || storageOpen || serverReloadOpen || sharingOpen || portabilityOpen,
+    activeDialog !== null ||
+      storageOpen ||
+      serverReloadOpen ||
+      sharingOpen ||
+      portabilityOpen ||
+      imageExportOpen,
     canvasContainer,
     sessionSnapshot,
     viewState.editable,
@@ -343,7 +350,8 @@ export function EditorShell({
       storageOpen ||
       serverReloadOpen ||
       sharingOpen ||
-      portabilityOpen,
+      portabilityOpen ||
+      imageExportOpen,
     editable: viewState.editable && !playback.presenting,
     projection,
     selection,
@@ -463,6 +471,17 @@ export function EditorShell({
           }
           sharing={sharing}
           portability={portability}
+          imageExport={
+            session && (
+              <ImageExportControl
+                key={session.resourceScope ? JSON.stringify(session.resourceScope) : 'demo'}
+                session={session}
+                title={boardTitle ?? 'Local demo'}
+                open={imageExportOpen}
+                onOpenChange={setImageExportOpen}
+              />
+            )
+          }
           boardMode={boardMode}
           boardTitle={boardTitle}
           viewState={viewState}

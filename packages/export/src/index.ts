@@ -4,6 +4,8 @@ import {
   type ExportEnvelope,
 } from '@archboard/contracts';
 
+export * from './image-export.js';
+
 const MAX_JSON_DEPTH = 32;
 const JSON_INDENT_SPACES = 2;
 

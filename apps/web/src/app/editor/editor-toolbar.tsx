@@ -7,6 +7,7 @@ import { ThemeControl } from '@/app/components/theme-control';
 
 import type { EditorToolbarProps } from './editor-composition-types';
 export function EditorToolbar({
+  imageExport,
   portability,
   presentation,
   sharing,
@@ -68,6 +69,7 @@ export function EditorToolbar({
           {presentation}
           {sharing}
           {portability}
+          {imageExport}
           <IconButton
             className="max-sm:hidden"
             label={`Undo (${shortcutModifier}+Z)`}
