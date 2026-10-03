@@ -1,5 +1,10 @@
 # Single-writer production operations
 
+For the current personal/portfolio scope, start with [local setup](setup.md) and
+[diagram preservation](using-archboard.md). P8-08 daily backup/restore automation
+is unfinished/deferred; the procedures below describe the optional P8-07 package,
+not a verified hosted deployment or an implemented backup schedule.
+
 P8-07 implementation on `phase-8-release-hardening`. Release acceptance is **OPEN**.
 The package has not been deployed or started against PostgreSQL. Database/process/
 running-package proof is **UNRUN (deferred by user — until Version 1 implementation
