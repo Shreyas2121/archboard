@@ -121,6 +121,7 @@ export class EditorSession {
   private bootstrapQueued = false;
   private accessDenied = false;
   private accessChecked = false;
+  private accessGeneration = 0;
   private readonly listeners = new Set<SessionListener>();
   private unsubscribeWriter: (() => void) | null = null;
   private undoManager: UndoManager | null = null;
@@ -250,9 +251,15 @@ export class EditorSession {
     );
   }
 
-  public async setBoardAccess(role: BoardRole, archived: boolean): Promise<void> {
+  public async setBoardAccess(
+    role: BoardRole,
+    archived: boolean,
+    active: () => boolean = () => true,
+  ): Promise<void> {
     if (this.board === undefined) return;
+    const generation = ++this.accessGeneration;
     if (!archived) await this.ensureBootstrap(role);
+    if (this.closeRequested || generation !== this.accessGeneration || !active()) return;
     const sync = this.syncClient?.getSnapshot();
     this.boardRole = sync?.ready ? sync.role : role;
     this.cachedRole = role;
@@ -263,12 +270,14 @@ export class EditorSession {
     this.refresh();
     const binding = this.writerSession.getWritableBinding();
     await binding?.persistence.cacheBoardAccess({ role, archived }).catch(() => undefined);
+    if (this.closeRequested || generation !== this.accessGeneration || !active()) return;
     this.syncClient?.resumeDrain();
   }
 
   /** Use only after the route confirms a selected-account cache with a local document. */
   public useCachedBoardAccess(role: BoardRole, archived: boolean): boolean {
     if (this.board === undefined || !this.hasLocalCopy) return false;
+    this.accessGeneration += 1;
     this.boardRole = role;
     this.archived = archived;
     this.accessDenied = false;
@@ -279,6 +288,7 @@ export class EditorSession {
 
   public denyBoardAccess(): void {
     if (this.board === undefined) return;
+    this.accessGeneration += 1;
     this.boardRole = null;
     this.accessDenied = true;
     this.accessChecked = false;
@@ -641,7 +651,10 @@ export class EditorSession {
       if (sync?.ready || sync?.phase === SYNC_PHASES.ACCESS_CHANGED) {
         this.boardRole = sync.role;
       }
-      if (sync?.accessChanged) this.archived = sync.archived;
+      if (sync?.accessChanged) {
+        this.accessGeneration += 1;
+        this.archived = sync.archived;
+      }
       if (sync?.ready) this.hasLocalCopy = true;
       const cacheRole =
         sync?.errorCode === ERROR_CODES.FORBIDDEN || sync?.errorCode === ERROR_CODES.NOT_FOUND

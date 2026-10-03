@@ -2,13 +2,19 @@
 
 Version: 1.0<br>
 Date: 2 October 2026<br>
-Status: Implementation specification<br>
+Status: Closed for amended personal/portfolio scope; original production release OPEN<br>
 Governing specification: `plan.md` version 1.1<br>
 Prerequisites: M05 offline product completion, M06 discussion/sharing, and M07 presentation/
 portability implementations, plus their M00–M04 foundations. Read the current Phase 2–7 audits,
 the Phase 6/7 verification inventories, and `docs/verification-policy.md` before deriving tasks.
 
 ## 1. Purpose and authority
+
+The user's later instruction closes this phase for personal diagramming and a
+recruiter portfolio, following P8-01–P8-07 and P8-09, with a scoped P8-13 audit and
+local merge to main. [The closure amendment](docs/phase-8-closure.md) governs that
+current scope. Remaining production work is explicitly deferred, not delivered;
+the original release criteria below remain OPEN and verification pauses remain.
 
 This document defines milestone M08: release-wide accessibility, measured performance,
 consistent rate/size limits, security and recovery hardening, operational packaging,

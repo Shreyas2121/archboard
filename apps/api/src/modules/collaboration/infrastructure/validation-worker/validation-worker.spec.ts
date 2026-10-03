@@ -29,6 +29,8 @@ import {
   createRemovedTombstoneValidationFixture,
   createTypicalValidationFixture,
   createValidationFixture,
+  createHiddenTextOverflowValidationFixture,
+  createHiddenStateOverflowValidationFixture,
 } from './validation-worker.fixtures.js';
 import {
   VALIDATION_FAILURE_KINDS,
@@ -58,7 +60,8 @@ function pool(
 }
 
 function expectUnchanged(actual: Uint8Array, snapshot: Uint8Array): void {
-  expect(actual).toEqual(snapshot);
+  // Compare complete bytes without materializing millions of Jest assertion keys.
+  expect(Buffer.from(actual).equals(Buffer.from(snapshot))).toBe(true);
 }
 
 afterEach(async () => {
@@ -66,6 +69,14 @@ afterEach(async () => {
 });
 
 describe('validation-worker', () => {
+  it('cannot configure worker, timeout or queue capacity above release budgets', () => {
+    for (const options of [
+      { maxWorkers: MAX_VALIDATION_WORKERS + 1 },
+      { timeoutMs: VALIDATION_TIMEOUT_MS + 1 },
+      { maxQueueDepth: MAX_VALIDATION_QUEUE + 1 },
+    ])
+      expect(() => new ValidationWorkerPool(options)).toThrow('published worker budgets');
+  });
   it.each([false, true])(
     'reconstructs committed Buffer records in a real worker with remap=%s',
     async (remap) => {
@@ -118,6 +129,18 @@ describe('validation-worker', () => {
 
   it.each([
     [
+      'hidden text cap',
+      createHiddenTextOverflowValidationFixture,
+      ERROR_CODES.DOCUMENT_LIMIT,
+      VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT,
+    ],
+    [
+      'hidden encoded state cap',
+      createHiddenStateOverflowValidationFixture,
+      ERROR_CODES.DOCUMENT_LIMIT,
+      VALIDATION_FAILURE_KINDS.DOCUMENT_LIMIT,
+    ],
+    [
       'malformed input',
       createMalformedValidationFixture,
       ERROR_CODES.DOCUMENT_INVALID,
@@ -149,6 +172,10 @@ describe('validation-worker', () => {
     ],
   ])('rejects %s without mutating accepted state', async (_name, fixtureFactory, code, kind) => {
     const input = fixtureFactory();
+    if (_name === 'hidden encoded state cap') {
+      expect(input.acceptedState.byteLength).toBeLessThanOrEqual(MAX_ENCODED_YJS_STATE_BYTES);
+      expect(input.update.byteLength).toBeLessThanOrEqual(MAX_CLIENT_UPDATE_BYTES);
+    }
     const acceptedSnapshot = input.acceptedState.slice();
     const created = pool();
     await expect(created.validate(input)).rejects.toMatchObject({

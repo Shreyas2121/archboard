@@ -21,8 +21,11 @@ for (const [name, predicate] of required) {
   if (!urls.some(predicate)) throw new Error(`Precache is missing ${name}.`);
 }
 for (const url of urls) {
-  if (/^(?:https?:)?\/\//i.test(url) || /(?:^|\/)(?:api|auth|ws|invites?)(?:\/|$)/i.test(url)) {
-    throw new Error(`Protected or remote URL is precached: ${url}`);
+  if (
+    /^(?:https?:)?\/\//i.test(url) ||
+    /(?:^|\/)(?:api|auth|ws|health|invites?)(?:\/|$)/i.test(url)
+  ) {
+    throw new Error('Protected or remote URL is precached; value withheld.');
   }
 }
 if (
@@ -31,7 +34,7 @@ if (
 ) {
   throw new Error('Generated worker has no navigation fallback to the app shell.');
 }
-for (const route of ['demo', 'boards', 'api', 'ws', 'auth', 'invite']) {
+for (const route of ['demo', 'boards', 'api', 'ws', 'auth', 'health', 'assets', 'invite']) {
   if (!worker.includes(`\\/${route}`)) throw new Error(`Navigation policy omits ${route}.`);
 }
 if (worker.includes('clientsClaim()') || !worker.includes('"SKIP_WAITING"')) {

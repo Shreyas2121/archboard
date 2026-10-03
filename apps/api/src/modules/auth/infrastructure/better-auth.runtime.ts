@@ -24,7 +24,11 @@ function createAuth(config: ApiConfig, pool: Pool) {
           }
         : {},
     emailAndPassword: { enabled: config.mode === 'test' },
-    advanced: { database: { joins: true } },
+    advanced: {
+      database: { joins: true },
+      useSecureCookies: config.mode === 'production',
+      defaultCookieAttributes: { httpOnly: true, sameSite: 'lax' },
+    },
     logger: { log: logAuthDiagnostic },
   });
 }

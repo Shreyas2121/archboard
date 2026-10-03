@@ -2,7 +2,8 @@ import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Duplex } from 'node:stream';
 
 import { HELLO_TIMEOUT_MS, applicationIdSchema } from '@archboard/contracts';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { RuntimeAdmission } from '../../../../platform/lifecycle/runtime-admission.js';
 import type { OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { fromNodeHeaders } from 'better-auth/node';
@@ -13,6 +14,7 @@ import type { ApiConfig } from '../../../../platform/config/index.js';
 import { CollaborationWriterLockService } from '../../../../platform/database/index.js';
 import { CollaborationGateway } from './collaboration.gateway.js';
 import { WEBSOCKET_API_CONFIG } from './websocket.tokens.js';
+import { MAX_PENDING_UPGRADES } from '../../application/collaboration-limits.js';
 
 const BOARD_WEBSOCKET_PATH = /^\/ws\/boards\/([^/]+)$/;
 const HTTP_BAD_REQUEST = 400;
@@ -33,6 +35,7 @@ const STATUS_TEXT: Readonly<Record<number, string>> = {
 };
 
 class HandshakeTimeoutError extends Error {}
+class UpgradeBusyError extends Error {}
 
 @Injectable()
 export class CollaborationUpgradeService implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -40,6 +43,8 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
   private stopped = false;
   private readonly operations = new Set<Promise<void>>();
   private readonly sockets = new Set<Duplex>();
+  // Timed-out session lookups remain charged until underlying work actually settles.
+  private readonly pendingLookups = new Set<Promise<unknown>>();
 
   public constructor(
     @Inject(HttpAdapterHost) private readonly httpAdapterHost: HttpAdapterHost,
@@ -49,6 +54,7 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
     @Inject(CollaborationWriterLockService)
     private readonly writerLock: CollaborationWriterLockService,
     @Inject(CollaborationGateway) private readonly gateway: CollaborationGateway,
+    @Optional() @Inject(RuntimeAdmission) private readonly admission?: RuntimeAdmission,
   ) {}
 
   public onApplicationBootstrap(): void {
@@ -77,6 +83,10 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
   ): void => {
     if (this.stopped) {
       socket.destroy();
+      return;
+    }
+    if (this.operations.size >= MAX_PENDING_UPGRADES) {
+      this.rejectUpgrade(socket, HTTP_SERVICE_UNAVAILABLE);
       return;
     }
     this.sockets.add(socket);
@@ -114,7 +124,7 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
       this.rejectUpgrade(socket, HTTP_FORBIDDEN);
       return;
     }
-    if (!(await this.writerLock.isReady())) {
+    if (!this.canAdmit() || !(await this.writerLock.isReady())) {
       this.rejectUpgrade(socket, HTTP_SERVICE_UNAVAILABLE);
       return;
     }
@@ -124,7 +134,11 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
     } catch (error) {
       this.rejectUpgrade(
         socket,
-        error instanceof HandshakeTimeoutError ? HTTP_REQUEST_TIMEOUT : HTTP_UNAUTHORIZED,
+        error instanceof UpgradeBusyError
+          ? HTTP_SERVICE_UNAVAILABLE
+          : error instanceof HandshakeTimeoutError
+            ? HTTP_REQUEST_TIMEOUT
+            : HTTP_UNAUTHORIZED,
       );
       return;
     }
@@ -139,6 +153,10 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
       return;
     }
     if (this.stopped || socket.destroyed) return;
+    if (!this.canAdmit()) {
+      this.rejectUpgrade(socket, HTTP_SERVICE_UNAVAILABLE);
+      return;
+    }
     this.gateway.acceptUpgrade(request, socket, head, {
       boardId,
       userId: session.userId,
@@ -146,11 +164,19 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
     });
   }
 
+  private canAdmit(): boolean {
+    return this.admission === undefined || this.admission.accepting;
+  }
+
   private async sessionWithinDeadline(request: IncomingMessage) {
+    if (this.pendingLookups.size >= MAX_PENDING_UPGRADES) throw new UpgradeBusyError();
+    const lookup = this.sessionLookup.lookup(fromNodeHeaders(request.headers));
+    this.pendingLookups.add(lookup);
+    void lookup.finally(() => this.pendingLookups.delete(lookup)).catch(() => undefined);
     let timeout: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
-        this.sessionLookup.lookup(fromNodeHeaders(request.headers)),
+        lookup,
         new Promise<never>((_resolve, reject) => {
           timeout = setTimeout(() => reject(new HandshakeTimeoutError()), HELLO_TIMEOUT_MS);
           timeout.unref();

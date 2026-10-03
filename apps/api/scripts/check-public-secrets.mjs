@@ -1,6 +1,10 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  BACKEND_SECRET_NAMES,
+  privateArtifactFindings,
+} from '../../../scripts/security/artifact-policy.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const inputs = [
@@ -8,14 +12,18 @@ const inputs = [
   join(root, 'apps/web/index.html'),
   join(root, 'apps/web/dist'),
 ];
-const extensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.html', '.css', '.json', '.svg']);
-const secretNames = [
-  'DATABASE_URL',
-  'DATABASE_DIRECT_URL',
-  'DATABASE_URL_UNPOOLED',
-  'BETTER_AUTH_SECRET',
-  'GITHUB_CLIENT_SECRET',
-];
+const extensions = new Set([
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.html',
+  '.css',
+  '.json',
+  '.svg',
+  '.map',
+]);
+const secretNames = BACKEND_SECRET_NAMES;
 const secretValues = secretNames
   .map((name) => process.env[name])
   .filter((value) => value?.length >= 8);
@@ -40,7 +48,7 @@ async function scan(path) {
   const contents = await readFile(path, 'utf8');
   if (
     secretNames.some((name) => contents.includes(name)) ||
-    secretValues.some((value) => contents.includes(value))
+    privateArtifactFindings(contents, secretValues) > 0
   ) {
     findings += 1;
   }

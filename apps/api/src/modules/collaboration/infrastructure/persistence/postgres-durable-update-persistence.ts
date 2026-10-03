@@ -5,17 +5,21 @@ import type {
   DurableUpdateWriteScope,
 } from '../../application/durable-update-persistence.js';
 import type { DurableUpdateReceipt } from '../../application/durable-update.js';
-import { BoardTransaction } from '../../../boards/infrastructure/board-transaction.js';
-import { BoardEntity } from '../../../boards/infrastructure/entities/board.entity.js';
+import type { BoardSequenceAccess } from '../../../boards/application/index.js';
+import { PostgresTransaction } from '../../../../platform/database/postgres-transaction.js';
 import { BoardUpdateEntity } from '../entities/board-update.entity.js';
 import { UpdateReceiptEntity } from '../entities/update-receipt.entity.js';
 
 const NEXT_SEQUENCE_INCREMENT = 1n;
 
 export class PostgresDurableUpdatePersistence implements DurableUpdatePersistence {
-  private readonly transactions: BoardTransaction;
-  public constructor(private readonly dataSource: DataSource) {
-    this.transactions = new BoardTransaction(dataSource);
+  private readonly transactions: PostgresTransaction;
+  public constructor(
+    private readonly dataSource: DataSource,
+    private readonly sequences: BoardSequenceAccess,
+    admission?: RuntimeAdmission,
+  ) {
+    this.transactions = new PostgresTransaction(dataSource, admission);
   }
 
   public findReceipt(boardId: string, updateId: string): Promise<DurableUpdateReceipt | null> {
@@ -32,13 +36,7 @@ export class PostgresDurableUpdatePersistence implements DurableUpdatePersistenc
           const sequence = (
             BigInt(latestSeq) + NEXT_SEQUENCE_INCREMENT
           ).toString() as ServerSequence;
-          await runner.manager.getRepository(BoardEntity).update(
-            { id: boardId },
-            {
-              latestSeq: sequence,
-              contentUpdatedAt: () => 'CURRENT_TIMESTAMP',
-            },
-          );
+          await this.sequences.advance(runner, boardId, sequence);
           await runner.manager.getRepository(BoardUpdateEntity).insert({
             boardId,
             sequence,
@@ -70,3 +68,4 @@ export class PostgresDurableUpdatePersistence implements DurableUpdatePersistenc
     return receipt === null ? null : { ...receipt, sequence: receipt.sequence as ServerSequence };
   }
 }
+import type { RuntimeAdmission } from '../../../../platform/lifecycle/runtime-admission.js';

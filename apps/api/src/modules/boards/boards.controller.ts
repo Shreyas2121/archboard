@@ -1,5 +1,6 @@
 import {
   boardDetailResponseSchema,
+  boardSummaryResponseSchema,
   boardIdPathSchema,
   boardListQuerySchema,
   boardListResponseSchema,
@@ -34,9 +35,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { AuthenticatedSession } from '../auth/application/index.js';
-import { AuthenticatedSessionGuard, CurrentSession } from '../auth/authenticated-session.js';
+import { AuthenticatedSessionGuard, CurrentSession } from '../auth/application/index.js';
 import { validate } from '../../platform/http/api-boundary.js';
-import { BoardService } from './application/board-service.js';
+import { BoardService, boardSummaryFromDetail } from './application/board-service.js';
 import { InviteService } from './application/invite-service.js';
 
 @UseGuards(AuthenticatedSessionGuard)
@@ -56,7 +57,7 @@ export class BoardsController {
     const parsedKey = validate(idempotencyKeySchema, key);
     const input = validate(createTemplateBoardSchema, body);
     const result = await this.boards.create(session.user.id, parsedKey, input);
-    return boardDetailResponseSchema.parse({ data: result.board });
+    return boardSummaryResponseSchema.parse({ data: boardSummaryFromDetail(result.board) });
   }
 
   @Get()

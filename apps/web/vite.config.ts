@@ -3,14 +3,23 @@ import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { contentSecurityPolicy, shellSecurityHeaders } from './security-policy.mjs';
 
 const MAX_PRECACHE_BYTES = 2_097_152;
 
-export default defineConfig({
-  server: { headers: { 'Referrer-Policy': 'no-referrer' } },
-  preview: { headers: { 'Referrer-Policy': 'no-referrer' } },
+export default defineConfig(({ command }) => ({
+  server: { headers: shellSecurityHeaders(true) },
+  preview: { headers: shellSecurityHeaders() },
   envDir: fileURLToPath(new URL('../..', import.meta.url)),
   plugins: [
+    {
+      name: 'archboard-security-policy',
+      transformIndexHtml: {
+        order: 'pre',
+        handler: (html) =>
+          html.replace('%ARCHBOARD_CSP%', contentSecurityPolicy(command === 'serve')),
+      },
+    },
     react(),
     tailwindcss(),
     VitePWA({
@@ -42,6 +51,8 @@ export default defineConfig({
           /^\/api(?:\/|$)/,
           /^\/ws(?:\/|$)/,
           /^\/auth(?:\/|$)/,
+          /^\/health(?:\/|$)/,
+          /^\/assets(?:\/|$)/,
           /^\/invite(?:s)?(?:\/|$)/,
         ],
         runtimeCaching: [],
@@ -61,4 +72,4 @@ export default defineConfig({
       ),
     },
   },
-});
+}));

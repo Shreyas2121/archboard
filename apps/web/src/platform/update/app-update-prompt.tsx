@@ -10,8 +10,10 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { downloadPendingWork } from '@/features/auth/pending-work';
+import { sessionBoundaryEpoch } from '@/features/auth/auth-transition-coordinator';
 import {
   prepareActiveEditorsForUpdate,
+  sameActiveUpdateSessions,
   type UpdateSession,
 } from '@/features/editor/application/update-sessions';
 
@@ -19,10 +21,20 @@ import { samePendingWork, updateSafety, type UpdateSafety } from './update-polic
 import { activateWaitingWorker, waitingWorkerCompatibility } from './worker-update';
 
 type Review = {
+  readonly accountBoundary: string;
   readonly worker: ServiceWorker;
   readonly boards: readonly PendingAccountBoard[];
   readonly safety: UpdateSafety;
 };
+
+function accountBoundary(): string {
+  const origin = window.location.origin;
+  return JSON.stringify([
+    sessionBoundaryEpoch(),
+    readSelectedAccountMarker(origin),
+    readLocalSignOutPending(origin),
+  ]);
+}
 
 async function pendingForCurrentAccount(): Promise<readonly PendingAccountBoard[]> {
   const origin = window.location.origin;
@@ -91,13 +103,21 @@ export function AppUpdatePrompt() {
     setError(null);
     setExported(false);
     try {
+      const boundary = accountBoundary();
       if (registration?.waiting !== worker)
         throw new Error('The waiting application version changed. Review it again.');
       const [compatibility, boards] = await Promise.all([
         waitingWorkerCompatibility(worker),
         pendingForCurrentAccount(),
       ]);
-      setReview({ worker, boards, safety: updateSafety(compatibility, boards) });
+      if (boundary !== accountBoundary() || registration?.waiting !== worker)
+        throw new Error('The account or waiting version changed. Review this update again.');
+      setReview({
+        accountBoundary: boundary,
+        worker,
+        boards,
+        safety: updateSafety(compatibility, boards),
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not inspect pending changes.');
     } finally {
@@ -111,12 +131,16 @@ export function AppUpdatePrompt() {
     setError(null);
     let sessions: readonly UpdateSession[] = [];
     try {
+      if (review.accountBoundary !== accountBoundary())
+        throw new Error('The account changed. Review this update again.');
       sessions = await prepareActiveEditorsForUpdate();
       const current = await pendingForCurrentAccount();
       if (!samePendingWork(review.boards, current))
         throw new Error('Pending changes changed. Review this update again.');
       if (updateSafety(await waitingWorkerCompatibility(review.worker), current) !== 'compatible')
         throw new Error('Application compatibility changed. This update remains waiting.');
+      if (review.accountBoundary !== accountBoundary() || !sameActiveUpdateSessions(sessions))
+        throw new Error('The account or open editors changed. Review this update again.');
       await activateWaitingWorker(registration, review.worker);
       await Promise.all(sessions.map((session) => session.close()));
       window.location.reload();

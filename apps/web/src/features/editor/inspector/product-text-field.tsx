@@ -168,6 +168,7 @@ export function ProductTextField({
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
     event.stopPropagation();
+    if (composing.current || event.nativeEvent.isComposing) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       cancelDraft();
@@ -176,7 +177,7 @@ export function ProductTextField({
     if (event.key === 'Enter' && (!multiline || event.metaKey || event.ctrlKey)) {
       event.preventDefault();
       commitControl();
-      event.currentTarget.blur();
+      // Keep focus in the committed field so Tab continues through the inspector.
     }
   };
   const commonProps = {

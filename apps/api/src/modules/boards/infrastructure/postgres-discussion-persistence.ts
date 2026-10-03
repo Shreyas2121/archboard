@@ -19,9 +19,10 @@ export class PostgresDiscussionPersistence implements DiscussionPersistence {
   public constructor(
     dataSource: DataSource,
     private readonly anchors: CommittedAnchorReader,
+    admission?: RuntimeAdmission,
   ) {
-    this.transactions = new BoardTransaction(dataSource);
-    this.idempotency = new IdempotencyService(dataSource);
+    this.transactions = new BoardTransaction(dataSource, admission);
+    this.idempotency = new IdempotencyService(dataSource, admission);
   }
 
   public run<T>(work: (scope: DiscussionScope) => Promise<T>): Promise<T> {
@@ -88,3 +89,4 @@ export class PostgresDiscussionPersistence implements DiscussionPersistence {
     };
   }
 }
+import type { RuntimeAdmission } from '../../../platform/lifecycle/runtime-admission.js';

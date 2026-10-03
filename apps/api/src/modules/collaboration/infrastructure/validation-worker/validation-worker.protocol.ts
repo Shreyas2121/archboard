@@ -1,4 +1,5 @@
 import type { ErrorCode } from '@archboard/contracts';
+import type { CandidateValidationInput } from '../../application/candidate-validator.js';
 
 export const VALIDATION_FAILURE_KINDS = {
   CAUSAL_GAP: 'causal-gap',
@@ -21,11 +22,8 @@ export const VALIDATION_WORKER_DIRECTIVES = {
 export type ValidationWorkerDirective =
   (typeof VALIDATION_WORKER_DIRECTIVES)[keyof typeof VALIDATION_WORKER_DIRECTIVES];
 
-export interface ValidationWorkerRequest {
-  readonly acceptedState: Uint8Array;
-  readonly update: Uint8Array;
+export interface ValidationWorkerRequest extends CandidateValidationInput {
   readonly directive: ValidationWorkerDirective;
-  readonly reconstruction?: { readonly updates: readonly Uint8Array[]; readonly remap: boolean };
 }
 
 export interface ValidationWorkerSuccess {

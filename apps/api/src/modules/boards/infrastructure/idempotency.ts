@@ -114,8 +114,8 @@ export class IdempotencyRepository {
 export class IdempotencyService {
   private readonly transactions: BoardTransaction;
 
-  public constructor(dataSource: DataSource) {
-    this.transactions = new BoardTransaction(dataSource);
+  public constructor(dataSource: DataSource, admission?: RuntimeAdmission) {
+    this.transactions = new BoardTransaction(dataSource, admission);
   }
 
   public async execute<T>(
@@ -151,3 +151,4 @@ export class IdempotencyService {
     });
   }
 }
+import type { RuntimeAdmission } from '../../../platform/lifecycle/runtime-admission.js';

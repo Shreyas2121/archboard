@@ -11,6 +11,11 @@ import { Worker } from 'node:worker_threads';
 import { existsSync } from 'node:fs';
 import { reportCollaborationMetric } from '../../application/collaboration-metrics.js';
 import { MAX_REPLAY_BYTES, MAX_REPLAY_RECORDS } from '../room/committed-graph.js';
+import type {
+  CandidateValidator,
+  CandidateValidationInput,
+} from '../../application/candidate-validator.js';
+export type { CandidateValidationInput } from '../../application/candidate-validator.js';
 
 import {
   VALIDATION_FAILURE_KINDS,
@@ -22,12 +27,6 @@ import {
   type ValidationWorkerSuccess,
 } from './validation-worker.protocol.js';
 
-export interface CandidateValidationInput {
-  readonly acceptedState: Uint8Array;
-  readonly update: Uint8Array;
-  readonly reconstruction?: ValidationWorkerRequest['reconstruction'];
-}
-
 export interface ValidationWorkerPoolOptions {
   readonly timeoutMs?: number;
   readonly maxWorkers?: number;
@@ -36,6 +35,7 @@ export interface ValidationWorkerPoolOptions {
 }
 
 interface ValidationJob {
+  readonly enqueuedAt: number;
   readonly input: CandidateValidationInput;
   readonly directive: ValidationWorkerDirective;
   readonly resolve: (result: ValidationWorkerSuccess) => void;
@@ -72,7 +72,7 @@ function defaultWorkerUrl(): URL {
   );
 }
 
-export class ValidationWorkerPool {
+export class ValidationWorkerPool implements CandidateValidator {
   readonly timeoutMs: number;
   readonly maxWorkers: number;
   readonly maxQueueDepth: number;
@@ -97,6 +97,13 @@ export class ValidationWorkerPool {
     requirePositiveInteger('timeoutMs', this.timeoutMs);
     requirePositiveInteger('maxWorkers', this.maxWorkers);
     requireNonNegativeInteger('maxQueueDepth', this.maxQueueDepth);
+    if (
+      this.timeoutMs > VALIDATION_TIMEOUT_MS ||
+      this.maxWorkers > MAX_VALIDATION_WORKERS ||
+      this.maxQueueDepth > MAX_VALIDATION_QUEUE
+    ) {
+      throw new Error('Validation options cannot exceed the published worker budgets.');
+    }
   }
 
   public get activeWorkerCount(): number {
@@ -160,6 +167,7 @@ export class ValidationWorkerPool {
     return new Promise((resolve, reject) => {
       // Snapshot caller-owned buffers at admission, including jobs waiting in the queue.
       const job: ValidationJob = {
+        enqueuedAt: performance.now(),
         input: {
           acceptedState: Uint8Array.from(input.acceptedState),
           update: Uint8Array.from(input.update),
@@ -194,6 +202,11 @@ export class ValidationWorkerPool {
   }
 
   private start(job: ValidationJob): void {
+    const startedAt = performance.now();
+    reportCollaborationMetric('collaboration.validation_queue', {
+      durationMs: Math.max(0, startedAt - job.enqueuedAt),
+      depth: this.queue.length,
+    });
     const request: ValidationWorkerRequest = {
       acceptedState: job.input.acceptedState,
       update: job.input.update,
@@ -220,6 +233,9 @@ export class ValidationWorkerPool {
     const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
+      reportCollaborationMetric('collaboration.validation_worker', {
+        durationMs: Math.max(0, performance.now() - startedAt),
+      });
       clearTimeout(timer);
       worker.removeAllListeners();
       void worker.terminate().then(

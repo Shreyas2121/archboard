@@ -1,0 +1,125 @@
+name: archboard
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: archboard
+      POSTGRES_DB: archboard
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U archboard -d archboard']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # No published PostgreSQL port, SQL/query logs or password-bearing diagnostics.
+    command:
+      [
+        postgres,
+        -c,
+        log_statement=none,
+        -c,
+        log_min_error_statement=panic,
+        -c,
+        log_error_verbosity=terse,
+      ]
+    logging:
+      driver: none
+
+  api:
+    image: archboard-api:${ARCHBOARD_RELEASE:?Set an immutable release label}
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile
+      target: api
+      args:
+        VITE_API_ORIGIN: https://${ARCHBOARD_HOST:?Set the HTTPS hostname}
+        VITE_WS_ORIGIN: wss://${ARCHBOARD_HOST:?Set the HTTPS hostname}
+    # Fixed name additionally prevents Compose scale; advisory ownership remains authoritative.
+    container_name: archboard-api
+    deploy:
+      replicas: 1
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    tmpfs: ['/tmp:rw,noexec,nosuid,size=32m']
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      NODE_ENV: production
+      PUBLIC_API_ORIGIN: https://${ARCHBOARD_HOST:?Set the HTTPS hostname}
+      ALLOWED_WEB_ORIGINS: https://${ARCHBOARD_HOST:?Set the HTTPS hostname}
+      PORT: '3000'
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:?Set the OAuth client ID}
+      DATABASE_URL_FILE: /run/secrets/database_url
+      DATABASE_DIRECT_URL_FILE: /run/secrets/database_direct_url
+      BETTER_AUTH_SECRET_FILE: /run/secrets/better_auth_secret
+      GITHUB_CLIENT_SECRET_FILE: /run/secrets/github_client_secret
+    secrets: [database_url, database_direct_url, better_auth_secret, github_client_secret]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [database, edge]
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+  caddy:
+    image: archboard-web:${ARCHBOARD_RELEASE:?Set an immutable release label}
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile
+      target: web
+      args:
+        VITE_API_ORIGIN: https://${ARCHBOARD_HOST:?Set the HTTPS hostname}
+        VITE_WS_ORIGIN: wss://${ARCHBOARD_HOST:?Set the HTTPS hostname}
+    restart: unless-stopped
+    environment:
+      ARCHBOARD_HOST: ${ARCHBOARD_HOST:?Set the HTTPS hostname}
+    ports: ['80:80', '443:443', '443:443/udp']
+    volumes: [caddy_data:/data, caddy_config:/config]
+    depends_on: [api]
+    networks: [edge]
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: '2'
+
+networks:
+  database:
+    internal: true
+  edge: {}
+volumes:
+  postgres_data: {}
+  caddy_data: {}
+  caddy_config: {}
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  database_url:
+    file: ./secrets/database_url
+  database_direct_url:
+    file: ./secrets/database_direct_url
+  better_auth_secret:
+    file: ./secrets/better_auth_secret
+  github_client_secret:
+    file: ./secrets/github_client_secret

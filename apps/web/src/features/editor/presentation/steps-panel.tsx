@@ -30,6 +30,7 @@ export function StepsPanel({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const steps = sortedSteps(projection.steps);
   const selected = steps.find(({ id }) => id === selectedId) ?? null;
   const run = (action: () => void) => {
@@ -41,7 +42,14 @@ export function StepsPanel({
     }
   };
   const reorder = (sourceId: string, targetId: string) =>
-    run(() => session.reorderSteps(reorderedSteps(steps, sourceId, targetId)));
+    run(() => {
+      const order = reorderedSteps(steps, sourceId, targetId);
+      session.reorderSteps(order);
+      const position = order.find((step) => step.id === sourceId)?.order;
+      if (position !== undefined)
+        setNotice(`Step moved to position ${position + 1} of ${steps.length}.`);
+      document.getElementById(`step-select-${sourceId}`)?.focus();
+    });
   return (
     <section className="grid gap-4 p-4" aria-label="Presentation steps">
       <p className="text-xs text-muted-foreground">
@@ -101,6 +109,7 @@ export function StepsPanel({
             }}
           >
             <Button
+              id={`step-select-${step.id}`}
               type="button"
               variant={selectedId === step.id ? 'outline' : 'ghost'}
               className="h-auto justify-start whitespace-normal text-left break-words"
@@ -203,6 +212,7 @@ export function StepsPanel({
               run(() => {
                 session.deleteStep(selected.id);
                 setSelectedId(null);
+                setNotice('Step deleted. Choose another step or capture a new one.');
               })
             }
           >
@@ -218,6 +228,11 @@ export function StepsPanel({
       {error && (
         <p role="alert" className="text-sm text-destructive">
           {error}
+        </p>
+      )}
+      {notice && (
+        <p role="status" aria-atomic="true" className="text-xs">
+          {notice}
         </p>
       )}
     </section>

@@ -1,9 +1,10 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import type { DataSource, QueryRunner } from 'typeorm';
 import { WS_PING_INTERVAL_MS } from '@archboard/contracts';
 
 import { DATABASE_DIRECT_DATA_SOURCE } from './database.tokens.js';
+import { RuntimeAdmission } from '../lifecycle/runtime-admission.js';
 
 export const COLLABORATION_WRITER_ADVISORY_LOCK_KEY = '4706898538184786258';
 
@@ -12,7 +13,7 @@ interface AdvisoryLockRow {
 }
 
 interface SessionConnection {
-  once(event: 'error', listener: () => void): void;
+  once(event: 'error' | 'end', listener: () => void): void;
 }
 
 export class CollaborationWriterLockUnavailableError extends Error {
@@ -32,6 +33,7 @@ export class CollaborationWriterLockService implements OnModuleInit, OnApplicati
 
   public constructor(
     @Inject(DATABASE_DIRECT_DATA_SOURCE) private readonly directDataSource: DataSource,
+    @Optional() @Inject(RuntimeAdmission) private readonly admission?: RuntimeAdmission,
   ) {}
 
   public async onModuleInit(): Promise<void> {
@@ -46,11 +48,14 @@ export class CollaborationWriterLockService implements OnModuleInit, OnApplicati
       sessionConnection.once('error', () => {
         this.loseOwnership();
       });
+      sessionConnection.once('end', () => this.loseOwnership());
       const rows = (await queryRunner.query('SELECT pg_try_advisory_lock($1::bigint) AS acquired', [
         COLLABORATION_WRITER_ADVISORY_LOCK_KEY,
       ])) as AdvisoryLockRow[];
       this.lockOwned = rows[0]?.acquired === true;
       if (!this.lockOwned) throw new CollaborationWriterLockUnavailableError();
+      this.admission?.setOwnership(true);
+      console.info(JSON.stringify({ event: 'runtime.writer_owned' }));
       this.heartbeat = setInterval(() => {
         if (this.checking) return;
         this.checking = true;
@@ -66,12 +71,18 @@ export class CollaborationWriterLockService implements OnModuleInit, OnApplicati
   }
 
   public async isReady(): Promise<boolean> {
-    if (!this.lockOwned || this.queryRunner === undefined || this.queryRunner.isReleased) {
+    if (
+      this.shuttingDown ||
+      this.admission?.stopping ||
+      !this.lockOwned ||
+      this.queryRunner === undefined ||
+      this.queryRunner.isReleased
+    ) {
       return false;
     }
     try {
       await this.queryRunner.query('SELECT 1');
-      return true;
+      return this.lockOwned && !this.shuttingDown;
     } catch {
       this.loseOwnership();
       return false;
@@ -80,16 +91,19 @@ export class CollaborationWriterLockService implements OnModuleInit, OnApplicati
 
   public async onApplicationShutdown(): Promise<void> {
     this.shuttingDown = true;
+    this.admission?.stop();
     await this.releaseResources(true);
   }
 
   protected terminateProcess(): void {
-    process.kill(process.pid, 'SIGTERM');
+    process.exit(1);
   }
 
   private loseOwnership(): void {
     if (!this.lockOwned) return;
     this.lockOwned = false;
+    this.admission?.setOwnership(false);
+    if (!this.shuttingDown) console.info(JSON.stringify({ event: 'runtime.writer_lost' }));
     if (this.heartbeat !== undefined) clearInterval(this.heartbeat);
     this.heartbeat = undefined;
     if (!this.shuttingDown) this.terminateProcess();

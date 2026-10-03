@@ -44,9 +44,10 @@ export class PostgresInvitePersistence implements InvitePersistence {
     dataSource: DataSource,
     private readonly webOrigin: string,
     private readonly beforeBoardLock?: () => Promise<void>,
+    admission?: RuntimeAdmission,
   ) {
-    this.transactions = new BoardTransaction(dataSource);
-    this.idempotency = new IdempotencyService(dataSource);
+    this.transactions = new BoardTransaction(dataSource, admission);
+    this.idempotency = new IdempotencyService(dataSource, admission);
   }
 
   public run<T>(work: (scope: InviteScope) => Promise<T>): Promise<T> {
@@ -277,3 +278,4 @@ export class PostgresInvitePersistence implements InvitePersistence {
     return user;
   }
 }
+import type { RuntimeAdmission } from '../../../platform/lifecycle/runtime-admission.js';

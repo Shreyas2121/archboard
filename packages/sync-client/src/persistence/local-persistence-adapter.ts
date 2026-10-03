@@ -65,6 +65,8 @@ export interface LocalPersistenceStatus {
 }
 
 export interface LocalPersistenceAdapterOptions {
+  /** Optional numeric diagnostics; never receives namespace, IDs or document content. */
+  readonly onTiming?: (stage: 'local-queue' | 'local-write', durationMs: number) => void;
   readonly namespace: BoardStorageNamespace;
   readonly document: Y.Doc;
   readonly mode?: 'read-write' | 'read-only';
@@ -155,6 +157,7 @@ export class LocalPersistenceAdapter {
   private readonly failpoints: IndexedDbFailpointController;
   private readonly createUpdateId: () => string;
   private readonly now: () => Date;
+  private readonly onTiming: LocalPersistenceAdapterOptions['onTiming'];
   private readonly graphSchemaVersion: number;
   private readonly readOnly: boolean;
   private readonly listeners = new Set<StatusListener>();
@@ -178,6 +181,7 @@ export class LocalPersistenceAdapter {
     this.failpoints = options.failpoints ?? new IndexedDbFailpointController();
     this.createUpdateId = options.createUpdateId ?? (() => crypto.randomUUID());
     this.now = options.now ?? (() => new Date());
+    this.onTiming = options.onTiming;
   }
 
   public static create(options: LocalPersistenceAdapterOptions): LocalPersistenceAdapter {
@@ -623,6 +627,7 @@ export class LocalPersistenceAdapter {
   };
 
   private queueLocalBytes(updateBytes: Uint8Array, initialState = false): void {
+    const enqueuedAt = performance.now();
     const exactBytes = Uint8Array.from(updateBytes);
     let updateId: string;
     try {
@@ -636,7 +641,13 @@ export class LocalPersistenceAdapter {
     this.publishSaving(this.pendingLocalWrites);
     this.writeTail = this.writeTail.then(async () => {
       if (this.status.editingPaused) return;
-      await this.persistLocalUpdate(updateId, localSequence, exactBytes, initialState);
+      const startedAt = performance.now();
+      this.reportTiming('local-queue', startedAt - enqueuedAt);
+      try {
+        await this.persistLocalUpdate(updateId, localSequence, exactBytes, initialState);
+      } finally {
+        this.reportTiming('local-write', performance.now() - startedAt);
+      }
       this.committedLocalSequence = localSequence;
       this.pendingLocalWrites = Math.max(0, this.pendingLocalWrites - 1);
       this.publishSaving(this.pendingLocalWrites);
@@ -651,6 +662,14 @@ export class LocalPersistenceAdapter {
   private reserveLocalSequence(): number {
     this.nextLocalSequence += 1;
     return this.nextLocalSequence;
+  }
+
+  private reportTiming(stage: 'local-queue' | 'local-write', durationMs: number): void {
+    try {
+      this.onTiming?.(stage, Math.max(0, durationMs));
+    } catch {
+      // Diagnostics must never change persistence, saved publication or pending bytes.
+    }
   }
 
   private async persistLocalUpdate(

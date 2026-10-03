@@ -9,6 +9,7 @@ import {
   GRAPH_SCHEMA_VERSION,
   apiErrorEnvelopeSchema,
   boardDetailResponseSchema,
+  boardSummaryResponseSchema,
   boardMemberResponseSchema,
   boardMembersResponseSchema,
   boardListResponseSchema,
@@ -135,7 +136,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
   async function create(user: string, title: string, key = randomUUID()) {
     const response = await request('/boards', user, { method: 'POST', key, body: { title } });
     expect(response.status).toBe(HTTP_CREATED);
-    return boardDetailResponseSchema.parse(await response.json()).data;
+    return boardSummaryResponseSchema.parse(await response.json()).data;
   }
 
   beforeAll(async () => {
@@ -234,13 +235,17 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       body: { title: '  Blank architecture  ', description: '' },
     });
     expect(first.status).toBe(HTTP_CREATED);
-    const board = boardDetailResponseSchema.parse(await first.json()).data;
+    const board = boardSummaryResponseSchema.parse(await first.json()).data;
+    expect(board).not.toHaveProperty('memberCount');
+    expect(
+      boardDetailResponseSchema.parse(await (await request(`/boards/${board.id}`, 'owner')).json())
+        .data.memberCount,
+    ).toBe(1);
     expect(board).toMatchObject({
       title: 'Blank architecture',
       effectiveRole: 'owner',
       metadataVersion: 1,
       latestSeq: '0',
-      memberCount: 1,
       owner: { id: users.get('owner')!.id, name: 'owner', image: null },
     });
     const snapshot = (await database.query(
@@ -275,7 +280,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       body: { description: '', title: 'Blank architecture' },
     });
     expect(replay.status).toBe(HTTP_CREATED);
-    expect(boardDetailResponseSchema.parse(await replay.json()).data).toEqual(board);
+    expect(boardSummaryResponseSchema.parse(await replay.json()).data).toEqual(board);
     const conflict = await request('/boards', 'owner', {
       method: 'POST',
       key,
@@ -294,11 +299,16 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       const body = { title: 'Template ' + id, templateId: id };
       const first = await request('/boards', 'editor', { method: 'POST', key, body });
       expect(first.status).toBe(HTTP_CREATED);
-      const board = boardDetailResponseSchema.parse(await first.json()).data;
+      const board = boardSummaryResponseSchema.parse(await first.json()).data;
+      expect(board).not.toHaveProperty('memberCount');
+      expect(
+        boardDetailResponseSchema.parse(
+          await (await request(`/boards/${board.id}`, 'editor')).json(),
+        ).data.memberCount,
+      ).toBe(1);
       expect(board).toMatchObject({
         effectiveRole: 'owner',
         latestSeq: '0',
-        memberCount: 1,
         owner: { id: users.get('editor')!.id },
       });
       const rows = (await database.query(
@@ -322,7 +332,7 @@ describe('boards HTTP with real Better Auth cookies and PostgreSQL', () => {
       }
       const replay = await request('/boards', 'editor', { method: 'POST', key, body });
       expect(replay.status).toBe(HTTP_CREATED);
-      expect(boardDetailResponseSchema.parse(await replay.json()).data).toEqual(board);
+      expect(boardSummaryResponseSchema.parse(await replay.json()).data).toEqual(board);
       const changed = await request('/boards', 'editor', {
         method: 'POST',
         key,

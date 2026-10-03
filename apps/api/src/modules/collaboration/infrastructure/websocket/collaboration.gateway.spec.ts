@@ -14,6 +14,9 @@ import {
   WS_PING_INTERVAL_MS,
   PRESENTER_LEASE_TIMEOUT_MS,
   PRESENCE_UPDATES_PER_SECOND,
+  CONTENT_UPDATE_BURST,
+  CONTENT_UPDATES_PER_SECOND,
+  MAX_WS_FRAME_BYTES,
 } from '@archboard/contracts';
 import {
   createGraphDocument,
@@ -29,11 +32,16 @@ import type { AuthSessionLookup } from '../../../auth/application/index.js';
 import { BoardPermissionService } from '../../../boards/application/index.js';
 import type { BoardAuthorityState } from '../../../boards/application/permissions/board-permissions.js';
 import type { CollaborationUpdateService } from '../../application/collaboration-update-service.js';
-import { CollaborationRoomRegistry, type LoadedRoom } from '../../application/room-registry.js';
+import {
+  CollaborationRoomRegistry,
+  RoomAdmissionError,
+  type LoadedRoom,
+} from '../../application/room-registry.js';
 import { CollaborationGateway } from './collaboration.gateway.js';
 import {
   MAX_SOCKET_BUFFERED_BYTES,
   MAX_PENDING_ROOM_UPDATES,
+  MAX_AUTHENTICATED_SOCKETS,
 } from '../../application/collaboration-limits.js';
 
 const SETTLE_MICROTASKS = 50;
@@ -110,15 +118,18 @@ function harness(load?: () => Promise<LoadedRoom>) {
     read: async () => authority,
     lock: async () => authority,
   });
+  const acceptUpdate = jest
+    .fn<CollaborationUpdateService['accept']>()
+    .mockResolvedValue({ sequence: '0', duplicate: true });
   const gateway = new CollaborationGateway(
     rooms,
     permissions,
     { lookup },
-    {} as CollaborationUpdateService,
+    { accept: acceptUpdate } as unknown as CollaborationUpdateService,
     { run: async (work) => work({ isTransactionActive: true }) },
   );
   const sockets: TestSocket[] = [];
-  function connect() {
+  function connect(sendHello = true) {
     const socket = new TestSocket();
     sockets.push(socket);
     const request = { headers: {} } as IncomingMessage;
@@ -136,20 +147,21 @@ function harness(load?: () => Promise<LoadedRoom>) {
       userId,
       userName: 'Reader',
     });
-    socket.emit(
-      'message',
-      Buffer.from(
-        JSON.stringify({
-          event: 'hello',
-          data: {
-            protocolVersion: PROTOCOL_VERSION,
-            schemaVersion: GRAPH_SCHEMA_VERSION,
-            tabId: randomUUID(),
-          },
-        }),
-      ),
-      false,
-    );
+    if (sendHello)
+      socket.emit(
+        'message',
+        Buffer.from(
+          JSON.stringify({
+            event: 'hello',
+            data: {
+              protocolVersion: PROTOCOL_VERSION,
+              schemaVersion: GRAPH_SCHEMA_VERSION,
+              tabId: randomUUID(),
+            },
+          }),
+        ),
+        false,
+      );
     return socket;
   }
   async function publish(seq = '1') {
@@ -165,6 +177,7 @@ function harness(load?: () => Promise<LoadedRoom>) {
     rooms,
     gateway,
     lookup,
+    acceptUpdate,
     connect,
     publish,
     change: (value: Partial<BoardAuthorityState> | null) => {
@@ -199,6 +212,98 @@ describe('collaboration connection authority and admission', () => {
   }
   const latestPresenter = (socket: TestSocket) =>
     socket.messages.filter((m) => m.event === 'presenter').at(-1)?.data;
+
+  it('reports temporary presenter queue refusal and admits the next control without closing peers', async () => {
+    const h = harness();
+    try {
+      const [holder, peer] = await ready(h);
+      await control(h, holder!, 'presenter.acquire');
+      const reservation = await h.rooms.reserve(h.boardId);
+      try {
+        const before = reservation.room.presenter.snapshot();
+        jest
+          .spyOn(reservation.room, 'run')
+          .mockRejectedValueOnce(new RoomAdmissionError(ERROR_CODES.SERVER_BUSY));
+        await control(h, holder!, 'presenter.release');
+        expect(holder!.messages.at(-1)?.data).toMatchObject({
+          code: ERROR_CODES.SERVER_BUSY,
+          retryable: true,
+        });
+        expect(reservation.room.presenter.snapshot()).toEqual(before);
+        expect(holder!.websocket.readyState).toBe(WebSocket.OPEN);
+        expect(peer!.websocket.readyState).toBe(WebSocket.OPEN);
+        await control(h, holder!, 'presenter.release');
+        expect(reservation.room.presenter.snapshot().connectionId).toBeNull();
+      } finally {
+        reservation.release();
+      }
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('enforces content burst/refill independently of dropped excess presence', async () => {
+    const h = harness();
+    try {
+      const [writer, peer] = await ready(h);
+      const frame = () => ({
+        event: 'update',
+        data: { updateId: randomUUID(), updateBase64: 'AQ==' },
+      });
+      for (let index = 0; index < CONTENT_UPDATE_BURST; index++)
+        await control(h, writer!, 'update', frame().data);
+      expect(h.acceptUpdate).toHaveBeenCalledTimes(CONTENT_UPDATE_BURST);
+      await control(h, writer!, 'update', frame().data);
+      expect(writer!.messages.at(-1)?.data.code).toBe(ERROR_CODES.RATE_LIMITED);
+      const presence = { cursor: null, selectedIds: [], dragPreview: null };
+      for (let index = 0; index <= PRESENCE_UPDATES_PER_SECOND; index++)
+        await control(h, writer!, 'presence', presence);
+      expect(peer!.messages.filter(({ event }) => event === 'presence')).toHaveLength(
+        PRESENCE_UPDATES_PER_SECOND,
+      );
+      await jest.advanceTimersByTimeAsync(TRANSIENT_WINDOW_MS);
+      for (let index = 0; index < CONTENT_UPDATES_PER_SECOND; index++)
+        await control(h, writer!, 'update', frame().data);
+      expect(h.acceptUpdate).toHaveBeenCalledTimes(
+        CONTENT_UPDATE_BURST + CONTENT_UPDATES_PER_SECOND,
+      );
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('bounds authenticated pre-hello sockets without opening rooms or looking up another session', async () => {
+    const h = harness();
+    try {
+      for (let index = 0; index < MAX_AUTHENTICATED_SOCKETS; index++) h.connect(false);
+      const excess = h.connect(false);
+      expect(excess.messages.at(-1)?.data).toMatchObject({
+        code: ERROR_CODES.SERVER_BUSY,
+        retryable: true,
+      });
+      expect(h.lookup).not.toHaveBeenCalled();
+      expect(h.rooms.activeRoomCount).toBe(0);
+      expect(excess.readyState).toBe(WebSocket.CLOSED);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('rejects fragmented oversized frames before concatenation or application work', async () => {
+    const h = harness();
+    try {
+      const [socket] = await ready(h, 1);
+      const concatenate = jest.spyOn(Buffer, 'concat');
+      const calls = concatenate.mock.calls.length;
+      socket!.emit('message', [Buffer.alloc(MAX_WS_FRAME_BYTES), Buffer.alloc(1)], false);
+      expect(concatenate.mock.calls).toHaveLength(calls);
+      expect(h.acceptUpdate).not.toHaveBeenCalled();
+      expect(socket!.readyState).toBe(WebSocket.CLOSING);
+      concatenate.mockRestore();
+    } finally {
+      h.cleanup();
+    }
+  });
 
   it('serializes same-account tab contention, rejects unknown committed IDs and leaves graph/sequence untouched', async () => {
     const h = harness();

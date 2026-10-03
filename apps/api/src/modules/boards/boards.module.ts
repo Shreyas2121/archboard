@@ -1,5 +1,6 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { RuntimeAdmission } from '../../platform/lifecycle/runtime-admission.js';
 import type { ApiConfig } from '../../platform/config/index.js';
 import { BoardAuthorityModule } from './board-authority.module.js';
 import {
@@ -21,7 +22,7 @@ import { CommittedAnchorReader } from '../collaboration/application/index.js';
 import { InvitesController } from './invites.controller.js';
 import { PostgresBoardPersistence } from './infrastructure/postgres-board-persistence.js';
 import { PostgresInvitePersistence } from './infrastructure/postgres-invite-persistence.js';
-import { ValidationWorkerPool } from '../collaboration/infrastructure/validation-worker/index.js';
+import { CommittedGraphCopier } from '../collaboration/application/index.js';
 import { BoardOperationQueue, CommittedGraphReader } from '../collaboration/application/index.js';
 import { CheckpointService } from './application/checkpoint-service.js';
 import { PostgresCheckpointPersistence } from './infrastructure/postgres-checkpoint-persistence.js';
@@ -54,8 +55,9 @@ export class BoardsModule {
             BoardService,
             CommittedGraphReader,
             BoardOperationQueue,
-            ValidationWorkerPool,
+            CommittedGraphCopier,
             BOARD_RESOURCE_NOTIFICATION,
+            RuntimeAdmission,
           ],
           useFactory: (
             dataSource: DataSource,
@@ -63,14 +65,16 @@ export class BoardsModule {
             boards: BoardService,
             reader: CommittedGraphReader,
             queue: BoardOperationQueue,
-            workers: ValidationWorkerPool,
+            copier: CommittedGraphCopier,
             notify: BoardResourceNotification,
+            admission: RuntimeAdmission,
           ) =>
             new CheckpointService(
               new PostgresCheckpointPersistence(
                 dataSource,
                 reader,
-                new PostgresBoardPersistence(dataSource, workers),
+                new PostgresBoardPersistence(dataSource, copier, admission),
+                admission,
               ),
               permissions,
               boards,
@@ -85,15 +89,17 @@ export class BoardsModule {
             BoardPermissionService,
             CommittedAnchorReader,
             BOARD_RESOURCE_NOTIFICATION,
+            RuntimeAdmission,
           ],
           useFactory: (
             dataSource: DataSource,
             permissions: BoardPermissionService,
             anchors: CommittedAnchorReader,
             notify: BoardResourceNotification,
+            admission: RuntimeAdmission,
           ) =>
             new DiscussionService(
-              new PostgresDiscussionPersistence(dataSource, anchors),
+              new PostgresDiscussionPersistence(dataSource, anchors, admission),
               permissions,
               notify,
             ),
@@ -104,18 +110,20 @@ export class BoardsModule {
             DataSource,
             BoardPermissionService,
             BOARD_ACCESS_NOTIFICATION,
-            ValidationWorkerPool,
+            CommittedGraphCopier,
             BOARD_RESOURCE_NOTIFICATION,
+            RuntimeAdmission,
           ],
           useFactory: (
             dataSource: DataSource,
             permissions: BoardPermissionService,
             notify: BoardAccessNotification,
-            workers: ValidationWorkerPool,
+            copier: CommittedGraphCopier,
             resourcesChanged: BoardResourceNotification,
+            admission: RuntimeAdmission,
           ) =>
             new BoardService(
-              new PostgresBoardPersistence(dataSource, workers),
+              new PostgresBoardPersistence(dataSource, copier, admission),
               permissions,
               notify,
               resourcesChanged,
@@ -123,14 +131,20 @@ export class BoardsModule {
         },
         {
           provide: InviteService,
-          inject: [DataSource, BoardPermissionService, BOARD_ACCESS_NOTIFICATION],
+          inject: [DataSource, BoardPermissionService, BOARD_ACCESS_NOTIFICATION, RuntimeAdmission],
           useFactory: (
             dataSource: DataSource,
             permissions: BoardPermissionService,
             notify: BoardAccessNotification,
+            admission: RuntimeAdmission,
           ) =>
             new InviteService(
-              new PostgresInvitePersistence(dataSource, config.allowedWebOrigins[0]!),
+              new PostgresInvitePersistence(
+                dataSource,
+                config.allowedWebOrigins[0]!,
+                undefined,
+                admission,
+              ),
               permissions,
               notify,
             ),

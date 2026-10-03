@@ -45,6 +45,7 @@ export interface UseEditorCommandsOptions {
   readonly onCreateNote: (text: string) => void;
   readonly onFitContent: () => void;
   readonly onNotice: (message: string) => void;
+  readonly onObjectsDeleted?: () => void;
   readonly onOpenHelp: () => void;
   readonly onZoomIn: () => void;
   readonly onZoomOut: () => void;

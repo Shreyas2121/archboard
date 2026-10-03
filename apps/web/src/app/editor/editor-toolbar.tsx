@@ -4,9 +4,11 @@ import { Link } from '@tanstack/react-router';
 import { BrandMark } from '@/app/components/brand-mark';
 import { IconButton } from '@/app/components/icon-button';
 import { ThemeControl } from '@/app/components/theme-control';
+import { EditorStatusAnnouncement } from './editor-status-announcement';
 
 import type { EditorToolbarProps } from './editor-composition-types';
 export function EditorToolbar({
+  boardPanels,
   imageExport,
   portability,
   presentation,
@@ -30,7 +32,7 @@ export function EditorToolbar({
 }: EditorToolbarProps) {
   return (
     <>
-      <header className="relative z-20 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b bg-surface-panel px-3 sm:px-4">
+      <header className="relative z-20 grid min-h-14 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-x-auto border-b bg-surface-panel px-3 py-2 sm:px-4">
         <div className="flex min-w-0 flex-col gap-0.5 lg:flex-row lg:items-center lg:gap-4">
           <div className="flex min-w-0 items-center gap-2">
             <Link
@@ -54,7 +56,6 @@ export function EditorToolbar({
           <div
             className="group flex min-w-0 items-start gap-2 text-xs leading-4 text-muted-foreground"
             data-tone={viewState.tone}
-            role="status"
           >
             <span
               className="mt-1 size-1.5 shrink-0 rounded-full bg-muted-foreground group-data-[tone=danger]:bg-destructive group-data-[tone=success]:bg-status-success group-data-[tone=warning]:bg-status-warning"
@@ -64,8 +65,10 @@ export function EditorToolbar({
               {viewState.label}
             </span>
           </div>
+          <EditorStatusAnnouncement state={viewState} />
         </div>
         <div className="flex shrink-0 items-center gap-0.5" aria-label="Board actions">
+          {boardPanels}
           {presentation}
           {sharing}
           {portability}

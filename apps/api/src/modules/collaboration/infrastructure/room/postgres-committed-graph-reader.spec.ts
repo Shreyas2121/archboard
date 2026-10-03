@@ -1,5 +1,5 @@
 import { ERROR_CODES } from '@archboard/contracts';
-import { allEntityGraphFixture } from '@archboard/fixtures';
+import { allEntityGraphFixture, normalizeGraphFixtureIds } from '@archboard/fixtures';
 import { hydrateGraphDocument } from '@archboard/document-model';
 import * as Y from 'yjs';
 import { ValidationWorkerPool } from '../validation-worker/index.js';
@@ -33,5 +33,45 @@ describe('committed checkpoint projection (real worker, no database)', () => {
     await expect(
       reader.capture({ isTransactionActive: false }, crypto.randomUUID(), '0'),
     ).rejects.toThrow('active board transaction');
+  });
+  it('copies through the caller transaction and real bounded worker with fresh IDs and unchanged input', async () => {
+    const document = hydrateGraphDocument(allEntityGraphFixture);
+    const bytes = Y.encodeStateAsUpdate(document);
+    document.destroy();
+    const before = bytes.slice();
+    const query = {
+      select: () => query,
+      addSelect: () => query,
+      from: () => query,
+      where: () => query,
+      andWhere: () => query,
+      setParameter: () => query,
+      orderBy: () => query,
+      limit: () => query,
+      getRawOne: async () => ({
+        schemaVersion: 1,
+        throughSeq: '0',
+        updateBytes: bytes,
+        byteLength: bytes.byteLength,
+      }),
+      getRawMany: async () => [],
+    };
+    const transaction = { isTransactionActive: true, manager: { createQueryBuilder: () => query } };
+    const result = await reader.project(
+      await reader.copy(transaction, crypto.randomUUID(), '0'),
+      1,
+    );
+    expect(normalizeGraphFixtureIds(result)).toEqual(
+      normalizeGraphFixtureIds(allEntityGraphFixture),
+    );
+    expect(
+      result.nodes.every(
+        (node) => !allEntityGraphFixture.nodes.some((source) => source.id === node.id),
+      ),
+    ).toBe(true);
+    expect(bytes).toEqual(before);
+    await expect(reader.copy(transaction, crypto.randomUUID(), '1')).rejects.toMatchObject({
+      code: ERROR_CODES.DOCUMENT_INVALID,
+    });
   });
 });

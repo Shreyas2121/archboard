@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BrowserClipboard } from '@/platform/clipboard';
-import { EDITOR_CANCEL_GESTURES, shouldIgnoreEditorShortcut } from './editor-shortcuts';
+import {
+  EDITOR_CANCEL_GESTURES,
+  shouldIgnoreEditorShortcut,
+  editorViewShortcut,
+} from './editor-shortcuts';
 import { SELECTION_KINDS, type SelectionReference } from '@/features/editor/state';
 
 import { DELETE_CONFIRMATION_THRESHOLD, PASTE_OFFSET } from './history-constants';
@@ -32,6 +36,7 @@ export function useEditorCommands(options: UseEditorCommandsOptions): EditorComm
     onCreateNote,
     onFitContent,
     onNotice,
+    onObjectsDeleted,
     onOpenHelp,
     onZoomIn,
     onZoomOut,
@@ -148,12 +153,13 @@ export function useEditorCommands(options: UseEditorCommandsOptions): EditorComm
             .map(({ id }) => id),
         });
         clearSelection();
+        onObjectsDeleted?.();
         onNotice('Objects deleted. Restore deleted objects is available until reload or reset.');
       } catch (error) {
         onNotice(error instanceof Error ? error.message : 'The selection could not be deleted.');
       }
     },
-    [clearSelection, editable, onNotice, session],
+    [clearSelection, editable, onNotice, onObjectsDeleted, session],
   );
 
   const requestDelete = useCallback((): void => {
@@ -204,8 +210,10 @@ export function useEditorCommands(options: UseEditorCommandsOptions): EditorComm
     const onKeyDown = (event: KeyboardEvent): void => {
       if (shouldIgnoreEditorShortcut(event, document, shortcutsBlocked || pendingDeletion !== null))
         return;
+      if (event.altKey) return;
       const modifier = event.metaKey || event.ctrlKey;
       const key = event.key.toLowerCase();
+      const viewCommand = editorViewShortcut(event);
       if (event.key === 'Escape') {
         window.dispatchEvent(new Event(EDITOR_CANCEL_GESTURES));
         clearSelection();
@@ -215,10 +223,10 @@ export function useEditorCommands(options: UseEditorCommandsOptions): EditorComm
       else if (editable && modifier && key === 'v') void pasteSelection();
       else if (editable && modifier && key === 'z' && event.shiftKey) redo();
       else if (editable && modifier && key === 'z') undo();
-      else if (key === 'f' && !modifier) onFitContent();
-      else if (event.key === '+' || event.key === '=') onZoomIn();
-      else if (event.key === '-') onZoomOut();
-      else if (event.key === '?') onOpenHelp();
+      else if (viewCommand === 'fit') onFitContent();
+      else if (viewCommand === 'zoom-in') onZoomIn();
+      else if (viewCommand === 'zoom-out') onZoomOut();
+      else if (viewCommand === 'help') onOpenHelp();
       else return;
       event.preventDefault();
     };

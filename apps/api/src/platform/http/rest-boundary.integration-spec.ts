@@ -129,6 +129,29 @@ describe('Phase 3 REST boundary', () => {
     }
   });
 
+  it('excludes auth, product, unknown and parser-error responses from generic HTTP caches', async () => {
+    const responses = [
+      await request(application.getHttpServer()).get('/api/v1/me'),
+      await request(application.getHttpServer()).get('/api/v1/me').set('cookie', cookie),
+      await request(application.getHttpServer()).get('/api/missing'),
+      await request(application.getHttpServer()).get('/api/auth/get-session').set('cookie', cookie),
+      await request(application.getHttpServer()).get('/health/missing'),
+      await request(application.getHttpServer())
+        .post('/api/auth/sign-out')
+        .set('origin', 'https://hostile.invalid')
+        .send({}),
+      await request(application.getHttpServer())
+        .post('/api/v1/boards')
+        .set('content-type', 'application/json')
+        .send('{'),
+    ];
+    for (const response of responses) {
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(response.headers['referrer-policy']).toBe('no-referrer');
+      expect(response.headers['x-content-type-options']).toBe('nosniff');
+    }
+  });
+
   it('maps cross-route responses and failures to contract envelopes with one request ID', async () => {
     const unauthenticated = await request(application.getHttpServer()).get('/api/v1/me');
     expect(unauthenticated.status).toBe(HTTP_UNAUTHORIZED);

@@ -5,6 +5,7 @@ import {
   importBoardResponseSchema,
   createCheckpointSchema,
   checkpointDetailResponseSchema,
+  boardSummaryResponseSchema,
 } from '@archboard/contracts';
 import { z } from 'zod';
 
@@ -13,6 +14,16 @@ import { createOpenApiDocument } from './openapi.js';
 const anchorVariantCount = 3;
 
 describe('Phase 6 discussion OpenAPI', () => {
+  it('documents board creation as a strict summary while retaining board detail reads', () => {
+    const document = createOpenApiDocument();
+    expect(document.components.schemas.BoardSummaryResponse).toEqual(
+      z.toJSONSchema(boardSummaryResponseSchema, { io: 'output' }),
+    );
+    const create = document.paths['/api/v1/boards']?.post;
+    const read = document.paths['/api/v1/boards/{id}']?.get;
+    expect(JSON.stringify(create)).toContain('#/components/schemas/BoardSummaryResponse');
+    expect(JSON.stringify(read)).toContain('#/components/schemas/BoardDetailResponse');
+  });
   it('documents immutable board-scoped checkpoint reads, capture and restore creation only', () => {
     const document = createOpenApiDocument();
     expect(document.components.schemas.CreateCheckpointRequest).toEqual(

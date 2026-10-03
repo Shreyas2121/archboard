@@ -3,6 +3,7 @@ import type { CodeContent } from '@archboard/contracts';
 import type { ThemedToken } from 'shiki/types';
 
 import { useTheme } from '@/app/theme/theme-provider';
+import { highlightScheduler, MAX_HIGHLIGHT_CHARACTERS } from './highlight-scheduler';
 
 interface HighlightedCodeProps {
   readonly code: string;
@@ -19,21 +20,27 @@ export function HighlightedCode({ code, language }: HighlightedCodeProps) {
 
   useEffect(() => {
     let active = true;
-    void import('shiki/bundle/web')
-      .then(({ codeToTokens }) =>
-        codeToTokens(code, {
-          lang: language,
-          theme: resolvedTheme === 'dark' ? 'github-dark-default' : 'github-light-default',
-        }),
-      )
-      .then((result) => {
-        if (active) setHighlight({ key: highlightKey, lines: result.tokens });
-      })
-      .catch(() => {
-        if (active) setHighlight({ key: highlightKey, lines: [] });
-      });
+    if (code.length === 0 || code.length > MAX_HIGHLIGHT_CHARACTERS) return;
+    const cancel = highlightScheduler.schedule(async () => {
+      await import('shiki/bundle/web')
+        .then(({ codeToTokens }) =>
+          active
+            ? codeToTokens(code, {
+                lang: language,
+                theme: resolvedTheme === 'dark' ? 'github-dark-default' : 'github-light-default',
+              })
+            : null,
+        )
+        .then((result) => {
+          if (active && result !== null) setHighlight({ key: highlightKey, lines: result.tokens });
+        })
+        .catch(() => {
+          if (active) setHighlight({ key: highlightKey, lines: [] });
+        });
+    });
     return () => {
       active = false;
+      cancel?.();
     };
   }, [code, highlightKey, language, resolvedTheme]);
 

@@ -1,13 +1,12 @@
 import { createHash } from 'node:crypto';
 
 import { ERROR_CODES, type ServerSequence } from '@archboard/contracts';
-import { Injectable } from '@nestjs/common';
 import * as Y from 'yjs';
 
 import type { BoardPermissionService } from '../../boards/application/index.js';
 import type { DurableUpdatePersistence } from './durable-update-persistence.js';
 import type { DurableUpdateReceipt } from './durable-update.js';
-import type { ValidationWorkerPool } from '../infrastructure/validation-worker/index.js';
+import type { CandidateValidator } from './candidate-validator.js';
 import {
   DURABLE_UPDATE_FAILPOINTS,
   DurableUpdateFailpointController,
@@ -27,12 +26,11 @@ export interface RoomUpdateResult {
   readonly duplicate: boolean;
 }
 
-@Injectable()
 export class CollaborationUpdateService {
   public constructor(
     private readonly persistence: DurableUpdatePersistence,
     private readonly permissions: BoardPermissionService,
-    private readonly validator: ValidationWorkerPool,
+    private readonly validator: CandidateValidator,
     private readonly failpoints = new DurableUpdateFailpointController(),
   ) {}
 

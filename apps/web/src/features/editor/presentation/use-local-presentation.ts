@@ -206,6 +206,10 @@ export function useLocalPresentation(
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
   }, [presenting, blocked, exit, navigate]);
+  const pan = useCallback(() => {
+    preserveViewport.current = true;
+    model.unfollow();
+  }, [model]);
   return {
     activeId,
     step,
@@ -218,10 +222,7 @@ export function useLocalPresentation(
     following: live.following,
     follow,
     unfollow: () => model.unfollow(),
-    pan: () => {
-      preserveViewport.current = true;
-      model.unfollow();
-    },
+    pan,
     live: live.live,
     holder: live.holder,
     ownsLease: live.ownsLease,

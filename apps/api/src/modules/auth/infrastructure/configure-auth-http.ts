@@ -4,6 +4,9 @@ import { toNodeHandler } from 'better-auth/node';
 import type { ApiConfig } from '../../../platform/config/index.js';
 import type { BetterAuthRuntime } from './better-auth.runtime.js';
 import { configureProductHttp } from '../../../platform/http/product-http.js';
+import { configureProtectedResponses } from '../../../platform/http/protected-response.js';
+import { RuntimeAdmission } from '../../../platform/lifecycle/runtime-admission.js';
+import { configureRuntimeAdmission } from '../../../platform/http/runtime-admission-http.js';
 
 type AuthNodeHandler = ReturnType<typeof toNodeHandler>;
 const HTTP_FORBIDDEN = 403;
@@ -17,6 +20,9 @@ export function configureAuthHttp(
   authRuntime: BetterAuthRuntime,
   config: ApiConfig,
 ): void {
+  configureProtectedResponses(application);
+  const admission = application.get(RuntimeAdmission);
+  configureRuntimeAdmission(application, admission);
   application.enableCors({
     origin: [...config.allowedWebOrigins],
     credentials: true,
