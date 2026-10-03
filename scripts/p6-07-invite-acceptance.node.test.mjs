@@ -415,7 +415,10 @@ test('source/build policy excludes invitation navigation and runtime caching, se
   assert.equal(rules.headers[0].headers[0].value, 'no-referrer');
   assert.equal(rules.headers[1].source, '/invite/:path*');
   assert.equal(rules.headers[1].headers[0].value, 'no-store');
-  assert.equal(rules.rewrites[0].destination, '/index.html');
+  assert.equal(
+    rules.rewrites.find((rule) => rule.source === '/invite/:path*').destination,
+    '/index.html',
+  );
   assert.match(config, /runtimeCaching: \[\]/);
   assert.ok(config.includes('/^\\/invite(?:s)?(?:\\/|$)/'));
   assert.match(router, /getScrollRestorationKey/);

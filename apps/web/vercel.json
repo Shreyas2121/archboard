@@ -2,7 +2,20 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "headers": [
     { "source": "/(.*)", "headers": [{ "key": "Referrer-Policy", "value": "no-referrer" }] },
-    { "source": "/invite/:path*", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
+    { "source": "/invite/:path*", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    {
+      "source": "/api/:path*",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" },
+        { "key": "Vercel-CDN-Cache-Control", "value": "no-store" }
+      ]
+    }
   ],
-  "rewrites": [{ "source": "/invite/:path*", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://archboard-x3z3.onrender.com/api/:path*" },
+    { "source": "/invite/:path*", "destination": "/index.html" },
+    { "source": "/demo", "destination": "/index.html" },
+    { "source": "/boards", "destination": "/index.html" },
+    { "source": "/boards/:path*", "destination": "/index.html" }
+  ]
 }
