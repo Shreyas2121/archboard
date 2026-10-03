@@ -184,6 +184,18 @@ accepted evidence reader and cannot become PASS from free-form text. A26 needs
 seed/hash/counts/UTF-8 and encoded sizes, reference machine/versions, region/origins,
 network shaping, timestamps, warm-up, samples/percentiles and current build hash.
 
+P8-07 now provides the [operations runbook](phase-8-operations.md),
+`apps/api/scripts/p8-07-process-proof.mjs` (Linux, explicitly confirmed isolated local
+test database; actual compiled main plus test-only IPC failpoints) and
+`scripts/ops/host-proof.mjs` (actual isolated HTTPS package). These prepare singleton,
+schema/live/ready, literal pre/post-commit kill, receipt/graph restart, drain/deadline,
+in-flight lock loss and HTTP direct-route/header/cache proof. The runbook records
+exact inputs, protected-output policy, Docker image/WSS/log-canary procedure and
+native Caddy validation gap. Execution remains **UNRUN (deferred by user — until
+Version 1 implementation is complete)**; browser security proof retains its separate
+**UNRUN (deferred by user)** status. Native Compose parsing/source units do not close
+the running-package, schema, fault, browser or release gates.
+
 Full `pnpm.cmd phase1:verify` through `phase7:verify`, `pnpm.cmd phase4:quick`,
 `pnpm.cmd phase4:verify:legacy`, `pnpm.cmd test` and served previews remain paused.
 P8-10 must replace this inventory's missing-command markers with real source-backed

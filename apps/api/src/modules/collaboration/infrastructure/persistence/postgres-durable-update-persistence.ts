@@ -17,8 +17,9 @@ export class PostgresDurableUpdatePersistence implements DurableUpdatePersistenc
   public constructor(
     private readonly dataSource: DataSource,
     private readonly sequences: BoardSequenceAccess,
+    admission?: RuntimeAdmission,
   ) {
-    this.transactions = new PostgresTransaction(dataSource);
+    this.transactions = new PostgresTransaction(dataSource, admission);
   }
 
   public findReceipt(boardId: string, updateId: string): Promise<DurableUpdateReceipt | null> {
@@ -67,3 +68,4 @@ export class PostgresDurableUpdatePersistence implements DurableUpdatePersistenc
     return receipt === null ? null : { ...receipt, sequence: receipt.sequence as ServerSequence };
   }
 }
+import type { RuntimeAdmission } from '../../../../platform/lifecycle/runtime-admission.js';

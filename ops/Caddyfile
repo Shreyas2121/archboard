@@ -1,0 +1,56 @@
+{
+    # No access log. Raw proxy errors can contain URLs; retain only fatal process events.
+    log default {
+        level FATAL
+        output stdout
+        format json
+    }
+    admin off
+}
+
+{$ARCHBOARD_HOST} {
+    import /etc/caddy/security-headers.caddy
+    root * /srv
+    encode zstd gzip
+
+    @protected path /api /api/* /auth /auth/* /ws /ws/* /health /health/*
+    handle @protected {
+        header Cache-Control "no-store"
+        reverse_proxy api:3000 {
+            # Native upgrade forwarding; no retries of mutating requests.
+            transport http {
+                dial_timeout 5s
+                response_header_timeout 10s
+            }
+            stream_close_delay 5s
+        }
+    }
+
+    @invite path /invite /invite/*
+    handle @invite {
+        header Cache-Control "no-store"
+        rewrite * /index.html
+        file_server
+    }
+
+    @app path_regexp app ^/(|demo/?|boards/?|boards/[0-9a-fA-F-]{36}(/checkpoints/[0-9a-fA-F-]{36})?/?)$
+    handle @app {
+        header Cache-Control "no-cache"
+        rewrite * /index.html
+        file_server
+    }
+
+    handle /assets/* {
+        header Cache-Control "public, max-age=31536000, immutable"
+        file_server
+    }
+    handle {
+        header Cache-Control "no-cache"
+        file_server
+    }
+    handle_errors {
+        import /etc/caddy/security-headers.caddy
+        header Cache-Control "no-store"
+        respond "Resource unavailable." {err.status_code}
+    }
+}

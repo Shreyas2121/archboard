@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RuntimeAdmission } from '../../platform/lifecycle/runtime-admission.js';
 import { DataSource } from 'typeorm';
 import { BoardPermissionService, BoardAuthorityTransaction } from './application/index.js';
 import type { BoardPermissionTransaction } from './application/index.js';
@@ -13,10 +14,10 @@ import { PostgresBoardSequenceAccess } from './infrastructure/postgres-board-seq
     { provide: BoardSequenceAccess, useFactory: () => new PostgresBoardSequenceAccess() },
     {
       provide: BoardAuthorityTransaction,
-      inject: [DataSource],
-      useFactory: (source: DataSource) => ({
+      inject: [DataSource, RuntimeAdmission],
+      useFactory: (source: DataSource, admission: RuntimeAdmission) => ({
         run: <T>(work: (transaction: BoardPermissionTransaction) => Promise<T>) =>
-          new BoardTransaction(source).run(work),
+          new BoardTransaction(source, admission).run(work),
       }),
     },
     {

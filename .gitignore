@@ -17,3 +17,5 @@ Thumbs.db
 .idea/
 .vscode/
 .neon
+ops/secrets/
+ops/production.env

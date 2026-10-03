@@ -1,48 +1,50 @@
 import { ERROR_CODES } from '@archboard/contracts';
-import { Controller, Get, Inject, Injectable } from '@nestjs/common';
+import { Controller, Get, Inject, Injectable, type OnApplicationBootstrap } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
 import { CollaborationWriterLockService } from '../database/index.js';
+import { RuntimeAdmission } from '../lifecycle/runtime-admission.js';
+import { schemaCompatible } from '../database/schema-compatibility.js';
 
 import { fail } from './api-boundary.js';
 
-const REQUIRED_TABLES = [
-  'user',
-  'session',
-  'boards',
-  'board_members',
-  'board_invites',
-  'board_snapshots',
-  'board_updates',
-  'update_receipts',
-  'api_idempotency',
-] as const;
-
 @Injectable()
-export class ReadinessService {
+export class ReadinessService implements OnApplicationBootstrap {
   public constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(CollaborationWriterLockService)
     private readonly writerLock: CollaborationWriterLockService,
+    @Inject(RuntimeAdmission) private readonly admission: RuntimeAdmission,
   ) {}
 
+  public async onApplicationBootstrap(): Promise<void> {
+    if (!(await this.ready())) throw new Error('Startup readiness unavailable.');
+  }
+
   public async ready(): Promise<boolean> {
-    if (!this.dataSource.isInitialized) return false;
-    try {
-      if (!(await this.writerLock.isReady())) return false;
-      if (await this.dataSource.showMigrations()) return false;
-      const runner = this.dataSource.createQueryRunner();
-      try {
-        for (const table of REQUIRED_TABLES) {
-          if (!(await runner.hasTable(table))) return false;
-        }
-        return true;
-      } finally {
-        await runner.release();
-      }
-    } catch {
+    if (this.admission.stopping) return false;
+    if (!this.dataSource.isInitialized) {
+      this.admission.setSchemaCompatible(false);
       return false;
     }
+    try {
+      const owned = await this.writerLock.isReady();
+      if (this.admission.stopping) return false;
+      if (!owned) {
+        this.admission.setSchemaCompatible(false);
+        return false;
+      }
+      const compatible = await this.checkSchema();
+      if (this.admission.stopping) return false;
+      this.admission.setSchemaCompatible(compatible);
+      return compatible && this.admission.accepting;
+    } catch {
+      this.admission.setSchemaCompatible(false);
+      return false;
+    }
+  }
+  protected checkSchema(): Promise<boolean> {
+    return schemaCompatible(this.dataSource);
   }
 }
 

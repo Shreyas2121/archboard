@@ -42,8 +42,9 @@ export class PostgresRoomCompactor {
     @InjectDataSource() dataSource: DataSource,
     private readonly failpoints: CompactionFailpointController,
     private readonly sequences: BoardSequenceAccess,
+    admission?: RuntimeAdmission,
   ) {
-    this.transactions = new PostgresTransaction(dataSource);
+    this.transactions = new PostgresTransaction(dataSource, admission);
   }
 
   public async compact(
@@ -91,3 +92,4 @@ export class PostgresRoomCompactor {
     });
   }
 }
+import type { RuntimeAdmission } from '../../../../platform/lifecycle/runtime-admission.js';

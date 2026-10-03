@@ -37,9 +37,10 @@ export class PostgresBoardPersistence implements BoardPersistence {
   public constructor(
     dataSource: DataSource,
     private readonly copier: CommittedGraphCopier,
+    admission?: RuntimeAdmission,
   ) {
-    this.transactions = new BoardTransaction(dataSource);
-    this.idempotency = new IdempotencyService(dataSource);
+    this.transactions = new BoardTransaction(dataSource, admission);
+    this.idempotency = new IdempotencyService(dataSource, admission);
   }
 
   public list(
@@ -222,3 +223,4 @@ export class PostgresBoardPersistence implements BoardPersistence {
     });
   }
 }
+import type { RuntimeAdmission } from '../../../platform/lifecycle/runtime-admission.js';

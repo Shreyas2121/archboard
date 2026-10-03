@@ -2,7 +2,8 @@ import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import type { Duplex } from 'node:stream';
 
 import { HELLO_TIMEOUT_MS, applicationIdSchema } from '@archboard/contracts';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { RuntimeAdmission } from '../../../../platform/lifecycle/runtime-admission.js';
 import type { OnApplicationBootstrap, OnApplicationShutdown } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { fromNodeHeaders } from 'better-auth/node';
@@ -53,6 +54,7 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
     @Inject(CollaborationWriterLockService)
     private readonly writerLock: CollaborationWriterLockService,
     @Inject(CollaborationGateway) private readonly gateway: CollaborationGateway,
+    @Optional() @Inject(RuntimeAdmission) private readonly admission?: RuntimeAdmission,
   ) {}
 
   public onApplicationBootstrap(): void {
@@ -122,7 +124,7 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
       this.rejectUpgrade(socket, HTTP_FORBIDDEN);
       return;
     }
-    if (!(await this.writerLock.isReady())) {
+    if (!this.canAdmit() || !(await this.writerLock.isReady())) {
       this.rejectUpgrade(socket, HTTP_SERVICE_UNAVAILABLE);
       return;
     }
@@ -151,11 +153,19 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
       return;
     }
     if (this.stopped || socket.destroyed) return;
+    if (!this.canAdmit()) {
+      this.rejectUpgrade(socket, HTTP_SERVICE_UNAVAILABLE);
+      return;
+    }
     this.gateway.acceptUpgrade(request, socket, head, {
       boardId,
       userId: session.userId,
       userName: session.user.name,
     });
+  }
+
+  private canAdmit(): boolean {
+    return this.admission === undefined || this.admission.accepting;
   }
 
   private async sessionWithinDeadline(request: IncomingMessage) {

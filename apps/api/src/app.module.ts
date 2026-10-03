@@ -10,6 +10,7 @@ import { DatabaseModule } from './platform/database/index.js';
 import { ApiExceptionFilter } from './platform/http/api-exception.filter.js';
 import { HealthController, ReadinessService } from './platform/http/health.controller.js';
 import { OpenApiController } from './platform/http/openapi.controller.js';
+import { RuntimeAdmissionModule } from './platform/lifecycle/runtime-admission.js';
 
 @Module({})
 export class AppModule {
@@ -25,7 +26,13 @@ export class AppModule {
     );
     return {
       module: AppModule,
-      imports: [auth, database, collaboration, BoardsModule.register(config, auth, collaboration)],
+      imports: [
+        RuntimeAdmissionModule,
+        auth,
+        database,
+        collaboration,
+        BoardsModule.register(config, auth, collaboration),
+      ],
       controllers: [AppController, HealthController, OpenApiController],
       providers: [{ provide: APP_FILTER, useClass: ApiExceptionFilter }, ReadinessService],
     };

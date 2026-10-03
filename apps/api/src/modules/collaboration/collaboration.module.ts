@@ -1,5 +1,6 @@
 import { Module, type DynamicModule, type Type } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { RuntimeAdmission } from '../../platform/lifecycle/runtime-admission.js';
 import type { ApiConfig } from '../../platform/config/index.js';
 import {
   BoardPermissionService,
@@ -80,12 +81,18 @@ export class CollaborationModule {
         CompactionFailpointController,
         {
           provide: PostgresRoomCompactor,
-          inject: [DataSource, CompactionFailpointController, BoardSequenceAccess],
+          inject: [
+            DataSource,
+            CompactionFailpointController,
+            BoardSequenceAccess,
+            RuntimeAdmission,
+          ],
           useFactory: (
             source: DataSource,
             failpoints: CompactionFailpointController,
             sequences: BoardSequenceAccess,
-          ) => new PostgresRoomCompactor(source, failpoints, sequences),
+            admission: RuntimeAdmission,
+          ) => new PostgresRoomCompactor(source, failpoints, sequences, admission),
         },
         RoomMaintenanceService,
         CollaborationShutdownService,
@@ -103,9 +110,12 @@ export class CollaborationModule {
         },
         {
           provide: DURABLE_UPDATE_PERSISTENCE,
-          inject: [DataSource, BoardSequenceAccess],
-          useFactory: (dataSource: DataSource, sequences: BoardSequenceAccess) =>
-            new PostgresDurableUpdatePersistence(dataSource, sequences),
+          inject: [DataSource, BoardSequenceAccess, RuntimeAdmission],
+          useFactory: (
+            dataSource: DataSource,
+            sequences: BoardSequenceAccess,
+            admission: RuntimeAdmission,
+          ) => new PostgresDurableUpdatePersistence(dataSource, sequences, admission),
         },
         {
           provide: CollaborationUpdateService,

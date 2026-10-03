@@ -20,9 +20,10 @@ export class PostgresCheckpointPersistence implements CheckpointPersistence {
     dataSource: DataSource,
     private readonly reader: CommittedGraphReader,
     private readonly boards: PostgresBoardPersistence,
+    admission?: RuntimeAdmission,
   ) {
-    this.transactions = new BoardTransaction(dataSource);
-    this.receipts = new IdempotencyService(dataSource);
+    this.transactions = new BoardTransaction(dataSource, admission);
+    this.receipts = new IdempotencyService(dataSource, admission);
   }
   public run<T>(work: (scope: CheckpointScope) => Promise<T>): Promise<T> {
     return this.transactions.run((runner) => work(this.scope(runner)));
@@ -78,3 +79,4 @@ export class PostgresCheckpointPersistence implements CheckpointPersistence {
     };
   }
 }
+import type { RuntimeAdmission } from '../../../platform/lifecycle/runtime-admission.js';

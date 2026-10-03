@@ -8,6 +8,8 @@ import { BetterAuthRuntime, configureAuthHttp } from './modules/auth/index.js';
 import { configureCollaborationWebSockets } from './modules/collaboration/infrastructure/websocket/index.js';
 import { loadApiConfig, PUBLIC_BIND_HOST } from './platform/config/index.js';
 import { PrivacyLogger } from './platform/http/privacy-logger.js';
+import { RuntimeAdmission } from './platform/lifecycle/runtime-admission.js';
+import { ShutdownDeadline, PROCESS_SHUTDOWN_MS } from './platform/lifecycle/shutdown-deadline.js';
 
 async function bootstrap(): Promise<void> {
   const config = loadApiConfig(process.env);
@@ -17,7 +19,32 @@ async function bootstrap(): Promise<void> {
   });
   configureCollaborationWebSockets(application);
   configureAuthHttp(application, application.get(BetterAuthRuntime), config);
-  application.enableShutdownHooks();
+  const admission = application.get(RuntimeAdmission);
+  let closing = false;
+  for (const signal of ['SIGTERM', 'SIGINT'] as const)
+    process.on(signal, () => {
+      if (closing) return;
+      closing = true;
+      const started = performance.now();
+      admission.stop();
+      console.info(JSON.stringify({ event: 'runtime.shutdown_started' }));
+      void new ShutdownDeadline()
+        .run(() => application.close(), PROCESS_SHUTDOWN_MS)
+        .then(
+          () => {
+            console.info(
+              JSON.stringify({
+                event: 'runtime.shutdown_complete',
+                durationMs: Math.round(performance.now() - started),
+              }),
+            );
+            process.exit(0);
+          },
+          () => process.exit(1),
+        );
+    });
+
+  await application.init();
 
   await application.listen(config.port, PUBLIC_BIND_HOST);
 }
