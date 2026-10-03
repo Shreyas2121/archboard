@@ -12,6 +12,7 @@ import { createGraphDocument } from '@archboard/document-model';
 
 import { CollaborationRoomRegistry, type LoadedRoom, type RoomLoader } from './room-registry.js';
 import { MAX_PENDING_ROOM_UPDATE_BYTES, MAX_PENDING_ROOM_UPDATES } from './collaboration-limits.js';
+import { MAX_QUEUED_ROOM_OPERATIONS } from './collaboration-limits.js';
 
 const TWO_RESERVATIONS = 2;
 
@@ -20,6 +21,37 @@ function loaded(): LoadedRoom {
 }
 
 describe('bounded collaboration room registry', () => {
+  it('bounds a saturated room without changing state or blocking another room or the next legitimate operation', async () => {
+    const registry = new CollaborationRoomRegistry({ load: async () => loaded() });
+    const hot = await registry.reserve(randomUUID());
+    const other = await registry.reserve(randomUUID());
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const before = hot.room.latestSeq;
+    let executed = 0;
+    const queued = Array.from({ length: MAX_QUEUED_ROOM_OPERATIONS }, () =>
+      hot.room.run(async () => {
+        await barrier;
+        executed++;
+      }),
+    );
+    await expect(
+      hot.room.run(async () => {
+        throw new Error('Must not run');
+      }),
+    ).rejects.toMatchObject({ code: ERROR_CODES.SERVER_BUSY });
+    expect(hot.room.latestSeq).toBe(before);
+    await expect(other.room.run(async () => 'responsive')).resolves.toBe('responsive');
+    release();
+    await Promise.all(queued);
+    expect(executed).toBe(MAX_QUEUED_ROOM_OPERATIONS);
+    await expect(hot.room.run(async () => 'next legitimate')).resolves.toBe('next legitimate');
+    hot.release();
+    other.release();
+    await registry.close();
+  });
   it('serializes checkpoint work behind an active room operation and never opens a room for REST alone', async () => {
     let loads = 0;
     const registry = new CollaborationRoomRegistry({

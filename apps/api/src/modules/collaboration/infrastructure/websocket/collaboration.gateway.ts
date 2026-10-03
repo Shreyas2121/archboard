@@ -64,7 +64,12 @@ import {
   MAX_SOCKET_BUFFERED_BYTES,
   MAX_PENDING_ACTIVATION_BYTES,
   MAX_PENDING_ACTIVATION_FRAMES,
+  MAX_AUTHENTICATED_SOCKETS,
 } from '../../application/collaboration-limits.js';
+import {
+  CollaborationTrafficBudget,
+  TokenBudget,
+} from '../../application/collaboration-traffic-budget.js';
 
 const CLOSE_POLICY_VIOLATION = 1008;
 const MILLISECONDS_PER_SECOND = 1_000;
@@ -102,8 +107,7 @@ interface ConnectionState extends AuthorizedBoardSocket {
   ready: boolean;
   closed: boolean;
   updateInFlight: boolean;
-  updateTokens: number;
-  updateRefillAt: number;
+  readonly updateBudget: TokenBudget;
   sessionCheck?: Promise<boolean>;
   sessionDeadline?: NodeJS.Timeout;
   cancelSessionCheck?: () => void;
@@ -128,6 +132,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
   private readonly connections = new Map<WebSocket, ConnectionState>();
   private readonly operations = new Set<Promise<unknown>>();
   private stopped = false;
+  private readonly traffic = new CollaborationTrafficBudget();
 
   public constructor(
     @Inject(CollaborationRoomRegistry) private readonly rooms: CollaborationRoomRegistry,
@@ -187,8 +192,11 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       ready: false,
       closed: false,
       updateInFlight: false,
-      updateTokens: CONTENT_UPDATE_BURST,
-      updateRefillAt: Date.now(),
+      updateBudget: new TokenBudget(
+        CONTENT_UPDATES_PER_SECOND,
+        CONTENT_UPDATE_BURST,
+        performance.now(),
+      ),
       accessChangedWhileJoining: false,
       pendingActivationBytes: 0,
       pendingActivationFrames: 0,
@@ -196,6 +204,11 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     helloDeadline.unref();
     state.liveness.unref();
     this.connections.set(websocket, state);
+    if (this.connections.size > MAX_AUTHENTICATED_SOCKETS) {
+      this.sendError(websocket, ERROR_CODES.SERVER_BUSY, true);
+      this.terminate(websocket);
+      return;
+    }
     websocket.on('pong', () => {
       state.lastPongAt = Date.now();
       if (state.reservation?.room.presenter.snapshot().connectionId === state.connectionId)
@@ -309,30 +322,30 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     isBinary: boolean,
   ): void {
     if (!this.isOpen(websocket, state)) return;
+    const bytes = this.frameBytes(raw);
+    if (isBinary || bytes === undefined) {
+      websocket.close(CLOSE_POLICY_VIOLATION, 'Invalid client envelope');
+      return;
+    }
     if (!state.ready && state.activation !== undefined) {
       // Ready may reach the client while the final authority read is still pending.
-      const bytes = this.frameBytes(raw)?.byteLength ?? MAX_WS_FRAME_BYTES;
+      const byteLength = bytes.byteLength;
       if (
         state.pendingActivationFrames >= MAX_PENDING_ACTIVATION_FRAMES ||
-        state.pendingActivationBytes + bytes > MAX_PENDING_ACTIVATION_BYTES
+        state.pendingActivationBytes + byteLength > MAX_PENDING_ACTIVATION_BYTES
       ) {
         this.terminate(websocket);
         return;
       }
       state.pendingActivationFrames += 1;
-      state.pendingActivationBytes += bytes;
+      state.pendingActivationBytes += byteLength;
       void state.activation
         .then(() => {
           state.pendingActivationFrames -= 1;
-          state.pendingActivationBytes -= bytes;
+          state.pendingActivationBytes -= byteLength;
           this.onMessage(websocket, state, raw, isBinary);
         })
         .catch(() => this.terminate(websocket));
-      return;
-    }
-    const bytes = this.frameBytes(raw);
-    if (isBinary || bytes === undefined) {
-      websocket.close(CLOSE_POLICY_VIOLATION, 'Invalid client envelope');
       return;
     }
     let message: ReturnType<typeof parseClientFrame>;
@@ -368,7 +381,7 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       message.event === CLIENT_EVENT_NAMES.PRESENTER_STEP ||
       message.event === CLIENT_EVENT_NAMES.PRESENTER_RELEASE
     ) {
-      const now = Date.now();
+      const now = performance.now();
       state.presenterTimes = state.presenterTimes.filter(
         (time) => now - time < MILLISECONDS_PER_SECOND,
       );
@@ -377,6 +390,11 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         return;
       }
       state.presenterTimes.push(now);
+      const overload = this.traffic.take(state.boardId, state.userId, 'presenter');
+      if (overload !== null) {
+        this.sendError(websocket, overload, true);
+        return;
+      }
       void this.presenterOperation(
         state,
         websocket,
@@ -386,12 +404,17 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       return;
     }
     if (message.event === CLIENT_EVENT_NAMES.UPDATE) {
-      if (!this.consumeUpdateBudget(state)) {
+      if (!state.updateBudget.take(performance.now())) {
         this.sendError(websocket, ERROR_CODES.RATE_LIMITED, true, message.data.updateId);
         return;
       }
       if (state.updateInFlight) {
         this.sendError(websocket, ERROR_CODES.SERVER_BUSY, true, message.data.updateId);
+        return;
+      }
+      const overload = this.traffic.take(state.boardId, state.userId, 'content');
+      if (overload !== null) {
+        this.sendError(websocket, overload, true, message.data.updateId);
         return;
       }
       state.updateInFlight = true;
@@ -519,7 +542,12 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
             }
           });
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          if (error instanceof RoomAdmissionError) {
+            // Refusal occurred before authority work; keep the existing lease/peers.
+            if (this.isOpen(socket, source)) this.sendError(socket, error.code, true);
+            return;
+          }
           // Fail closed on unavailable authority; destruction also clears the room lease.
           room.presenter.clear();
           for (const [peerSocket, peer] of this.connections)
@@ -531,12 +559,14 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
   private acceptPresence(state: ConnectionState, presence: PresenceState): void {
     if (state.closed) return;
     const now = Date.now();
+    const rateNow = performance.now();
     state.presenceTimes = state.presenceTimes.filter(
-      (time) => now - time < MILLISECONDS_PER_SECOND,
+      (time) => rateNow - time < MILLISECONDS_PER_SECOND,
     );
     // Drop excess ephemeral traffic without disturbing the independent durable stream.
     if (state.presenceTimes.length >= PRESENCE_UPDATES_PER_SECOND) return;
-    state.presenceTimes.push(now);
+    state.presenceTimes.push(rateNow);
+    if (this.traffic.take(state.boardId, state.userId, 'presence') !== null) return;
     const colors = Object.values(COLOR_TOKENS);
     const colorIndex = [...state.userId].reduce(
       (sum, character) => sum + character.charCodeAt(0),
@@ -587,19 +617,6 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
     });
   }
 
-  private consumeUpdateBudget(state: ConnectionState): boolean {
-    const now = Date.now();
-    state.updateTokens = Math.min(
-      CONTENT_UPDATE_BURST,
-      state.updateTokens +
-        ((now - state.updateRefillAt) * CONTENT_UPDATES_PER_SECOND) / MILLISECONDS_PER_SECOND,
-    );
-    state.updateRefillAt = now;
-    if (state.updateTokens < 1) return false;
-    state.updateTokens -= 1;
-    return true;
-  }
-
   private async join(websocket: WebSocket, state: ConnectionState): Promise<void> {
     try {
       if (!(await this.revalidateSession(websocket, state))) return;
@@ -618,6 +635,8 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         return;
       }
       state.reservation = reservation;
+      const overload = this.traffic.take(state.boardId, state.userId, 'join');
+      if (overload !== null) throw new RoomAdmissionError(overload);
       await reservation.room.run(async () => {
         if (!this.isOpen(websocket, state)) {
           this.handleDisconnect(websocket);
@@ -750,7 +769,9 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
       this.sendError(
         websocket,
         code,
-        code === ERROR_CODES.SERVER_BUSY || code === ERROR_CODES.ROOM_FULL,
+        code === ERROR_CODES.SERVER_BUSY ||
+          code === ERROR_CODES.ROOM_FULL ||
+          code === ERROR_CODES.RATE_LIMITED,
       );
       websocket.close(CLOSE_POLICY_VIOLATION, 'Board unavailable');
       this.handleDisconnect(websocket);
@@ -843,7 +864,9 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
         return;
       }
       const code =
-        error instanceof DurableUpdateRejectedError || error instanceof ValidationWorkerError
+        error instanceof DurableUpdateRejectedError ||
+        error instanceof ValidationWorkerError ||
+        error instanceof RoomAdmissionError
           ? error.code
           : ERROR_CODES.PERSISTENCE_FAILED;
       reportCollaborationMetric('collaboration.update_reject', { code, count: 1 });
@@ -924,9 +947,17 @@ export class CollaborationGateway implements OnGatewayConnection, OnGatewayDisco
   }
 
   private frameBytes(raw: RawData): Uint8Array | undefined {
-    if (Buffer.isBuffer(raw)) return raw;
-    if (raw instanceof ArrayBuffer) return new Uint8Array(raw);
-    if (Array.isArray(raw)) return Buffer.concat(raw);
+    if (Buffer.isBuffer(raw)) return raw.byteLength <= MAX_WS_FRAME_BYTES ? raw : undefined;
+    if (raw instanceof ArrayBuffer)
+      return raw.byteLength <= MAX_WS_FRAME_BYTES ? new Uint8Array(raw) : undefined;
+    if (Array.isArray(raw)) {
+      let total = 0;
+      for (const part of raw) {
+        total += part.byteLength;
+        if (total > MAX_WS_FRAME_BYTES) return undefined;
+      }
+      return Buffer.concat(raw, total);
+    }
     return undefined;
   }
 

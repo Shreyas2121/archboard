@@ -97,6 +97,13 @@ export class ValidationWorkerPool implements CandidateValidator {
     requirePositiveInteger('timeoutMs', this.timeoutMs);
     requirePositiveInteger('maxWorkers', this.maxWorkers);
     requireNonNegativeInteger('maxQueueDepth', this.maxQueueDepth);
+    if (
+      this.timeoutMs > VALIDATION_TIMEOUT_MS ||
+      this.maxWorkers > MAX_VALIDATION_WORKERS ||
+      this.maxQueueDepth > MAX_VALIDATION_QUEUE
+    ) {
+      throw new Error('Validation options cannot exceed the published worker budgets.');
+    }
   }
 
   public get activeWorkerCount(): number {

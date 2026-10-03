@@ -13,6 +13,7 @@ import { projectGraphDocument } from '@archboard/document-model';
 import { PresenterLease } from './presenter-lease.js';
 import { reportCollaborationMetric } from './collaboration-metrics.js';
 import { MAX_PENDING_ROOM_UPDATE_BYTES, MAX_PENDING_ROOM_UPDATES } from './collaboration-limits.js';
+import { MAX_QUEUED_ROOM_OPERATIONS } from './collaboration-limits.js';
 
 export interface BufferedRoomUpdate {
   readonly seq: ServerSequence;
@@ -99,7 +100,8 @@ export class CollaborationRoom {
   }
 
   public run<T>(work: () => Promise<T>): Promise<T> {
-    if (this.closing) return Promise.reject(new RoomAdmissionError(ERROR_CODES.SERVER_BUSY));
+    if (this.closing || this.queued >= MAX_QUEUED_ROOM_OPERATIONS)
+      return Promise.reject(new RoomAdmissionError(ERROR_CODES.SERVER_BUSY));
     this.queued += 1;
     const enqueuedAt = performance.now();
     const operation = this.tail.then(() => {

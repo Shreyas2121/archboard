@@ -6,6 +6,11 @@ this file prepares verification, not execution or acceptance. See the
 [guide](../guide7.md) and [policy](verification-policy.md). Every current integrated
 A01–A30 gate is **OPEN**. Supporting historical proof stays at its original build.
 
+P8-05's [admission and validation map](phase-8-admission-validation.md) records
+current ceilings, rate identity/retry policy, complete-state negatives and the
+prepared A23/A30 real socket/load procedure. Its Node tests are supporting proof;
+DB-02/05/06 and browser acceptance remain deferred under the shared policy.
+
 P8-02 repairs are documented in [source alignment](phase-8-contract-alignment.md).
 The boundary scan now passes; frontend Node suites use `scripts/web-node/vitest.config.ts`.
 The P8-01 report retains its original failing baseline. No integrated gate is closed.

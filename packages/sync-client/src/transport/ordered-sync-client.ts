@@ -4,6 +4,9 @@ import {
   ERROR_CODES,
   GRAPH_SCHEMA_VERSION,
   MAX_WS_FRAME_BYTES,
+  MAX_CLIENT_UPDATE_BYTES,
+  RECONNECT_INITIAL_DELAY_MS,
+  RECONNECT_MAX_DELAY_MS,
   PROTOCOL_VERSION,
   SERVER_EVENT_NAMES,
   applicationIdSchema,
@@ -18,8 +21,8 @@ import { TransientPresence } from './transient-presence.js';
 import { TransientPresenter } from './transient-presenter.js';
 import { ResourceRefreshEvents } from './resource-refresh-events.js';
 
-const INITIAL_RETRY_MS = 1_000;
-const MAX_RETRY_MS = 30_000;
+const INITIAL_RETRY_MS = RECONNECT_INITIAL_DELAY_MS;
+const MAX_RETRY_MS = RECONNECT_MAX_DELAY_MS;
 const RETRY_JITTER_FRACTION = 0.25;
 const BASE64_CHUNK_SIZE = 32_768;
 const SEQUENCE_ZERO = 0n;
@@ -320,9 +323,10 @@ export class OrderedSyncClient {
       this.handshakeComplete = true;
       this.presence.connect(message.data.connectionId);
       this.presenter.connect(message.data.connectionId);
-      this.retryDelay = INITIAL_RETRY_MS;
       this.publish();
       await this.drain();
+      // A hello/ready followed by another rejected pending edit is not recovery.
+      if (this.pendingCount === 0 && this.inFlightId === null) this.retryDelay = INITIAL_RETRY_MS;
       this.resourceEvents.emit({ boardId: this.options.boardId, kind: 'ready' });
       return;
     }
@@ -370,6 +374,7 @@ export class OrderedSyncClient {
       if (this.socket !== socket || this.stopped) return;
       this.inFlightId = null;
       this.causalGapId = null;
+      this.retryDelay = INITIAL_RETRY_MS;
       await this.refresh();
       await this.drain();
     } else if (message.event === SERVER_EVENT_NAMES.ERROR) {
@@ -479,6 +484,11 @@ export class OrderedSyncClient {
       return;
     this.pendingCount = pendingCount;
     if (first === null) return this.publish();
+    if (first.updateBytes.byteLength > MAX_CLIENT_UPDATE_BYTES) {
+      this.recoveryCode = ERROR_CODES.DOCUMENT_LIMIT;
+      this.publish();
+      return;
+    }
     const envelope = clientMessageSchema.parse({
       event: CLIENT_EVENT_NAMES.UPDATE,
       data: { updateId: first.updateId, updateBase64: encodeBase64(first.updateBytes) },

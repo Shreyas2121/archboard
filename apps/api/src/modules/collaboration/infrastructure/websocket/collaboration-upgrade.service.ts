@@ -13,6 +13,7 @@ import type { ApiConfig } from '../../../../platform/config/index.js';
 import { CollaborationWriterLockService } from '../../../../platform/database/index.js';
 import { CollaborationGateway } from './collaboration.gateway.js';
 import { WEBSOCKET_API_CONFIG } from './websocket.tokens.js';
+import { MAX_PENDING_UPGRADES } from '../../application/collaboration-limits.js';
 
 const BOARD_WEBSOCKET_PATH = /^\/ws\/boards\/([^/]+)$/;
 const HTTP_BAD_REQUEST = 400;
@@ -33,6 +34,7 @@ const STATUS_TEXT: Readonly<Record<number, string>> = {
 };
 
 class HandshakeTimeoutError extends Error {}
+class UpgradeBusyError extends Error {}
 
 @Injectable()
 export class CollaborationUpgradeService implements OnApplicationBootstrap, OnApplicationShutdown {
@@ -40,6 +42,8 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
   private stopped = false;
   private readonly operations = new Set<Promise<void>>();
   private readonly sockets = new Set<Duplex>();
+  // Timed-out session lookups remain charged until underlying work actually settles.
+  private readonly pendingLookups = new Set<Promise<unknown>>();
 
   public constructor(
     @Inject(HttpAdapterHost) private readonly httpAdapterHost: HttpAdapterHost,
@@ -77,6 +81,10 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
   ): void => {
     if (this.stopped) {
       socket.destroy();
+      return;
+    }
+    if (this.operations.size >= MAX_PENDING_UPGRADES) {
+      this.rejectUpgrade(socket, HTTP_SERVICE_UNAVAILABLE);
       return;
     }
     this.sockets.add(socket);
@@ -124,7 +132,11 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
     } catch (error) {
       this.rejectUpgrade(
         socket,
-        error instanceof HandshakeTimeoutError ? HTTP_REQUEST_TIMEOUT : HTTP_UNAUTHORIZED,
+        error instanceof UpgradeBusyError
+          ? HTTP_SERVICE_UNAVAILABLE
+          : error instanceof HandshakeTimeoutError
+            ? HTTP_REQUEST_TIMEOUT
+            : HTTP_UNAUTHORIZED,
       );
       return;
     }
@@ -147,10 +159,14 @@ export class CollaborationUpgradeService implements OnApplicationBootstrap, OnAp
   }
 
   private async sessionWithinDeadline(request: IncomingMessage) {
+    if (this.pendingLookups.size >= MAX_PENDING_UPGRADES) throw new UpgradeBusyError();
+    const lookup = this.sessionLookup.lookup(fromNodeHeaders(request.headers));
+    this.pendingLookups.add(lookup);
+    void lookup.finally(() => this.pendingLookups.delete(lookup)).catch(() => undefined);
     let timeout: NodeJS.Timeout | undefined;
     try {
       return await Promise.race([
-        this.sessionLookup.lookup(fromNodeHeaders(request.headers)),
+        lookup,
         new Promise<never>((_resolve, reject) => {
           timeout = setTimeout(() => reject(new HandshakeTimeoutError()), HELLO_TIMEOUT_MS);
           timeout.unref();

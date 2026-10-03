@@ -501,6 +501,19 @@ describe('durable PostgreSQL update acceptance', () => {
     );
     expect(harness.acceptedStateAsUpdate()).toEqual(before);
     await expectPersistedCounts(dataSource, boardId, 0);
+    const legitimate = node('Legitimate update after isolated rejection');
+    const result = await harness.accept({
+      boardId,
+      updateId: randomUUID(),
+      sessionToken: OWNER_SESSION,
+      updateBytes: createUpdate(accepted, legitimate),
+    });
+    expect(result.acknowledgementEligible).toBe(true);
+    expect(result.receipt.sequence).toBe('1');
+    expect(projectGraphDocumentFromHarness(harness).nodes.map(({ id }) => id)).toContain(
+      legitimate.id,
+    );
+    await expectPersistedCounts(dataSource, boardId, 1);
   });
 });
 
