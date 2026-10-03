@@ -1,4 +1,5 @@
 import { ConfigurationError } from '../config/api-config.js';
+import { AiConfigurationError, AI_ENVIRONMENT_VARIABLES } from '../config/ai-config.js';
 import { CollaborationWriterLockUnavailableError } from '../database/collaboration-writer-lock.service.js';
 import { StartupReadinessUnavailableError } from './startup-errors.js';
 
@@ -6,6 +7,7 @@ export type StartupStage =
   'configuration' | 'application_creation' | 'http_setup' | 'application_initialization' | 'listen';
 
 const CONFIGURATION_VARIABLES = new Set([
+  ...AI_ENVIRONMENT_VARIABLES,
   'NODE_ENV',
   'PUBLIC_API_ORIGIN',
   'ALLOWED_WEB_ORIGINS',
@@ -56,7 +58,7 @@ export function logStartupStage(stage: StartupStage): void {
 export function logStartupFailure(stage: StartupStage, error: unknown): void {
   let code = 'STARTUP_FAILED';
   let variables: readonly string[] | undefined;
-  if (error instanceof ConfigurationError) {
+  if (error instanceof ConfigurationError || error instanceof AiConfigurationError) {
     code = 'INVALID_CONFIGURATION';
     variables = error.variables.filter((variable) => CONFIGURATION_VARIABLES.has(variable));
   } else if (error instanceof CollaborationWriterLockUnavailableError) {

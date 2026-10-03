@@ -1,10 +1,26 @@
 import { jest } from '@jest/globals';
 import { ConfigurationError } from '../config/api-config.js';
+import { AiConfigurationError } from '../config/ai-config.js';
 import { CollaborationWriterLockUnavailableError } from '../database/collaboration-writer-lock.service.js';
 import { StartupReadinessUnavailableError } from './startup-errors.js';
 import { logStartupFailure, logStartupStage } from './startup-diagnostics.js';
 
 afterEach(() => jest.restoreAllMocks());
+
+it('reports invalid AI settings through the fixed startup whitelist without secret values', () => {
+  const sink = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+  logStartupFailure(
+    'configuration',
+    new AiConfigurationError(['OPENAI_API_KEY', 'AI_MODEL_PROFILES', 'private-token-name']),
+  );
+  expect(JSON.parse(String(sink.mock.calls[0]?.[0]))).toEqual({
+    event: 'runtime.startup_failed',
+    stage: 'configuration',
+    code: 'INVALID_CONFIGURATION',
+    variables: ['OPENAI_API_KEY', 'AI_MODEL_PROFILES'],
+  });
+  expect(JSON.stringify(sink.mock.calls)).not.toContain('private-token-name');
+});
 
 it('identifies configuration fields without publishing values, issue messages or arbitrary names', () => {
   const sink = jest.spyOn(console, 'info').mockImplementation(() => undefined);

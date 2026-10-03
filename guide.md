@@ -296,19 +296,19 @@ settlement, and cleanup path for inversions. Provider I/O is never under those l
 
 Initial defaults are small portfolio budgets, not provider guarantees:
 
-| Control                       | Initial recommendation                                                    |
-| ----------------------------- | ------------------------------------------------------------------------- |
-| Authenticated create requests | 10 per minute per actor, burst 3                                          |
-| Fresh generation starts       | 3 per minute and 20 per UTC day per actor                                 |
-| Concurrent paid runs          | 1 per actor, 2 per deployment                                             |
-| Provider admission            | Configured RPM and input/output token ceilings below the account's limits |
-| Run deadline                  | 120 seconds including allowed retries/repair                              |
-| Repair                        | At most 1, inside the same total deadline and reserved allowance          |
-| Active/accepted queue         | No unbounded queue; reject or return an already admitted run              |
-| Status polling                | Bounded independently, e.g. 30 per minute per actor                       |
-| SSE                           | At most 2 connections per actor, bounded subscribers/events/bytes         |
-| Money                         | Required operator-set daily/monthly/global and optional actor ceilings    |
-| AI disable switch             | Stops new paid requests immediately; documented treatment of cached reads |
+| Control                       | Initial recommendation                                                      |
+| ----------------------------- | --------------------------------------------------------------------------- |
+| Authenticated create requests | 10 per minute per actor, burst 3                                            |
+| Fresh generation starts       | 3 per minute and 20 per UTC day per actor                                   |
+| Concurrent paid runs          | 1 per actor, 2 per deployment                                               |
+| Provider admission            | Configured RPM and input/output token ceilings below the account's limits   |
+| Run deadline                  | 120 seconds including allowed retries/repair                                |
+| Repair                        | At most 1, inside the same total deadline and reserved allowance            |
+| Active/accepted queue         | No unbounded queue; reject or return an already admitted run                |
+| Status polling                | Bounded independently, e.g. 30 per minute per actor                         |
+| SSE                           | At most 2 connections per actor, bounded subscribers/events/bytes           |
+| Money                         | Finite daily/monthly/global defaults with optional operator/actor overrides |
+| AI disable switch             | Stops new paid requests immediately; documented treatment of cached reads   |
 
 Cheap rate limits can use bounded process-local structures under the current
 single-writer deployment, with eviction and trusted-proxy handling matching existing
@@ -463,9 +463,15 @@ enabled misconfiguration fails safely. No production mock fallback.
 
 Use explicit server-only names such as `AI_ENABLED`, `AI_PROVIDER`, `AI_MODEL`,
 `OPENAI_API_KEY`, `AI_CACHE_KEY_SECRET`,
-`AI_CONTENT_ENCRYPTION_KEY`, and required integer money-limit settings. Put only
+`AI_CONTENT_ENCRYPTION_KEY`, and optional integer money/provider-limit overrides. Put only
 empty placeholders/descriptions in example env files. Model/pricing profiles
 must be operator-owned versioned configuration, not fetched from browser input.
+
+The user's AI-C02 update makes daily/monthly/global money ceilings and provider
+RPM/input/output TPM settings optional. Omitted or blank values use finite defaults:
+$1 daily, $5 monthly, $10 lifetime/global; 2 RPM, 60,000 input TPM, 10,000 output TPM.
+The per-actor daily money ceiling remains optional. Explicit values are validated;
+defaults do not establish provider account quotas or bypass model-profile bounds.
 
 Use the official `openai` SDK inside its adapter, pinned exactly when added in C03;
 do not add other provider packages. Keep auto-retry configuration explicit. Do not add a generic

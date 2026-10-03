@@ -2,6 +2,7 @@ import { Module, type DynamicModule } from '@nestjs/common';
 import { APP_FILTER } from '@nestjs/core';
 import { AppController } from './app.controller.js';
 import { AuthModule } from './modules/auth/index.js';
+import { AiModule } from './modules/ai/ai.module.js';
 import { BoardsModule } from './modules/boards/boards.module.js';
 import { BoardAuthorityModule } from './modules/boards/board-authority.module.js';
 import { CollaborationModule } from './modules/collaboration/collaboration.module.js';
@@ -28,6 +29,7 @@ export class AppModule {
       module: AppModule,
       imports: [
         RuntimeAdmissionModule,
+        AiModule.register(config),
         auth,
         database,
         collaboration,

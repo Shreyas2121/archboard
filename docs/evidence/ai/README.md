@@ -9,21 +9,23 @@ Authority: [implementation guide](../../../guide.md), [AI plan](../../../plan-ai
 and [verification policy](../../verification-policy.md).
 
 AI-C00 delivers the documentation baseline; AI-C01 delivers shared contracts.
-AI-C02–AI-C19 are **NOT STARTED**;
+AI-C02 delivers the neutral provider/configuration foundation.
+AI-C03–AI-C19 are **NOT STARTED**;
 AI-X01 is **NOT STARTED / separately selected optional work**. AI implementation,
 browser/database/live-provider acceptance, and the original Version 1 production
 release gate remain **OPEN**. The [Phase 8 closure](../../phase-8-closure.md) does
 not establish the original M00–M08 implementation-completion trigger.
 
-| Task   | Implementation status | Commit / parent                                                                               | Evidence and scope                                                                                             |
-| ------ | --------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| AI-C00 | DOCUMENTED            | `3c1e6b324cbc06bd616d74d2e122020c41cec0f7`; parent `e3ba28cab6503d32de247ea7f355eedf9bdc8abc` | [AI-C00](AI-C00.md): accepted baseline, provider boundaries, verification deferrals, and C01 handoff           |
-| AI-C01 | IMPLEMENTED           | Introducing commit of AI-C01 evidence; parent `3c1e6b324cbc06bd616d74d2e122020c41cec0f7`      | [AI-C01](AI-C01.md): versioned strict contracts, grounding/reference checks, limits and database-free fixtures |
+| Task   | Implementation status | Commit / parent                                                                               | Evidence and scope                                                                                                          |
+| ------ | --------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| AI-C00 | DOCUMENTED            | `3c1e6b324cbc06bd616d74d2e122020c41cec0f7`; parent `e3ba28cab6503d32de247ea7f355eedf9bdc8abc` | [AI-C00](AI-C00.md): accepted baseline, provider boundaries, verification deferrals, and C01 handoff                        |
+| AI-C01 | IMPLEMENTED           | `b57d165fdf9d671050bdb691ee108dc907a1583d`; parent `3c1e6b324cbc06bd616d74d2e122020c41cec0f7` | [AI-C01](AI-C01.md): versioned strict contracts, grounding/reference checks, limits and database-free fixtures              |
+| AI-C02 | IMPLEMENTED           | Introducing commit of AI-C02 evidence; parent `b57d165fdf9d671050bdb691ee108dc907a1583d`      | [AI-C02](AI-C02.md): provider port/registry, optional finite limits, secret-safe config, fixture/DI tests and static guards |
 
 Resolve the introducing commit after it lands:
 
 ```powershell
-git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C01.md
+git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C02.md
 ```
 
 Map that actual hash in the next task's index update; do not amend this evidence to
@@ -59,8 +61,8 @@ aggregates that launch deferred children.
 
 ## Next task
 
-Select [AI-C02](../../../guide.md#ai-c02--operator-configuration-and-provider-port),
-depending on the actual AI-C01 commit. Implement the neutral provider port and
-server-only validated operator configuration using the
-[shared contract reference](../../../packages/contracts/src/ai/README.md).
-Contract fixtures do not close any runtime acceptance gate.
+Select [AI-C03](../../../guide.md#ai-c03--openai-adapter), depending on the actual
+AI-C02 commit. Implement/register the real OpenAI Responses adapter using the
+neutral provider port and [operator configuration](../../ai-operator-configuration.md).
+Money/provider ceilings have finite defaults and optional validated overrides under
+the user's AI-C02 update. Fixture and config proof do not close runtime acceptance.

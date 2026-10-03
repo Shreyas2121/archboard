@@ -48,6 +48,7 @@ describe('API runtime configuration', () => {
     const config = loadApiConfig(VALID_ENVIRONMENT);
 
     expect(config).toEqual({
+      ai: { enabled: false },
       mode: 'production',
       publicApiOrigin: 'https://api.example.com',
       allowedWebOrigins: ['https://api.example.com'],

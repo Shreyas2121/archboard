@@ -3,9 +3,13 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import ts from 'typescript';
+import {
+  aiEnvironmentViolations,
+  aiSourceViolations,
+  verifyAiNegativeFixtures,
+} from './ai-boundaries.mjs';
 
 const workspace = fileURLToPath(new URL('..', import.meta.url));
-const apiModules = join(workspace, 'apps/api/src/modules');
 const webRoot = join(workspace, 'apps/web');
 const exactVersionPattern = /^\d+\.\d+\.\d+$/;
 const sharedPackages = ['contracts', 'document-model', 'fixtures', 'sync-client', 'export'];
@@ -97,6 +101,8 @@ function inspectWebManifest() {
     ...(manifest.devDependencies ?? {}),
   });
   for (const [dependency, version] of dependencies) {
+    if (dependency === 'openai' || dependency === '@anthropic-ai/sdk')
+      report(path, 'Provider SDK dependencies are forbidden in the frontend.');
     if (forbiddenWebTestDependencies.has(dependency)) {
       report(path, `${dependency} is not allowed because apps/web has no automated test suite.`);
     }
@@ -241,6 +247,11 @@ function verifyNegativeFixtures() {
 function inspectSource(path, sourcePackage) {
   if (isTestFile(path)) return;
   checkedSourceFiles += 1;
+  for (const issue of aiSourceViolations(
+    relative(workspace, path).replaceAll('\\', '/'),
+    readFileSync(path, 'utf8'),
+  ))
+    report(path, issue);
   const source = ts.createSourceFile(
     path,
     readFileSync(path, 'utf8'),
@@ -265,8 +276,34 @@ for (const packageName of sharedPackages) {
   }
 }
 inspectWebManifest();
-for (const path of filesUnder(apiModules)) inspectSource(path);
-if (process.argv.includes('--negative-fixtures')) verifyNegativeFixtures();
+for (const path of allFilesUnder(join(webRoot, 'src')).filter((path) =>
+  /\.[cm]?[jt]sx?$/.test(path),
+)) {
+  for (const issue of aiSourceViolations(
+    relative(workspace, path).replaceAll('\\', '/'),
+    readFileSync(path, 'utf8'),
+  ))
+    report(path, issue);
+}
+const apiManifestPath = join(workspace, 'apps/api/package.json');
+const apiManifest = JSON.parse(readFileSync(apiManifestPath, 'utf8'));
+if (
+  apiManifest.dependencies?.['@anthropic-ai/sdk'] ||
+  apiManifest.devDependencies?.['@anthropic-ai/sdk']
+)
+  report(apiManifestPath, 'Anthropic SDK installation is deferred.');
+for (const issue of aiEnvironmentViolations(readFileSync(join(workspace, '.env.example'), 'utf8')))
+  report(join(workspace, '.env.example'), issue);
+for (const path of filesUnder(join(workspace, 'apps/api/src'))) inspectSource(path);
+if (process.argv.includes('--negative-fixtures')) {
+  verifyNegativeFixtures();
+  const aiFixtures = verifyAiNegativeFixtures();
+  issues.push(...aiFixtures.failures);
+  if (aiFixtures.failures.length === 0)
+    process.stdout.write(
+      `AI negative boundary fixtures pass: ${aiFixtures.count} forbidden paths/settings rejected.\n`,
+    );
+}
 
 if (issues.length > 0) {
   for (const issue of issues) process.stderr.write(`${issue}\n`);

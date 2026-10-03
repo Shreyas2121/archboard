@@ -1,5 +1,11 @@
 export { ConfigurationError, loadApiConfig, type ApiConfig } from './api-config.js';
 export {
+  loadAiConfig,
+  AiConfigurationError,
+  AI_ENVIRONMENT_VARIABLES,
+  type AiOperatorConfig,
+} from './ai-config.js';
+export {
   CONTENT_UPDATE_BURST,
   CONTENT_UPDATE_RATE_PER_SECOND,
   MAX_ACTIVE_ROOMS_PER_PROCESS,

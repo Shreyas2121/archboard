@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { loadAiConfig, type AiOperatorConfig } from './ai-config.js';
 
 import {
   BETTER_AUTH_IDLE_TIMEOUT_MS_DEFAULT,
@@ -111,6 +112,7 @@ const rawApiConfigSchema = z
   .strict();
 
 export interface ApiConfig {
+  readonly ai: AiOperatorConfig;
   readonly mode: z.infer<typeof deploymentModeSchema>;
   readonly publicApiOrigin: string;
   readonly allowedWebOrigins: readonly string[];
@@ -268,6 +270,7 @@ export function loadApiConfig(environment: NodeJS.ProcessEnv): ApiConfig {
   }
 
   return Object.freeze({
+    ai: loadAiConfig(environment),
     mode,
     publicApiOrigin,
     allowedWebOrigins: Object.freeze(allowedWebOrigins),
