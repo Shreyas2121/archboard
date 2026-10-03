@@ -1,4 +1,5 @@
 export * from './errors/index.js';
+export * from './ai/index.js';
 export * from './auth/index.js';
 export * from './boards/index.js';
 export * from './discussion/index.js';

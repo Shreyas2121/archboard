@@ -8,20 +8,22 @@ which includes the planning documents first committed in
 Authority: [implementation guide](../../../guide.md), [AI plan](../../../plan-ai.md),
 and [verification policy](../../verification-policy.md).
 
-AI-C00 delivers the documentation baseline only. AI-C01–AI-C19 are **NOT STARTED**;
+AI-C00 delivers the documentation baseline; AI-C01 delivers shared contracts.
+AI-C02–AI-C19 are **NOT STARTED**;
 AI-X01 is **NOT STARTED / separately selected optional work**. AI implementation,
 browser/database/live-provider acceptance, and the original Version 1 production
 release gate remain **OPEN**. The [Phase 8 closure](../../phase-8-closure.md) does
 not establish the original M00–M08 implementation-completion trigger.
 
-| Task   | Implementation status | Commit / parent                                                                    | Evidence and scope                                                                                   |
-| ------ | --------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| AI-C00 | DOCUMENTED            | This entry's introducing commit; parent `e3ba28cab6503d32de247ea7f355eedf9bdc8abc` | [AI-C00](AI-C00.md): accepted baseline, provider boundaries, verification deferrals, and C01 handoff |
+| Task   | Implementation status | Commit / parent                                                                               | Evidence and scope                                                                                             |
+| ------ | --------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| AI-C00 | DOCUMENTED            | `3c1e6b324cbc06bd616d74d2e122020c41cec0f7`; parent `e3ba28cab6503d32de247ea7f355eedf9bdc8abc` | [AI-C00](AI-C00.md): accepted baseline, provider boundaries, verification deferrals, and C01 handoff           |
+| AI-C01 | IMPLEMENTED           | Introducing commit of AI-C01 evidence; parent `3c1e6b324cbc06bd616d74d2e122020c41cec0f7`      | [AI-C01](AI-C01.md): versioned strict contracts, grounding/reference checks, limits and database-free fixtures |
 
 Resolve the introducing commit after it lands:
 
 ```powershell
-git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C00.md
+git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C01.md
 ```
 
 Map that actual hash in the next task's index update; do not amend this evidence to
@@ -57,7 +59,8 @@ aggregates that launch deferred children.
 
 ## Next task
 
-Select [AI-C01](../../../guide.md#ai-c01--shared-input-output-lifecycle-limits),
-depending on the actual AI-C00 commit. Define strict bounded shared AI schemas in
-`packages/contracts/src/ai/`, public exports, and meaningful database-free fixtures.
-No application implementation or runtime verification is part of this handoff.
+Select [AI-C02](../../../guide.md#ai-c02--operator-configuration-and-provider-port),
+depending on the actual AI-C01 commit. Implement the neutral provider port and
+server-only validated operator configuration using the
+[shared contract reference](../../../packages/contracts/src/ai/README.md).
+Contract fixtures do not close any runtime acceptance gate.

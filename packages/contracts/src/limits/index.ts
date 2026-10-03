@@ -85,3 +85,34 @@ export const MAX_CHECKPOINTS_PER_BOARD = 100;
 export const PRESENTER_LEASE_TIMEOUT_MS = 30_000;
 export const MAX_EXPORT_IMAGE_SIDE_PIXELS = 8_192;
 export const MAX_EXPORT_IMAGE_PIXELS = 32_000_000;
+
+// AI budgets are product ceilings, not provider token or pricing guarantees.
+const MAX_AI_REQUEST_MEBIBYTES = 8;
+const MAX_AI_RESULT_KIBIBYTES = 512;
+const MAX_AI_EVENT_KIBIBYTES = 16;
+export const MAX_AI_PROMPT_CHARACTERS = 8_000;
+export const MAX_AI_CONTEXT_FILE_BYTES = MEBIBYTE;
+// Separate encoded transport ceiling: escaping may make valid fields exceed it.
+export const MAX_AI_REQUEST_BYTES = MAX_AI_REQUEST_MEBIBYTES * MEBIBYTE;
+export const MAX_AI_RESULT_BYTES = MAX_AI_RESULT_KIBIBYTES * KIBIBYTE;
+export const MAX_AI_EVENT_BYTES = MAX_AI_EVENT_KIBIBYTES * KIBIBYTE;
+export const MAX_AI_CONTEXT_COMPONENTS = 100;
+export const MAX_AI_CONTEXT_CONNECTIONS = 200;
+export const MAX_AI_CONTEXT_GROUPS = 20;
+export const MAX_AI_EVIDENCE_ENTRIES = 50;
+export const MAX_AI_EVIDENCE_EXCERPT_CHARACTERS = 8_000;
+export const MAX_AI_EVIDENCE_TOTAL_CHARACTERS = 100_000;
+export const MAX_AI_OUTPUT_NODES = 40;
+export const MAX_AI_OUTPUT_EDGES = 80;
+export const MAX_AI_OUTPUT_BOUNDARIES = 10;
+export const MAX_AI_OUTPUT_STEPS = 10;
+export const MAX_AI_QUESTIONS = 3;
+export const MAX_AI_CLAIMS = 100;
+export const MAX_AI_TEXT_CHARACTERS = 4_000;
+export const MAX_AI_LIST_ITEMS = 100;
+export const MAX_AI_HISTORY_MESSAGES = 12;
+export const MAX_AI_HISTORY_CHARACTERS = 24_000;
+export const MAX_AI_OPERATIONS = 100;
+export const MAX_AI_SEMANTIC_KEY_CHARACTERS = 80;
+export const MAX_AI_PATH_CHARACTERS = 512;
+export const MAX_AI_EVENT_DELTA_CHARACTERS = 2_000;
