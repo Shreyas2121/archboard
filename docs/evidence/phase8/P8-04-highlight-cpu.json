@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "kind": "CPU supporting evidence",
+  "acceptance": "OPEN",
+  "node": "v22.23.2",
+  "workload": {
+    "sourceSha256": "dc46be43832130e7ed4dfdf539d294181bba76810a2b171625ff457d1d060836",
+    "textCharacters": 8192,
+    "rapidEdits": 100,
+    "warmup": 5,
+    "samples": 20,
+    "grammar": "typescript",
+    "theme": "github-light-default"
+  },
+  "baselineUncancelled": {
+    "tokenizationsPerBurst": 100,
+    "samplesMs": [
+      2037.3293999999987, 2214.2069999999985, 3029.849699999999, 4013.179100000001,
+      3442.7867000000006, 5943.6055000000015, 8186.347499999996, 7914.913399999998,
+      8503.857299999996, 7465.5669999999955, 9492.404600000009, 4950.840400000001,
+      6476.9128000000055, 6353.970699999991, 6039.5696000000025, 7282.027999999991,
+      6119.290200000003, 4497.38459999999, 4606.104500000001, 3365.3557
+    ],
+    "count": 20,
+    "p50Ms": 5943.6055000000015,
+    "p95Ms": 8503.857299999996,
+    "maxMs": 9492.404600000009,
+    "varianceMsSquared": 4470552.787082979
+  },
+  "scheduledCancelled": {
+    "tokenizationsPerBurst": 1,
+    "samplesMs": [
+      24.024199999999837, 29.627700000000914, 55.01919999999882, 43.90720000000147,
+      35.7468000000008, 118.1843000000008, 64.23210000000108, 84.91000000000349, 85.10080000000016,
+      114.60129999999481, 72.28200000000652, 89.76510000000417, 65.30969999999797,
+      47.903900000004796, 84.2042999999976, 157.5923999999941, 87.03340000000026, 52.00830000000133,
+      46.54309999999532, 37.992700000002515
+    ],
+    "count": 20,
+    "p50Ms": 64.23210000000108,
+    "p95Ms": 118.1843000000008,
+    "maxMs": 157.5923999999941,
+    "varianceMsSquared": 1079.243572958799
+  },
+  "limitation": "Synthetic pre-drain edit burst; does not measure React commits, browser frames, continuous edits after work begins, or peer visibility.",
+  "environment": {
+    "node": "v22.23.2",
+    "os": "win32 10.0.26200",
+    "cpu": "Intel(R) Core(TM) i5-9300H CPU @ 2.40GHz",
+    "logicalCpus": 8,
+    "memoryBytes": 17013329920,
+    "browser": "UNRUN (deferred by user)",
+    "postgres": "UNRUN (deferred by user — until Version 1 implementation is complete)",
+    "region": "local CPU only",
+    "network": "none"
+  },
+  "environmentMetadata": "Same workspace host recorded after run; lint/types/build ran concurrently during some comparison samples.",
+  "build": "22611452ddd1152ca9941fb448a6e937cc18f760"
+}

@@ -3,5 +3,9 @@ export function reportCollaborationMetric(
   event: string,
   values: Readonly<Record<string, number | string | boolean>>,
 ): void {
-  console.info(JSON.stringify({ event, ...values }));
+  try {
+    console.info(JSON.stringify({ event, ...values }));
+  } catch {
+    // An unavailable diagnostic sink must not change commit/ACK/queue behavior.
+  }
 }

@@ -11,6 +11,7 @@ import {
 import * as Y from 'yjs';
 import { projectGraphDocument } from '@archboard/document-model';
 import { PresenterLease } from './presenter-lease.js';
+import { reportCollaborationMetric } from './collaboration-metrics.js';
 import { MAX_PENDING_ROOM_UPDATE_BYTES, MAX_PENDING_ROOM_UPDATES } from './collaboration-limits.js';
 
 export interface BufferedRoomUpdate {
@@ -100,7 +101,14 @@ export class CollaborationRoom {
   public run<T>(work: () => Promise<T>): Promise<T> {
     if (this.closing) return Promise.reject(new RoomAdmissionError(ERROR_CODES.SERVER_BUSY));
     this.queued += 1;
-    const operation = this.tail.then(work);
+    const enqueuedAt = performance.now();
+    const operation = this.tail.then(() => {
+      reportCollaborationMetric('collaboration.room_queue', {
+        durationMs: Math.max(0, performance.now() - enqueuedAt),
+        depth: this.queued,
+      });
+      return work();
+    });
     this.tail = operation.then(
       () => {
         this.queued -= 1;

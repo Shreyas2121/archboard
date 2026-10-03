@@ -131,7 +131,12 @@ describe('committed snapshot frontier', () => {
     };
     const document = createGraphDocument();
     const peer = createGraphDocument();
-    const adapter = await LocalPersistenceAdapter.open({ namespace, document });
+    const timing = vi.fn((stage: 'local-queue' | 'local-write', durationMs: number) => {
+      expect(['local-queue', 'local-write']).toContain(stage);
+      expect(durationMs).toBeGreaterThanOrEqual(0);
+      throw new Error('Synthetic diagnostic sink failure');
+    });
+    const adapter = await LocalPersistenceAdapter.open({ namespace, document, onTiming: timing });
     const paused = deferred();
     const resume = deferred();
     const nextWrite = deferred();
@@ -191,6 +196,12 @@ describe('committed snapshot frontier', () => {
       commit.resolve();
       await inbound;
       await adapter.whenIdle();
+      expect(timing.mock.calls.map(([stage]) => stage)).toContain('local-queue');
+      expect(timing.mock.calls.map(([stage]) => stage)).toContain('local-write');
+      for (const [, durationMs] of timing.mock.calls) {
+        expect(Number.isFinite(durationMs)).toBe(true);
+        expect(durationMs).toBeGreaterThanOrEqual(0);
+      }
       expect(adapter.getSnapshot().savedOnDevice).toBe(true);
       expect(adapter.getSnapshot().pendingWrites).toBe(0);
       const pending = await adapter.listTransportEligibleUpdates();

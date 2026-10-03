@@ -35,6 +35,7 @@ export interface ValidationWorkerPoolOptions {
 }
 
 interface ValidationJob {
+  readonly enqueuedAt: number;
   readonly input: CandidateValidationInput;
   readonly directive: ValidationWorkerDirective;
   readonly resolve: (result: ValidationWorkerSuccess) => void;
@@ -159,6 +160,7 @@ export class ValidationWorkerPool implements CandidateValidator {
     return new Promise((resolve, reject) => {
       // Snapshot caller-owned buffers at admission, including jobs waiting in the queue.
       const job: ValidationJob = {
+        enqueuedAt: performance.now(),
         input: {
           acceptedState: Uint8Array.from(input.acceptedState),
           update: Uint8Array.from(input.update),
@@ -193,6 +195,11 @@ export class ValidationWorkerPool implements CandidateValidator {
   }
 
   private start(job: ValidationJob): void {
+    const startedAt = performance.now();
+    reportCollaborationMetric('collaboration.validation_queue', {
+      durationMs: Math.max(0, startedAt - job.enqueuedAt),
+      depth: this.queue.length,
+    });
     const request: ValidationWorkerRequest = {
       acceptedState: job.input.acceptedState,
       update: job.input.update,
@@ -219,6 +226,9 @@ export class ValidationWorkerPool implements CandidateValidator {
     const finish = (action: () => void): void => {
       if (settled) return;
       settled = true;
+      reportCollaborationMetric('collaboration.validation_worker', {
+        durationMs: Math.max(0, performance.now() - startedAt),
+      });
       clearTimeout(timer);
       worker.removeAllListeners();
       void worker.terminate().then(

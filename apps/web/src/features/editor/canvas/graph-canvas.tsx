@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphProjection, Rect, PresenceState, PresentationStep } from '@archboard/contracts';
 import type { TransientPresence } from '@archboard/sync-client';
 import type { GeometryBatch } from '@archboard/document-model';
@@ -64,7 +64,9 @@ interface GraphCanvasProps {
   readonly onGeometryCommit: (batch: GeometryBatch) => GraphProjection | null;
 }
 
-export function GraphCanvas({
+// Camera updates in the shell need not rebuild the canvas subtree. Own store
+// subscriptions and changed graph/permission/presentation props still render.
+export const GraphCanvas = memo(function GraphCanvas({
   presenting = false,
   presentationStep = null,
   presence = null,
@@ -516,4 +518,4 @@ export function GraphCanvas({
       )}
     </ReactFlow>
   );
-}
+});

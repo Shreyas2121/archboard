@@ -146,6 +146,12 @@ build/harness/fixture hashes and reviewed observations; no cookies/tokens/traces
 | PERF-01 Render/open                          | `pnpm.cmd phase2:measure` / root                                                                                                                                                                                                                                                                                                 | Deterministic typical 200 nodes/400 edges; limit 500/1,000/50/50; history/text separate. Current reference production hardware/browser, warm-up/sample counts/percentile method/frame traces; pan/drag p95 ≤32 ms and cached opening ≤2 s. Historical pan FAIL retained                                                                                                                         |
 | PERF-02 Durable five-user visibility         | `node apps/api/scripts/p4-12-measure-browser.mjs` / root (old harness requiring reviewed setup); P8-04/P8-10 extensions                                                                                                                                                                                                          | Five users, same-region staging and measured simulated 100 ms RTT, p95 ≤500 ms through peer application/render after commit; stage local persistence/queue/worker/commit/ACK/delivery/render. Old local/CDP remote-DB measurements insufficient; no staging means UNRUN with actual environment reason                                                                                          |
 
+P8-04 prepares `scripts/performance/release-browser.mjs` modes `frames`, `five-user`
+and `admission`; the [performance method](phase-8-performance.md) records the
+reviewed staging config, seed hashes, timestamp/sample/RTT conditions and separate
+admission procedure. Syntax and CPU/Node checks are supporting proof only. These
+modes remain UNRUN under the applicable browser/database pauses; A26 stays OPEN.
+
 For every harness, use its actual environment requirements plus the original
 verification guides. P6 additionally needs owner/board and appropriate viewer/editor,
 two recipient states, node/edge/deleted-thread IDs; P7 needs matching origins,
