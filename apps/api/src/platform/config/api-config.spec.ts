@@ -14,7 +14,7 @@ import {
 const VALID_ENVIRONMENT: NodeJS.ProcessEnv = {
   NODE_ENV: 'production',
   PUBLIC_API_ORIGIN: 'https://api.example.com',
-  ALLOWED_WEB_ORIGINS: 'https://app.example.com, https://preview.example.com',
+  ALLOWED_WEB_ORIGINS: 'https://api.example.com',
   PORT: '10000',
   DATABASE_URL: 'postgresql://user:secret@pooled.example.com/archboard',
   DATABASE_DIRECT_URL: 'postgresql://user:other-secret@direct.example.com/archboard',
@@ -33,13 +33,24 @@ const EXPECTED_WS_PING_INTERVAL_MS = 15_000;
 const EXPECTED_WS_PONG_TIMEOUT_MS = 45_000;
 
 describe('API runtime configuration', () => {
+  it.each(['https://app.example.com', 'https://api.example.com,https://preview.example.com'])(
+    'rejects split production origins: %s',
+    (allowed) => {
+      expect(() => loadApiConfig({ ...VALID_ENVIRONMENT, ALLOWED_WEB_ORIGINS: allowed })).toThrow(
+        'must share PUBLIC_API_ORIGIN',
+      );
+      expect(() =>
+        loadApiConfig({ ...VALID_ENVIRONMENT, NODE_ENV: 'test', ALLOWED_WEB_ORIGINS: allowed }),
+      ).not.toThrow();
+    },
+  );
   it('parses and normalizes the complete environment', () => {
     const config = loadApiConfig(VALID_ENVIRONMENT);
 
     expect(config).toEqual({
       mode: 'production',
       publicApiOrigin: 'https://api.example.com',
-      allowedWebOrigins: ['https://app.example.com', 'https://preview.example.com'],
+      allowedWebOrigins: ['https://api.example.com'],
       port: 10_000,
       databaseUrl: VALID_ENVIRONMENT.DATABASE_URL,
       databaseDirectUrl: VALID_ENVIRONMENT.DATABASE_DIRECT_URL,

@@ -26,6 +26,15 @@ let authEpoch = 0;
 let pendingAccountSwitch: PendingAccountSwitch | null = null;
 let approvedNextUserId: string | null = null;
 
+export function sessionBoundaryEpoch(): number {
+  return authEpoch;
+}
+
+function expireAccountSwitch(): void {
+  approvedNextUserId = null;
+  if (pendingAccountSwitch !== null) setPendingAccountSwitch(null);
+}
+
 function announceAccountChange(kind: 'sign-out' | 'account-change' | 'account-transition'): void {
   if (!('BroadcastChannel' in window)) return;
   try {
@@ -89,8 +98,10 @@ export async function loadCurrentUser({
     return null;
   }
   const user = await getCurrentUser(signal);
-  if (startedAtEpoch !== authEpoch || readLocalSignOutPending(origin) !== null) return null;
+  if (signal.aborted || startedAtEpoch !== authEpoch || readLocalSignOutPending(origin) !== null)
+    return null;
   if (user === null) {
+    expireAccountSwitch();
     clearPrivateQueries();
     forgetSelectedLocalAccount(origin);
     return null;
@@ -107,7 +118,8 @@ export async function loadCurrentUser({
         deploymentOrigin: origin,
         userId: previousUserId,
       });
-      if (authEpoch !== switchEpoch || readLocalSignOutPending(origin) !== null) return null;
+      if (signal.aborted || authEpoch !== switchEpoch || readLocalSignOutPending(origin) !== null)
+        return null;
       if (boards.length > 0) {
         setPendingAccountSwitch({ previousUserId, nextUserId: user.id, boards });
         return null;
@@ -121,6 +133,7 @@ export async function loadCurrentUser({
 }
 export function clearAuthenticatedState(): void {
   authEpoch += 1;
+  expireAccountSwitch();
   forgetSelectedLocalAccount(window.location.origin);
   void queryClient.cancelQueries({ queryKey: CURRENT_USER_QUERY_KEY });
   clearPrivateQueries();
@@ -143,6 +156,7 @@ export function installSessionBoundary(): () => void {
         if (event.data.kind === 'sign-out') clearAuthenticatedState();
         else {
           authEpoch += 1;
+          expireAccountSwitch();
           clearPrivateQueries();
           queryClient.setQueryData<CurrentUser | null>(CURRENT_USER_QUERY_KEY, null);
         }
@@ -156,6 +170,7 @@ export function installSessionBoundary(): () => void {
       event.newValue !== event.oldValue
     ) {
       authEpoch += 1;
+      expireAccountSwitch();
       clearPrivateQueries();
       queryClient.setQueryData<CurrentUser | null>(CURRENT_USER_QUERY_KEY, null);
     }

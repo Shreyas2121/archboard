@@ -27,6 +27,7 @@ vi.mock('@archboard/sync-client', async (original) => ({
 
 import {
   clearAuthenticatedState,
+  approveAccountSwitch,
   getPendingAccountSwitch,
   installSessionBoundary,
   loadCurrentUser,
@@ -71,6 +72,38 @@ it('discards a user response from before authenticated state was cleared', async
   expect(await loading).toBeNull();
   expect(mocks.selected).not.toHaveBeenCalled();
   expect(queryClient.getQueryData(CURRENT_USER_QUERY_KEY)).toBeNull();
+});
+
+it('discards a response after query cancellation even without a session notice', async () => {
+  let resolve!: (value: CurrentUser) => void;
+  mocks.me.mockReturnValue(
+    new Promise<CurrentUser>((done) => {
+      resolve = done;
+    }),
+  );
+  const controller = new AbortController();
+  const loading = loadCurrentUser({ signal: controller.signal });
+  controller.abort();
+  resolve(user);
+  expect(await loading).toBeNull();
+  expect(mocks.selected).not.toHaveBeenCalled();
+});
+
+it('requires fresh pending-work consent after an approved switch loses its session', async () => {
+  const pending = { previousUserId: 'previous-user', nextUserId: user.id, boards: [] };
+  setPendingAccountSwitch(pending);
+  approveAccountSwitch(user.id);
+  clearAuthenticatedState();
+  expect(getPendingAccountSwitch()).toBeNull();
+  mocks.marker.mockReturnValue('previous-user');
+  mocks.me.mockResolvedValue(user);
+  mocks.boards.mockResolvedValue([
+    { namespace: { userId: 'previous-user' }, updateIds: ['pending-original'] },
+  ]);
+  expect(await loadCurrentUser(request())).toBeNull();
+  expect(mocks.boards).toHaveBeenCalledOnce();
+  expect(getPendingAccountSwitch()?.previousUserId).toBe('previous-user');
+  expect(mocks.selected).not.toHaveBeenCalled();
 });
 
 it('an expired session clears protected relational queries while retaining the session query', async () => {

@@ -11,6 +11,12 @@ current ceilings, rate identity/retry policy, complete-state negatives and the
 prepared A23/A30 real socket/load procedure. Its Node tests are supporting proof;
 DB-02/05/06 and browser acceptance remain deferred under the shared policy.
 
+P8-06's [security and recovery map](phase-8-security-recovery.md) adds the prepared
+`node scripts/security/release-host.browser.mjs` same-origin host subset and concrete
+reviewed combined recovery/image protocols. Protected HTTP error/cache regressions
+are prepared in `rest-boundary.integration-spec.ts`. Current source/scan/Node proof
+does not close SEC-HOST, UI-03/04/08, real auth/fanout or the missing reviewed inputs.
+
 P8-02 repairs are documented in [source alignment](phase-8-contract-alignment.md).
 The boundary scan now passes; frontend Node suites use `scripts/web-node/vitest.config.ts`.
 The P8-01 report retains its original failing baseline. No integrated gate is closed.

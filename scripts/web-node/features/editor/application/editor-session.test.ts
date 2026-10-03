@@ -132,6 +132,23 @@ beforeEach(() => {
 });
 
 describe('editor text binding availability', () => {
+  it('does not restore an older access response after local revocation', async () => {
+    const state = harness();
+    try {
+      await state.session.open();
+      const bytes = Y.encodeStateAsUpdate(state.initial);
+      const granting = state.session.setBoardAccess(BOARD_ROLES.EDITOR, false);
+      state.session.denyBoardAccess();
+      await granting;
+      expect(state.session.getSnapshot().accessDenied).toBe(true);
+      expect(state.session.canEdit()).toBe(false);
+      expect(state.sync.resumeDrain).not.toHaveBeenCalled();
+      expect(Y.encodeStateAsUpdate(state.initial)).toEqual(bytes);
+    } finally {
+      await state.session.close();
+      state.initial.destroy();
+    }
+  });
   it('routes step commands through writer authority and preserves graph bytes when authoring is denied', async () => {
     const state = harness();
     try {

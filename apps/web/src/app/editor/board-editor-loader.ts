@@ -70,7 +70,7 @@ export class BoardEditorLoader {
         return;
       }
       if (!active()) return;
-      await this.current.setBoardAccess(detail.effectiveRole, detail.archivedAt !== null);
+      await this.current.setBoardAccess(detail.effectiveRole, detail.archivedAt !== null, active);
       if (!active()) return;
       this.title = detail.title;
       this.description = detail.description;

@@ -223,6 +223,16 @@ export function loadApiConfig(environment: NodeJS.ProcessEnv): ApiConfig {
   }
 
   validateDatabaseUrl(parsed.data.DATABASE_URL, 'DATABASE_URL', issues);
+  if (
+    mode === 'production' &&
+    (allowedWebOrigins.length !== 1 || allowedWebOrigins[0] !== publicApiOrigin)
+  ) {
+    issues.push({
+      variable: 'ALLOWED_WEB_ORIGINS',
+      message:
+        'Production frontend, auth, REST and WebSocket traffic must share PUBLIC_API_ORIGIN.',
+    });
+  }
   validateDatabaseUrl(parsed.data.DATABASE_DIRECT_URL, 'DATABASE_DIRECT_URL', issues);
 
   const githubClientId = parsed.data.GITHUB_CLIENT_ID?.trim() || null;
