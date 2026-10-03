@@ -1,5 +1,11 @@
 # Archboard — Product and Implementation Specification
 
+> Current project goal: personal architecture diagramming and recruiter demonstration.
+> At the user's direction, Phase 8 is closed for this amended scope and integrated
+> locally into main; see [the closure amendment](docs/phase-8-closure.md). The original
+> Version 1 production release requirements below remain OPEN, with unfinished work
+> explicitly deferred. This closure does not resume database/browser verification.
+
 > Current verification timing (October 1, 2026): all database checks/tests, including
 > database-backed session/socket and schema/migration checks, are deferred until the
 > entire Version 1 implementation (M00–M08) is complete. Browser checks remain paused

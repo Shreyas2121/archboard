@@ -2,11 +2,17 @@
 
 Version: 1.0<br>
 Date: 2 October 2026<br>
-Status: Implementation guide<br>
+Status: Closed for amended personal/portfolio scope; original production release OPEN<br>
 Governing documents: `plan.md` version 1.1 and `phase8.md` version 1.0<br>
 Branch policy: one long-lived Phase 8 branch for the entire milestone
 
 ## 1. Purpose
+
+The user's later instruction supersedes the remaining sequential execution for this
+phase: finish the personal/portfolio scope, record a scoped P8-13 closure and merge
+locally to main. [The closure amendment](docs/phase-8-closure.md) records the task
+dispositions. P8-08 and P8-10–P8-12 remain deferred, and the original production
+release audit/acceptance below is not claimed passed. No verification pause resumes.
 
 This guide turns Phase 8 release hardening into thirteen bounded, reviewable tasks and planned
 commits. It specifies branch workflow, owned paths, implementation boundaries, checks, evidence,

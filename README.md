@@ -92,8 +92,10 @@ do not prove browser, database or hosted behavior. `pnpm test` launches browsers
 [verification policy](docs/verification-policy.md). Inspect aggregate children,
 including commands labelled `non-browser`, before running them.
 
-P8-01–P8-07 and focused P8-09 documentation are delivered. P8-08 and P8-10–P8-13
-remain unfinished. The original Version 1 gate stays OPEN. [Phase 8](phase8.md),
+Phase 8 is closed for the user's personal/portfolio scope, with P8-01–P8-07,
+P8-09 and a scoped P8-13 handoff delivered. P8-08 and P8-10–P8-12, plus full
+production release reconciliation, remain deferred. The original Version 1 gate
+stays OPEN. [The closure amendment](docs/phase-8-closure.md), [Phase 8](phase8.md),
 [its guide](guide7.md) and the [evidence index](docs/evidence/phase8/README.md)
 retain the original release plan. Historical [Phase 7](docs/phase-7-presentation-portability.md)
 and earlier audits describe their recorded builds, not current acceptance.
