@@ -132,10 +132,13 @@ interface ConfigIssue {
 }
 
 export class ConfigurationError extends Error {
+  public readonly variables: readonly string[];
+
   public constructor(application: 'API' | 'web', issues: readonly ConfigIssue[]) {
     const details = issues.map((issue) => `${issue.variable}: ${issue.message}`);
     super(`Invalid ${application} configuration:\n- ${details.join('\n- ')}`);
     this.name = 'ConfigurationError';
+    this.variables = [...new Set(issues.map((issue) => issue.variable))];
   }
 }
 

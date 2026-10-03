@@ -5,6 +5,7 @@ import type { DataSource } from 'typeorm';
 import { CollaborationWriterLockService } from '../database/index.js';
 import { RuntimeAdmission } from '../lifecycle/runtime-admission.js';
 import { schemaCompatible } from '../database/schema-compatibility.js';
+import { StartupReadinessUnavailableError } from '../lifecycle/startup-errors.js';
 
 import { fail } from './api-boundary.js';
 
@@ -18,7 +19,7 @@ export class ReadinessService implements OnApplicationBootstrap {
   ) {}
 
   public async onApplicationBootstrap(): Promise<void> {
-    if (!(await this.ready())) throw new Error('Startup readiness unavailable.');
+    if (!(await this.ready())) throw new StartupReadinessUnavailableError();
   }
 
   public async ready(): Promise<boolean> {
