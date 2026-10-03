@@ -6,6 +6,11 @@ This extends [plan.md](./plan.md) with AI diagram generation and architecture
 guidance. The user has selected **GitHub as the only login** and **AI provided
 entirely through Archboard's own server-managed provider account**.
 
+The initial integration uses **OpenAI only**, through its API and the official
+`openai` Node.js/TypeScript SDK in the NestJS backend. The application-owned provider
+interface remains independent so a Claude adapter can be added later as separate
+work. No second provider, credential, or SDK is required for this version.
+
 The first version accepts a specific prompt, a guided project description, or
 project-context JSON. Support for projects on the user's computer begins with
 descriptions and JSON files; a helper that prepares those descriptions comes later.
@@ -22,7 +27,7 @@ Archboard controls the integration:
 
 - GitHub identity and existing application sessions determine who can use AI.
 - The operator supplies the provider account and server-side API credentials.
-- Server configuration determines providers, allowed models, and generation limits.
+- Server configuration determines the OpenAI model and generation limits.
 - Archboard sets per-account quotas, global spending budgets, and concurrency limits.
 - Users describe what they want, review proposals, and choose what to apply.
 - AI credential setup and billing management belong to the operator.
@@ -184,11 +189,21 @@ Do not invent caches, queues, microservices, or deployment infrastructure.
 
 ### 3.1 Server-owned provider
 
-Build provider-independent infrastructure with separate OpenAI Responses and
-Anthropic Messages adapters, each using an operator-owned provider account and
-server-only credentials. OpenAI can be the initial configured default; switching
-to Claude must require only validated server configuration once both adapters are
-implemented, rather than changes to product flows, graph schemas, or the run service.
+Build provider-independent infrastructure with one production adapter initially:
+OpenAI Responses, using Archboard's operator-owned OpenAI API account and server-only
+credentials. Add the official `openai` package to the API application when implementing
+the adapter; do not install a second provider SDK for this version.
+[Official OpenAI SDK documentation](https://developers.openai.com/api/docs/libraries)
+
+The SDK is an installable package that makes HTTPS requests to OpenAI's API. The
+browser calls Archboard's own API; the backend checks access, cache, rate limits,
+and budget before invoking the SDK. It validates generated diagram JSON before
+returning a reviewable proposal. API credentials and provider URLs stay server-side.
+
+Claude support is deferred. Adding it later requires implementing and testing its
+adapter and operator configuration; it is not available by changing configuration
+today. Once that adapter exists, switching providers should not require changes
+to product flows, graph schemas, or the run service.
 
 Normalize instructions, messages, structured output, streaming, usage, errors,
 deadlines, and cancellation at an application-owned provider interface. Provider SDK
@@ -211,17 +226,13 @@ Archboard fixtures for grounding, validity, latency, and cost. Do not hardcode a
 
 For the OpenAI adapter, use Responses structured output with `text.format`,
 `type: "json_schema"`, and `strict: true` where the configured model supports it.
-For the Anthropic adapter, use its supported `output_config.format` schema route
-and map Messages content, stop reasons, and usage into the same application result.
-[Anthropic structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
 Validate every result again
 with shared Zod contracts and domain rules. Matching JSON Schema does not prove
 that the architecture is factually correct.
 [Official structured-output guide](https://developers.openai.com/api/docs/guides/structured-outputs)
 
-The OpenAI adapter uses `store: false` and bounded `max_output_tokens`; the Anthropic
-adapter translates the neutral output budget to its `max_tokens` field. Do not send
-provider-specific fields to another provider. Stream status and explanation
+The OpenAI adapter uses `store: false` and bounded `max_output_tokens`. Keep these
+provider-specific fields inside the adapter. Stream status and explanation
 where useful, but only a completed, validated result can become an applicable
 proposal. Handle refusals, incomplete results, provider failures, and disconnected
 streams separately. Keep bounded conversation context in the application rather
@@ -285,8 +296,7 @@ Provider prompt-cache settings are adapter-specific optimizations. Put stable
 instructions/schema ahead of changing user context, verify current model support,
 and account for cache-write charges as well as cache reads. Cache hits must not be
 assumed during cost reservation, and provider caching is not free output generation.
-[OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching),
-[Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+[OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
 
 Protected AI HTTP responses remain `Cache-Control: no-store`; internal result
 caching does not permit public CDN, service-worker, or browser HTTP caching.
@@ -605,14 +615,14 @@ evidence that the original Version 1 production release gate has passed.
 [Phase 8 closure](./docs/phase-8-closure.md) leaves original release work and
 verification open.
 
-| Milestone                                  | Deliverables                                                                                              | Evidence                                                                                  |
-| ------------------------------------------ | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| AI00: contracts and provider compatibility | Context/proposal schemas, sample JSON, OpenAI/Anthropic adapter/schema fixtures, budget/run contracts     | Database-free schema/provider fixture tests; authorized live results recorded separately  |
-| AI01: generation                           | Server-owned provider key, prompt/form/upload, context review, layout, preview, additive apply, quotas    | Mapping/layout/domain tests, API unit tests, secret scans; rendered flows remain deferred |
-| AI02: guidance                             | Selected-object explanations, clarifying questions, assumptions, local highlights, recruiter walkthroughs | Grounding fixtures and permission/service tests                                           |
-| AI03: scoped edits and presentation        | Operation allowlist, diff/preconditions, stale-target protection, presentation proposals                  | Collaboration/model tests and repeated-Apply/idempotency cases                            |
-| AI04: optional context helper              | Static extraction, exclusions, root confinement, evidence preview, JSON export                            | Fixture repositories and Windows path/junction/secret tests                               |
-| AI05: hardening                            | Budget coordination, recovery, cancellation, provider failure handling, documentation and evaluation      | Focused checks plus deferred acceptance once user verification conditions permit          |
+| Milestone                                  | Deliverables                                                                                                         | Evidence                                                                                  |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| AI00: contracts and provider compatibility | Context/proposal schemas, sample JSON, OpenAI adapter/schema fixtures, provider-boundary tests, budget/run contracts | Database-free schema/provider fixture tests; authorized live results recorded separately  |
+| AI01: generation                           | Server-owned provider key, prompt/form/upload, context review, layout, preview, additive apply, quotas               | Mapping/layout/domain tests, API unit tests, secret scans; rendered flows remain deferred |
+| AI02: guidance                             | Selected-object explanations, clarifying questions, assumptions, local highlights, recruiter walkthroughs            | Grounding fixtures and permission/service tests                                           |
+| AI03: scoped edits and presentation        | Operation allowlist, diff/preconditions, stale-target protection, presentation proposals                             | Collaboration/model tests and repeated-Apply/idempotency cases                            |
+| AI04: optional context helper              | Static extraction, exclusions, root confinement, evidence preview, JSON export                                       | Fixture repositories and Windows path/junction/secret tests                               |
+| AI05: hardening                            | Budget coordination, recovery, cancellation, provider failure handling, documentation and evaluation                 | Focused checks plus deferred acceptance once user verification conditions permit          |
 
 Recommended first implementation slice: **AI00 + AI01**. It delivers the
 prompt/JSON workflow without requiring another identity provider, personal
@@ -668,13 +678,13 @@ implementation-completion trigger.
 ## 11. Remaining operator decisions and useful extensions
 
 No further identity or end-user credential decision is needed. Before implementation,
-settle the operator's provider accounts, exact model profiles, maximum spending allowance,
+settle the operator's OpenAI API account, exact model profiles, maximum spending allowance,
 and retention/deployment configuration.
 
 | Decision              | Suggested default                                        |
 | --------------------- | -------------------------------------------------------- |
 | Identity              | Existing GitHub login only                               |
-| Inference credentials | Operator keys for configured provider adapters           |
+| Inference credentials | Operator-managed OpenAI API key only                     |
 | First input workflow  | Prompt, guided form, and project-context JSON            |
 | Generation behavior   | Reviewed new diagram or additive group                   |
 | Spending              | Small global ceiling and per-account allowance           |

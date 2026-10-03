@@ -12,6 +12,8 @@ provider-independent infrastructure, caching, and rate limits, and the repositor
 This guide specifies future implementation commits. Tasks and tests listed here
 are **not implemented or verified merely because they appear in this document**.
 GitHub is the only login. AI uses operator-managed server credentials and controls.
+The initial production provider is **OpenAI only**. Provider independence is an
+architectural requirement; implementing Claude or another provider is deferred.
 
 ## 1. Branch, task selection, and handoff rules
 
@@ -70,22 +72,29 @@ all optional work.
 
 ### 2.1 Provider independence is required in the first integration
 
-Support **OpenAI GPT through Responses** and **Anthropic Claude through Messages**
-using distinct backend adapters. Both use operator-owned API accounts. Switching
-the active provider/model is a validated server configuration change, not a
-frontend, graph, contract, or orchestration rewrite.
+Implement **OpenAI GPT through Responses** using Archboard's operator-owned API
+account. Use the official `openai` Node.js/TypeScript SDK package only in the NestJS
+backend adapter. The package sends HTTPS requests to OpenAI; the frontend calls
+Archboard's API, which enforces access, caching, rate limits, and spending controls.
+[Official OpenAI SDK documentation](https://developers.openai.com/api/docs/libraries)
+
+Keep the provider port neutral so a future Claude adapter can be added without a
+frontend, graph, public contract, or orchestration rewrite. That future adapter
+must be implemented and tested before configuration can select it. Do not install
+the Anthropic SDK, request an Anthropic key, or advertise provider switching in
+this version.
 
 Separate these concerns:
 
-| Layer                   | Responsibility                                                     | Must not contain                                 |
-| ----------------------- | ------------------------------------------------------------------ | ------------------------------------------------ |
-| Shared public contracts | Context, task, proposal, run/event, error, allowance DTOs          | SDK types, keys, raw provider endpoints          |
-| AI application service  | Authorization, lifecycle, cache policy, admission, settlement      | OpenAI/Anthropic request/response field handling |
-| Provider port           | Neutral input, output, usage, failure and capability types         | React, TypeORM, HTTP controller behavior         |
-| Provider adapters       | SDK/HTTP translation, stream completion, error/usage normalization | Board writes or payer selection                  |
-| AI infrastructure       | Transactions, run store, budgets, cache persistence                | Model prompting in repositories                  |
-| Frontend                | User intent, reviewed context/proposal, local highlights           | Provider credentials or raw SDK results          |
-| Document model          | Validated graph operations                                         | Provider/client/database dependencies            |
+| Layer                   | Responsibility                                                     | Must not contain                                |
+| ----------------------- | ------------------------------------------------------------------ | ----------------------------------------------- |
+| Shared public contracts | Context, task, proposal, run/event, error, allowance DTOs          | SDK types, keys, raw provider endpoints         |
+| AI application service  | Authorization, lifecycle, cache policy, admission, settlement      | Provider-native request/response field handling |
+| Provider port           | Neutral input, output, usage, failure and capability types         | React, TypeORM, HTTP controller behavior        |
+| Provider adapters       | SDK/HTTP translation, stream completion, error/usage normalization | Board writes or payer selection                 |
+| AI infrastructure       | Transactions, run store, budgets, cache persistence                | Model prompting in repositories                 |
+| Frontend                | User intent, reviewed context/proposal, local highlights           | Provider credentials or raw SDK results         |
+| Document model          | Validated graph operations                                         | Provider/client/database dependencies           |
 
 Keep provider code in `apps/api/src/modules/ai/infrastructure/providers/`.
 Start pure diagram mapping beside frontend AI application code if it has one
@@ -95,7 +104,7 @@ checks updated deliberately. Shared DTOs belong in `packages/contracts/src/ai/`.
 Conceptual provider port, to be finalized in AI-C02:
 
 ```ts
-type AiProviderId = 'openai' | 'anthropic';
+type AiProviderId = 'openai'; // Extend only when another production adapter is implemented.
 
 type ProviderEvent =
   | { type: 'text-delta'; text: string }
@@ -132,24 +141,21 @@ schema/model capabilities. No real account/key is needed for those tests.
 
 ### 2.2 Structured output and provider limits differ
 
-OpenAI structured output uses its Responses `text.format` schema route. Anthropic
-documents `output_config.format` on Messages, with `max_tokens` for its output
-budget. Capability and schema compatibility must be checked for each configured
-model; do not send one provider's request shape to another.
-[OpenAI structured output](https://developers.openai.com/api/docs/guides/structured-outputs),
-[Anthropic structured output](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
+OpenAI structured output uses its Responses `text.format` schema route, with
+`max_output_tokens` for the output budget. Capability and schema compatibility
+must be checked for each configured model. Keep these fields inside the OpenAI
+adapter; the port expresses a neutral schema and output budget.
+[OpenAI structured output](https://developers.openai.com/api/docs/guides/structured-outputs)
 
 Adapters hide those differences. Always run application Zod/domain validation on
 the assembled output. A provider schema guarantee does not establish factual
 accuracy or authorize an edit.
 
-Provider prompt caching also differs. OpenAI documents prefix reuse and
+Provider prompt caching is adapter-specific. OpenAI documents prefix reuse and
 model-dependent cache settings, and cached tokens still count toward its rate
-limits. Anthropic documents explicit cache controls, cache-write/read accounting,
-and model-specific input/output rate limits.
-[OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching),
-[Anthropic prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching),
-[Claude rate limits](https://platform.claude.com/docs/en/api/rate-limits)
+limits. Normalize usage and pricing without assuming future providers will use
+the same fields or cache-write/read accounting.
+[OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)
 
 Keep stable instructions/schema before varying context. Translate the caching
 policy only inside adapters. Do not promise exact discounts, cache hits, or quotas.
@@ -167,7 +173,7 @@ or introduce another graph synchronization protocol. Provider calls have no
 filesystem/shell/database tools.
 
 No provider SDK or credential enters the public bundle. SDK imports outside the
-two provider adapters should fail a boundary/static check. Server-only AI
+backend provider adapters should fail a boundary/static check. Server-only AI
 configuration cannot appear in `VITE_*` variables.
 
 AI starts disabled until validated operator configuration and budget exist.
@@ -377,7 +383,7 @@ each task includes its own evidence file and index entry.
 | AI-C01 | `feat(contracts): define AI context proposal and run schemas`      | C00                       | Foundation           |
 | AI-C02 | `feat(api): add AI provider port and operator configuration`       | C01                       | Foundation           |
 | AI-C03 | `feat(api): implement OpenAI Responses adapter`                    | C02                       | Providers            |
-| AI-C04 | `feat(api): implement Anthropic Messages adapter`                  | C03                       | Providers            |
+| AI-C04 | `test(api): verify AI provider abstraction boundaries`             | C03                       | Provider boundaries  |
 | AI-C05 | `feat(api): persist AI run and accounting intent`                  | C02                       | Cost infrastructure  |
 | AI-C06 | `feat(api): enforce AI admission quotas and spending reservations` | C05                       | Cost infrastructure  |
 | AI-C07 | `feat(api): coordinate bounded AI execution and recovery`          | C04, C06                  | Orchestration        |
@@ -397,7 +403,8 @@ each task includes its own evidence file and index entry.
 
 Tasks C01–C19 are the main AI extension. X01 is not required for prompt/JSON
 generation. The first end-to-end implementation slice is C00–C12; it includes
-both adapters and cost controls rather than exposing a paid endpoint early.
+the OpenAI adapter, provider-boundary checks, and cost controls before exposing
+a paid endpoint.
 
 All statuses begin **NOT STARTED** except the documents authored during planning.
 A task is “implemented” when its code/evidence lands; acceptance remains OPEN
@@ -445,34 +452,35 @@ enters contracts. C01 fixes schema names/versions for downstream tasks.
 `api-config.ts` and tests, boundary checker, sanitized env documentation.
 
 **Implement:** normalized provider port, capabilities, usage/failure types,
-fake fixture provider, and registry selecting `openai` or `anthropic`. Resolve
+fake fixture provider, and registry selecting only `openai` in production. Resolve
 model/quality profiles server-side. Define stable prompt/schema/adapter/policy
 versions and configuration fingerprints.
 
 Validate active provider key/model/pricing, limits, cache-key secret, result
-encryption key, and feature enablement without printing secret values. Inactive
-provider credentials need not exist. Disabled AI allows normal app startup;
+encryption key, and feature enablement without printing secret values. No second
+provider credential is required. Disabled AI allows normal app startup;
 enabled misconfiguration fails safely. No production mock fallback.
 
 Use explicit server-only names such as `AI_ENABLED`, `AI_PROVIDER`, `AI_MODEL`,
-`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `AI_CACHE_KEY_SECRET`,
+`OPENAI_API_KEY`, `AI_CACHE_KEY_SECRET`,
 `AI_CONTENT_ENCRYPTION_KEY`, and required integer money-limit settings. Put only
 empty placeholders/descriptions in example env files. Model/pricing profiles
 must be operator-owned versioned configuration, not fetched from browser input.
 
-Prefer maintained provider SDKs inside adapters, pinned exactly; add dependencies
-only where needed. Keep auto-retry configuration explicit. Do not add a generic
+Use the official `openai` SDK inside its adapter, pinned exactly when added in C03;
+do not add other provider packages. Keep auto-retry configuration explicit. Do not add a generic
 provider gateway or depend on one provider's SDK types in the port.
 
 **Check:** config/DI tests and boundary negative fixtures. No live calls.
 
-**Exit:** registry can select either adapter once registered; adding another
-provider does not change public DTOs or application service logic.
+**Exit:** production configuration selects OpenAI and rejects unimplemented
+providers. Another adapter can later be registered without changing public DTOs
+or application service logic.
 
 ### AI-C03 — OpenAI adapter
 
-**Touch:** OpenAI provider adapter, versioned prompt/schema renderer, contract
-suite/fixture transport.
+**Touch:** OpenAI provider adapter, API package dependency/lockfile, versioned
+prompt/schema renderer, contract suite/fixture transport.
 
 **Implement:** neutral-to-Responses translation, structured-output support,
 `store: false`, output/deadline bounds, abort propagation, usage normalization,
@@ -490,26 +498,30 @@ usage without double counting, request fields, response size caps, and safe diag
 **Exit:** application code consumes only neutral events/errors. Live compatibility
 remains UNRUN unless separately authorized under an operator budget.
 
-### AI-C04 — Anthropic adapter and actual switchability
+### AI-C04 — Provider abstraction boundary checks
 
-**Touch:** Anthropic adapter, registry wiring, fixture transports, shared suite.
+**Touch:** provider contract suite, test-only neutral fixture implementation,
+registry/config tests, static dependency boundaries.
 
-**Implement:** neutral-to-Messages translation, `output_config.format` where
-supported, `max_tokens`, system instruction placement, content-block assembly,
-stop-reason handling, stream usage finalization, abort, and disabled SDK retries.
-Normalize cache-read/write usage correctly rather than treating `input_tokens`
-as the entire billed input.
+**Implement:** verify that orchestration consumes only the neutral port, events,
+usage, failures, and capabilities. Exercise those contracts with the OpenAI adapter
+fixture transport and a test-only implementation that has no OpenAI SDK dependency.
+The fixture validates dependency isolation, not live cross-provider compatibility.
 
-Run the same application fixture once through each adapter. Switching the configured
-provider must preserve request/response DTOs and diagram validation. Unsupported
-schema/model combinations fail closed or use one explicitly tested validated
-fallback, never a raw provider parameter passthrough.
+Cover refusal, incomplete output, cancellation, unknown usage, and unsupported
+capabilities without inspecting raw OpenAI objects outside the adapter. Production
+configuration rejects every unimplemented provider, and test fixtures cannot be
+selected in production. Unsupported schema/model combinations fail closed or use
+one explicitly tested validated fallback.
 
-**Check:** same contract suite as C03 plus provider-switch tests. Verify no OpenAI
-assumption in shared instructions, history, completion status, or usage types.
+**Check:** shared contract suite, config rejection, boundary negative fixtures,
+and provider-neutral application tests. Verify no OpenAI SDK types or request
+fields enter public contracts, orchestration, or graph commands.
 
-**Exit:** OpenAI ↔ Claude requires only validated operator configuration. This
-means implemented/tested adapters, not an interface with an empty Claude stub.
+**Exit:** OpenAI is the only production adapter, with tested separation from the
+application. Claude implementation, SDK installation, credentials, model/schema
+validation, and real switchability tests are separate future work. No Claude stub
+or claim that changing configuration already enables it.
 
 ### AI-C05 — Durable runs, receipts, and accounting intent
 
@@ -727,7 +739,7 @@ normal outbox routing, and truthful save state.
 
 **Prepare, do not run:** multi-browser collaborative Apply/ACK/reload acceptance.
 
-**Exit:** first useful vertical slice is implemented with both provider adapters,
+**Exit:** first useful vertical slice is implemented with the OpenAI adapter,
 admission/cache controls, reviewed inputs, valid layout, and normal graph mutation.
 Record browser/database acceptance as OPEN.
 
@@ -845,7 +857,8 @@ recovery remain truthful.
 **Touch:** meaningful provider/cache/quota/orchestration/domain fixtures, prepared
 integration tests, AI verification inventory, static boundary/secret checks.
 
-**Implement:** consolidate a small regression set covering both adapters,
+**Implement:** consolidate a small regression set covering the OpenAI adapter and
+neutral provider contract,
 race/idempotency/deduplication, price rounding, private cache boundaries, unknown
 outcomes, graph apply safety, and prompt grounding. Add missing substantive cases
 rather than repeating implementation assertions.
@@ -858,15 +871,15 @@ skipped children as PASS or runs blocked checks by default.
 affected by new fixtures. Inspect aggregate children before use.
 
 **Exit:** no known failing focused checks; acceptance inventory preserves all
-deferred proof. Provider-switch test uses both real adapter implementations with
-fixture transports.
+deferred proof. Contract fixtures demonstrate boundary isolation; real provider
+switching remains out of scope until another adapter is implemented.
 
 ### AI-C19 — Operator and product handoff
 
 **Touch:** setup/usage/portfolio/operations docs as relevant, AI evidence index,
 final implementation inventory and OPEN gate list.
 
-**Implement:** operator provider switching, key setup/rotation, pricing/budget
+**Implement:** operator OpenAI model configuration, key setup/rotation, pricing/budget
 configuration, cache/retention policy, limits, disable/recovery procedures, input
 example/template, prompt starters, and recruiter walkthrough instructions.
 
@@ -882,7 +895,9 @@ real provider/database/browser proof, and leave all applicable gates OPEN.
 agreement, no leaked configuration values. Do not run unrelated runtime tests
 for a documentation-only finish.
 
-**Exit:** another developer can configure either provider and reproduce the
+Document the future adapter extension point without implying Claude is available.
+
+**Exit:** another developer can configure OpenAI and reproduce the
 documented workflow subject to existing verification conditions. Do not announce
 a verified production release from this implementation handoff.
 
@@ -1029,7 +1044,8 @@ apps/api or apps/web AGENTS.md. Select/create ai-diagram-integration as the guid
 instructs; preserve unrelated work. Verify task dependencies against actual commits.
 
 Keep GitHub as the only login and all AI credentials/provider/model/budget controls
-server-owned. Use the provider-independent port and both implemented adapters.
+server-owned. Use the provider-independent port and implement only the OpenAI
+adapter with the official openai SDK; other providers remain future work.
 Preserve exact private caching, durable admission, unknown-outcome accounting,
 graph commands, offline persistence, and server ACK semantics.
 
