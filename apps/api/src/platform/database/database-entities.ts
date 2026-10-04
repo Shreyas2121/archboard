@@ -13,7 +13,10 @@ import {
   UpdateReceiptEntity,
 } from '../../modules/collaboration/infrastructure/entities/index.js';
 
+import { AI_ENTITIES } from '../../modules/ai/infrastructure/persistence/entities.js';
+
 export const DATABASE_ENTITIES = [
+  ...AI_ENTITIES,
   BoardEntity,
   BoardMemberEntity,
   BoardInviteEntity,

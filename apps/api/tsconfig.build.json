@@ -10,6 +10,7 @@
     "node_modules",
     "src/**/*.spec.ts",
     "src/**/*.test.ts",
+    "src/**/*.integration-spec.ts",
     "src/modules/ai/infrastructure/testing/**"
   ]
 }
