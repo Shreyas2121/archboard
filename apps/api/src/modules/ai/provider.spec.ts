@@ -267,14 +267,16 @@ describe('AI Nest composition without application/database startup', () => {
         abortOnError: false,
       });
       try {
-        expect(context.get(AI_PROVIDER_ADAPTERS)).toEqual([]);
+        expect(context.get<readonly AiProvider[]>(AI_PROVIDER_ADAPTERS)).toHaveLength(
+          enabled ? 1 : 0,
+        );
         expect(context.get(AI_POLICY)).toEqual(config.ai.enabled ? config.ai.policy : null);
         expect(context.get(AI_OPERATOR_SECRETS)).toEqual(
           config.ai.enabled ? config.ai.secrets : null,
         );
-        expect(() => context.get<AiProviderRegistry>(AI_PROVIDER_REGISTRY).resolve()).toThrow(
-          AiProviderError,
-        );
+        const registry = context.get<AiProviderRegistry>(AI_PROVIDER_REGISTRY);
+        if (enabled) expect(registry.resolve().adapter.implementation).toBe('production');
+        else expect(() => registry.resolve()).toThrow(AiProviderError);
       } finally {
         await context.close();
       }

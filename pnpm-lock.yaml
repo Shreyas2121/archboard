@@ -45,6 +45,9 @@ catalogs:
     lucide-react:
       specifier: 1.46.0
       version: 1.46.0
+    openai:
+      specifier: 7.27.0
+      version: 7.27.0
     radix-ui:
       specifier: 1.6.7
       version: 1.6.7
@@ -152,6 +155,9 @@ importers:
       better-auth:
         specifier: 1.7.4
         version: 1.7.4(pg@8.23.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.0)
+      openai:
+        specifier: 'catalog:'
+        version: 7.27.0(ws@8.21.3)(zod@4.6.4)
       pg:
         specifier: 8.23.0
         version: 8.23.0
@@ -4888,6 +4894,30 @@ packages:
   open@11.0.3:
     resolution: {integrity: sha512-b3souUgU0VaAvMmzA4+9cRgrOgMdE0vc9H9VhQ0FYnjjcyZ8R/f9DiwMU9V8rl+vjf05On9UJhbgb06fsTs87Q==}
     engines: {node: '>=20'}
+
+  openai@7.27.0:
+    resolution: {integrity: sha512-QDo1FvnRDZn15YwGVOhT9vpyypDiLphkd/7a4mcURWf5upMoEetgA6o4DJeII+ZZkC6m6DvlilCwii3+ynDcTw==}
+    engines: {node: '>=22.0.0'}
+    peerDependencies:
+      '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
+      '@smithy/hash-node': '>=4.3.0 <5'
+      '@smithy/signature-v4': '>=5.4.0 <6'
+      undici: '>=5 <9'
+      ws: ^8.21.0
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      '@aws-sdk/credential-provider-node':
+        optional: true
+      '@smithy/hash-node':
+        optional: true
+      '@smithy/signature-v4':
+        optional: true
+      undici:
+        optional: true
+      ws:
+        optional: true
+      zod:
+        optional: true
 
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
@@ -11099,6 +11129,11 @@ snapshots:
       is-inside-container: 1.0.0
       powershell-utils: 0.2.1
       wsl-utils: 1.0.0
+
+  openai@7.27.0(ws@8.21.3)(zod@4.6.4):
+    optionalDependencies:
+      ws: 8.21.3
+      zod: 4.6.4
 
   optionator@0.9.4:
     dependencies:

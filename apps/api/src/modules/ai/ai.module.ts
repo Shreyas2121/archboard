@@ -1,5 +1,6 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import type { ApiConfig } from '../../platform/config/index.js';
+import { OpenAiProvider } from './infrastructure/providers/openai/openai-provider.js';
 import {
   AI_POLICY,
   AI_PROVIDER_ADAPTERS,
@@ -18,8 +19,13 @@ export class AiModule {
       providers: [
         { provide: AI_POLICY, useValue: config.ai.enabled ? config.ai.policy : null },
         { provide: AI_OPERATOR_SECRETS, useValue: config.ai.enabled ? config.ai.secrets : null },
-        // C03 registers the real adapter. There is no fixture fallback or paid endpoint.
-        { provide: AI_PROVIDER_ADAPTERS, useValue: [] },
+        {
+          provide: AI_PROVIDER_ADAPTERS,
+          useFactory: (): readonly AiProvider[] =>
+            config.ai.enabled
+              ? [new OpenAiProvider(config.ai.secrets.openaiApiKey, config.ai.policy.profiles)]
+              : [],
+        },
         {
           provide: AI_PROVIDER_REGISTRY,
           inject: [AI_PROVIDER_ADAPTERS],

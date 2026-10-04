@@ -1,11 +1,29 @@
 # AI operator configuration foundation
 
-AI-C02 defines configuration and a neutral provider port. No paid endpoint or real
-adapter is available yet. An enabled configuration can be parsed and registered,
-but provider resolution fails closed until AI-C03 registers the OpenAI adapter.
+AI-C02 defines configuration and a neutral provider port. AI-C03 registers the
+OpenAI Responses adapter when AI is enabled; disabled composition has no adapter.
+Provider resolution checks the configured profile's capabilities. There is no
+product inference route yet, and live compatibility remains unverified.
 Claude, other production providers, production mocks and automatic failover are
 unavailable. GitHub remains the only login. Do not initialize an account or submit
 paid requests merely to exercise configuration.
+
+The adapter pins the official SDK, disables SDK retries and SDK logging, uses
+`store: false`, and supports only configured model IDs and the versioned schema.
+It sends server instructions separately from user data, enables no tools, and
+uses the fixed official API endpoint. Native structured output fails closed for
+profiles without that capability; there is no untested fallback. Output tokens,
+UTF-8 result bytes, total deadline and raw transport bytes are bounded. Refusal,
+incomplete output and uncertain transport do not become successful results.
+
+The model renderer returns a strict `{ result: ... }` wrapper around the shared
+result contract. Future orchestration must parse it with `aiModelOutputSchema`,
+unwrap `result`, and validate task, context, grounding and authorization locally.
+JSON Schema does not replace Zod refinements. OpenAI cached input is split from
+uncached input; output includes reasoning once. Missing/inconsistent usage or
+nonzero unpriced cache writes stay unknown and require conservative settlement.
+Configured capabilities are operator assertions tested with fixtures, not proof
+of model/account access. Live requests require separate budget authorization.
 
 AI settings are server-only. [.env.example](../.env.example) contains empty
 placeholders. Omitted, blank or `false` `AI_ENABLED` disables AI without requiring

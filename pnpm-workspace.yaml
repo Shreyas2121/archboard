@@ -20,6 +20,7 @@ catalog:
   cn: 0.3.0
   concurrently: 9.2.1
   lucide-react: 1.46.0
+  openai: 7.27.0
   radix-ui: 1.6.7
   shiki: 4.4.3
   supertest: 7.1.4
