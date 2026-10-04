@@ -12,6 +12,7 @@ import { useAiReviewSession } from './use-ai-review-session';
 import { AiContextFormFields } from './ai-context-form';
 import { AiContextReview } from './ai-context-review';
 import { AI_JSON_INDENT, contextFromForm, aiValidationMessage } from './ai-review-model';
+import { AiDiagramPreparation } from './ai-diagram-preparation';
 
 export function AiPanel({
   session,
@@ -253,6 +254,18 @@ export function AiPanel({
                   ? 'More information is needed.'
                   : 'Proposal received. No board changes were made.'}
               </p>
+              {result.kind === 'diagram' && (
+                <AiDiagramPreparation
+                  key={`${state.run!.id}:${state.run!.updatedAt}`}
+                  proposal={result}
+                  session={session}
+                  allowed={() =>
+                    workflow.currentScope() &&
+                    state.run?.content.status === 'available' &&
+                    Date.parse(state.run.content.expiresAt) > Date.now()
+                  }
+                />
+              )}
               {'questions' in result &&
                 result.questions.map((question, index) => (
                   <p

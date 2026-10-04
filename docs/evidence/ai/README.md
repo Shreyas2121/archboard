@@ -18,7 +18,8 @@ AI-C07 delivers bounded provider execution, cancellation/drain and fenced recove
 AI-C08 delivers exact private result reuse and bounded encrypted retention.
 AI-C09 delivers authenticated strict HTTP routes, bounded body/SSE transport and safe availability.
 AI-C10 delivers reviewed prompt/form/JSON inputs, private creation intent and typed bounded transport.
-AI-C11–AI-C19 are **NOT STARTED**;
+AI-C11 delivers fresh semantic mapping, a terminable layout worker, deterministic fallback and detached full-state preflight.
+AI-C12–AI-C19 are **NOT STARTED**;
 AI-X01 is **NOT STARTED / separately selected optional work**. AI implementation,
 browser/database/live-provider acceptance, and the original Version 1 production
 release gate remain **OPEN**. The [Phase 8 closure](../../phase-8-closure.md) does
@@ -36,12 +37,13 @@ not establish the original M00–M08 implementation-completion trigger.
 | AI-C07 | IMPLEMENTED           | `e4161e74f24a4a8d8f51952f3082206458265a3f`; parent `f21dccbd9ee845d81c7e3e0611719d7a3763aba2` | [AI-C07](AI-C07.md): bounded dispatch/retry/repair, cancel/drain, recovery fences and authorized subscriptions                      |
 | AI-C08 | IMPLEMENTED           | `5e494b60a9dab7f06e53014975a3ac636bb9e215`; parent `e4161e74f24a4a8d8f51952f3082206458265a3f` | [AI-C08](AI-C08.md): exact keyed identity, private result reuse, aggregate encrypted retention and prepared DB races/faults         |
 | AI-C09 | IMPLEMENTED           | `23b33910694028fefbd6f3d72c009dcf16d6926e`; parent `5e494b60a9dab7f06e53014975a3ac636bb9e215` | [AI-C09](AI-C09.md): authenticated routes, bounded body/SSE transport, advisory allowance and prepared real session/stream fixtures |
-| AI-C10 | IMPLEMENTED           | Introducing commit of AI-C10 evidence; parent `23b33910694028fefbd6f3d72c009dcf16d6926e`      | [AI-C10](AI-C10.md): reviewed cloud inputs, private session boundaries, frozen recovery identity and Node transport fixtures        |
+| AI-C10 | IMPLEMENTED           | `9d6c96cf9a007de62cded23ea7b19ff53ff49a48`; parent `23b33910694028fefbd6f3d72c009dcf16d6926e` | [AI-C10](AI-C10.md): reviewed cloud inputs, private session boundaries, frozen recovery identity and Node transport fixtures        |
+| AI-C11 | IMPLEMENTED           | Introducing commit of AI-C11 evidence; parent `9d6c96cf9a007de62cded23ea7b19ff53ff49a48`      | [AI-C11](AI-C11.md): fresh IDs, bounded geometry, ELK worker lifecycle/fallback and detached candidate preflight                    |
 
 Resolve the introducing commit after it lands:
 
 ```powershell
-git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C10.md
+git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C11.md
 ```
 
 Map that actual hash in the next task's index update; do not amend this evidence to
@@ -77,7 +79,7 @@ aggregates that launch deferred children.
 
 ## Next task
 
-Select [AI-C11](../../../guide.md#ai-c11--semantic-to-graph-mapping-and-deterministic-layout), depending on AI-C01 and the actual AI-C10 commit. Map validated proposals to fresh graph IDs and bounded deterministic drafts; evaluate/pin elkjs, build a terminable worker with a deterministic fallback, and preflight detached candidates before live mutation. Preserve private reviewed creation intent and keep C12's future Apply identity separate. Preserve current authority, committed dispatch claims, conservative unknown liabilities, the [HTTP contract](../../ai-http.md) and the [cache contract](../../ai-cache.md).
+Select [AI-C12](../../../guide.md#ai-c12--preview-and-additive-apply), depending on the actual AI-C11 commit. Reuse the bounded draft pipeline for isolated preview, then persist a distinct stable Apply intent/ID map before an additive domain-command batch. Recheck target/account/editability/archive/expiry, IDs, capacity and encoded budgets before mutation. Keep offline persistence and committed server ACK evidence separate from local Apply. Preserve private reviewed creation intent, current authority, committed dispatch claims, conservative unknown liabilities, the [HTTP contract](../../ai-http.md) and the [cache contract](../../ai-cache.md).
 Database checks remain deferred until the user's Version 1 implementation trigger.
 Preserve the neutral provider port and
 [operator configuration](../../ai-operator-configuration.md).

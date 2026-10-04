@@ -450,6 +450,13 @@ export class EditorSession {
     return binding === null ? null : accessGraphText(binding.document, target);
   }
 
+  /** Read-only full-state snapshot for detached proposal preflight, including tombstones. */
+  public captureGraphState(): Uint8Array | null {
+    if (!this.canEdit()) return null;
+    const binding = this.writerSession.getWritableBinding();
+    return binding === null ? null : Y.encodeStateAsUpdate(binding.document);
+  }
+
   public editText(target: GraphTextTarget, edit: TextEdit | readonly TextEdit[]): void {
     this.executeMutation((document) => editGraphText(document, target, edit));
   }
