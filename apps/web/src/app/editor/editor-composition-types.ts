@@ -31,6 +31,7 @@ export interface EditorToolbarProps {
   readonly setServerReloadOpen: (open: boolean) => void;
 }
 export interface EditorInspectorProps {
+  readonly ai?: ReactNode;
   readonly narrowScreen: boolean;
   readonly compactOpen: boolean;
   readonly setCompactOpen: (open: boolean) => void;

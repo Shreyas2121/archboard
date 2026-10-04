@@ -17,7 +17,8 @@ AI-C06 delivers durable admission, conservative pricing, attempt claims and roll
 AI-C07 delivers bounded provider execution, cancellation/drain and fenced recovery.
 AI-C08 delivers exact private result reuse and bounded encrypted retention.
 AI-C09 delivers authenticated strict HTTP routes, bounded body/SSE transport and safe availability.
-AI-C10–AI-C19 are **NOT STARTED**;
+AI-C10 delivers reviewed prompt/form/JSON inputs, private creation intent and typed bounded transport.
+AI-C11–AI-C19 are **NOT STARTED**;
 AI-X01 is **NOT STARTED / separately selected optional work**. AI implementation,
 browser/database/live-provider acceptance, and the original Version 1 production
 release gate remain **OPEN**. The [Phase 8 closure](../../phase-8-closure.md) does
@@ -34,12 +35,13 @@ not establish the original M00–M08 implementation-completion trigger.
 | AI-C06 | IMPLEMENTED           | `f21dccbd9ee845d81c7e3e0611719d7a3763aba2`; parent `10a08bdb04a140453daeed7e793964b919747d57` | [AI-C06](AI-C06.md): durable quota/funding gates, integer pricing, per-attempt claims and unknown-liability rollover                |
 | AI-C07 | IMPLEMENTED           | `e4161e74f24a4a8d8f51952f3082206458265a3f`; parent `f21dccbd9ee845d81c7e3e0611719d7a3763aba2` | [AI-C07](AI-C07.md): bounded dispatch/retry/repair, cancel/drain, recovery fences and authorized subscriptions                      |
 | AI-C08 | IMPLEMENTED           | `5e494b60a9dab7f06e53014975a3ac636bb9e215`; parent `e4161e74f24a4a8d8f51952f3082206458265a3f` | [AI-C08](AI-C08.md): exact keyed identity, private result reuse, aggregate encrypted retention and prepared DB races/faults         |
-| AI-C09 | IMPLEMENTED           | Introducing commit of AI-C09 evidence; parent `5e494b60a9dab7f06e53014975a3ac636bb9e215`      | [AI-C09](AI-C09.md): authenticated routes, bounded body/SSE transport, advisory allowance and prepared real session/stream fixtures |
+| AI-C09 | IMPLEMENTED           | `23b33910694028fefbd6f3d72c009dcf16d6926e`; parent `5e494b60a9dab7f06e53014975a3ac636bb9e215` | [AI-C09](AI-C09.md): authenticated routes, bounded body/SSE transport, advisory allowance and prepared real session/stream fixtures |
+| AI-C10 | IMPLEMENTED           | Introducing commit of AI-C10 evidence; parent `23b33910694028fefbd6f3d72c009dcf16d6926e`      | [AI-C10](AI-C10.md): reviewed cloud inputs, private session boundaries, frozen recovery identity and Node transport fixtures        |
 
 Resolve the introducing commit after it lands:
 
 ```powershell
-git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C09.md
+git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C10.md
 ```
 
 Map that actual hash in the next task's index update; do not amend this evidence to
@@ -75,7 +77,7 @@ aggregates that launch deferred children.
 
 ## Next task
 
-Select [AI-C10](../../../guide.md#ai-c10--prompt-form-json-review-and-typed-transport), depending on the actual AI-C09 commit. Build explicit reviewed Generate intent, private actor/board-scoped drafts and typed API/SSE transport using the [HTTP contract](../../ai-http.md). Snapshot resumption never creates a run; fetch current authorized results after notices and show expiry/unknown/disabled states truthfully. Preserve current authority, committed dispatch claims, conservative unknown liabilities and the [cache contract](../../ai-cache.md).
+Select [AI-C11](../../../guide.md#ai-c11--semantic-to-graph-mapping-and-deterministic-layout), depending on AI-C01 and the actual AI-C10 commit. Map validated proposals to fresh graph IDs and bounded deterministic drafts; evaluate/pin elkjs, build a terminable worker with a deterministic fallback, and preflight detached candidates before live mutation. Preserve private reviewed creation intent and keep C12's future Apply identity separate. Preserve current authority, committed dispatch claims, conservative unknown liabilities, the [HTTP contract](../../ai-http.md) and the [cache contract](../../ai-cache.md).
 Database checks remain deferred until the user's Version 1 implementation trigger.
 Preserve the neutral provider port and
 [operator configuration](../../ai-operator-configuration.md).

@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils';
 import type { EditorInspectorProps } from './editor-composition-types';
 import { EditorInspectorSection } from './editor-inspector-section';
 export function EditorInspector({
+  ai,
   narrowScreen,
   compactOpen,
   setCompactOpen,
@@ -61,10 +62,11 @@ export function EditorInspector({
   const contents = (
     <div {...focusRecovery}>
       <Tabs defaultValue="properties" className="w-full">
-        <TabsList className="m-3" aria-label="Inspector">
+        <TabsList className="m-3 flex h-auto max-w-full flex-wrap" aria-label="Inspector">
           <TabsTrigger value="properties">Properties</TabsTrigger>
           {presentation && <TabsTrigger value="steps">Steps</TabsTrigger>}
           {discussion && <TabsTrigger value="discussion">Discussion</TabsTrigger>}
+          {ai && <TabsTrigger value="ai">AI</TabsTrigger>}
         </TabsList>
         <TabsContent value="properties">
           {projection && (
@@ -177,6 +179,11 @@ export function EditorInspector({
           <EditorActionsPanel actions={editorCommands} disabled={!viewState.editable} />
         </TabsContent>
         {presentation && <TabsContent value="steps">{presentation}</TabsContent>}
+        {ai && (
+          <TabsContent value="ai" forceMount className="data-[state=inactive]:hidden">
+            {ai}
+          </TabsContent>
+        )}
         {discussion && (
           <TabsContent value="discussion" forceMount className="data-[state=inactive]:hidden">
             {discussion}

@@ -65,6 +65,7 @@ import { EDITOR_VIEW_PHASES } from './editor-view-state';
 import { EditorDialogs } from './editor-dialogs';
 import { EditorInspector } from './editor-inspector';
 import { DiscussionPanel } from '@/features/editor/discussion/discussion-panel';
+import { AiPanel } from '@/features/editor/ai/ai-panel';
 import { StepsPanel } from '@/features/editor/presentation/steps-panel';
 import { useLocalPresentation } from '@/features/editor/presentation/use-local-presentation';
 import {
@@ -785,6 +786,15 @@ export function EditorShell({
 
         <div className={playback.presenting ? 'hidden' : 'contents'}>
           <EditorInspector
+            ai={
+              boardMode && session?.resourceScope ? (
+                <AiPanel
+                  key={JSON.stringify(session.resourceScope)}
+                  session={session}
+                  readOnly={narrowScreen}
+                />
+              ) : undefined
+            }
             narrowScreen={narrowScreen}
             compactOpen={compactPanelsOpen}
             setCompactOpen={setCompactPanelsOpen}

@@ -22,6 +22,7 @@ export class ApiClientError extends Error {
     public readonly status: number | null,
     public readonly code: ErrorCode | null,
     message: string,
+    public readonly retryAfterSeconds: number | null = null,
   ) {
     super(message);
     this.name = 'ApiClientError';
@@ -43,12 +44,13 @@ export function setUnauthorizedListener(listener: UnauthorizedListener | null): 
   unauthorizedListener = listener;
 }
 
-interface ApiRequestOptions {
+export interface ApiRequestOptions {
   readonly method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   readonly body?: unknown;
   readonly headers?: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
   readonly notifyOnUnauthorized?: boolean;
+  readonly maxResponseBytes?: number;
 }
 
 export async function apiRequest<T>(
@@ -56,6 +58,14 @@ export async function apiRequest<T>(
   schema: z.ZodType<T>,
   options: ApiRequestOptions = {},
 ): Promise<T> {
+  return readApiResponse(await fetchApiResponse(path, options), schema, options);
+}
+
+export async function fetchApiResponse(
+  path: `/${string}`,
+  options: ApiRequestOptions = {},
+  accept = 'application/json',
+): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(new URL(`/api/v1${path}`, API_ORIGIN), {
@@ -64,7 +74,7 @@ export async function apiRequest<T>(
       cache: 'no-store',
       ...(options.signal ? { signal: options.signal } : {}),
       headers: {
-        accept: 'application/json',
+        accept,
         ...(options.body === undefined ? {} : { 'content-type': 'application/json' }),
         ...options.headers,
       },
@@ -74,7 +84,42 @@ export async function apiRequest<T>(
     if (options.signal?.aborted) throw error;
     throw new ApiClientError('network', null, null, 'The API could not be reached.');
   }
+  return response;
+}
 
+export async function boundedResponseText(response: Response, maximum: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return '';
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let bytes = 0;
+  let text = '';
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > maximum) throw new Error('Response bound exceeded.');
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    return text + decoder.decode();
+  } catch {
+    await reader.cancel().catch(() => undefined);
+    throw new ApiClientError(
+      'invalid-response',
+      response.status,
+      null,
+      'The API response could not be validated.',
+    );
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export async function readApiResponse<T>(
+  response: Response,
+  schema: z.ZodType<T>,
+  options: ApiRequestOptions = {},
+): Promise<T> {
   if (response.status === HTTP_UNAUTHORIZED) {
     if (options.notifyOnUnauthorized !== false) unauthorizedListener?.();
     throw new ApiClientError(
@@ -98,9 +143,13 @@ export async function apiRequest<T>(
 
   let body: string;
   try {
-    body = await response.text();
+    body =
+      options.maxResponseBytes === undefined
+        ? await response.text()
+        : await boundedResponseText(response, options.maxResponseBytes);
   } catch (error) {
     if (options.signal?.aborted) throw error;
+    if (error instanceof ApiClientError) throw error;
     throw new ApiClientError(
       response.ok ? 'network' : 'http',
       response.status,
@@ -140,6 +189,7 @@ export async function apiRequest<T>(
       response.status,
       code,
       parsed.success ? parsed.data.error.message : 'The API request failed.',
+      retryAfter(response.headers.get('retry-after')),
     );
   }
 
@@ -153,6 +203,12 @@ export async function apiRequest<T>(
     );
   }
   return parsed.data;
+}
+
+function retryAfter(value: string | null): number | null {
+  if (!value || !/^[1-9][0-9]*$/.test(value)) return null;
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds) ? seconds : null;
 }
 
 export async function getCurrentUser(signal?: AbortSignal): Promise<CurrentUser | null> {
