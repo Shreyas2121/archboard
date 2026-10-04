@@ -84,11 +84,35 @@ describe('server-owned AI operator configuration', () => {
       loadAiConfig({ ...FIXTURE_AI_ENVIRONMENT, AI_PROVIDER_INPUT_TPM: 'not-an-integer' }),
     ).toThrow('AI_PROVIDER_INPUT_TPM');
   });
-  it.each(['anthropic', 'fixture', 'claude', 'OPENAI'])(
+  it.each(['anthropic', 'fixture', 'claude', 'gemini', 'azure', 'openai-compatible', 'OPENAI'])(
     'rejects unimplemented provider %s',
     (provider) => {
       expect(() => loadAiConfig({ ...FIXTURE_AI_ENVIRONMENT, AI_PROVIDER: provider })).toThrow(
         'AI_PROVIDER',
+      );
+    },
+  );
+  it.each(['development', 'test', 'production'] as const)(
+    'does not enable an unimplemented provider with credentials in %s',
+    (mode) => {
+      const environment = {
+        ...FIXTURE_AI_ENVIRONMENT,
+        NODE_ENV: mode,
+        PUBLIC_API_ORIGIN: 'https://api.example.com',
+        ALLOWED_WEB_ORIGINS: 'https://api.example.com',
+        GITHUB_CLIENT_ID: 'Ov23liExampleClientId1234567890',
+        GITHUB_CLIENT_SECRET: '0123456789abcdef0123456789abcdef01234567',
+      };
+      expect(fixtureApiConfig(environment).ai.enabled).toBe(true);
+      expect(() =>
+        fixtureApiConfig({
+          ...environment,
+          AI_PROVIDER: 'anthropic',
+          ANTHROPIC_API_KEY: 'fixture-key-not-a-real-credential',
+        }),
+      ).toThrow(AiConfigurationError);
+      expect(() => fixtureApiConfig({ ...environment, AI_PROVIDER: 'fixture' })).toThrow(
+        AiConfigurationError,
       );
     },
   );

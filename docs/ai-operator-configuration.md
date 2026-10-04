@@ -4,6 +4,9 @@ AI-C02 defines configuration and a neutral provider port. AI-C03 registers the
 OpenAI Responses adapter when AI is enabled; disabled composition has no adapter.
 Provider resolution checks the configured profile's capabilities. There is no
 product inference route yet, and live compatibility remains unverified.
+AI-C04 requires native structured output in both the selected profile and adapter
+at registry resolution; a profile with `structuredOutput: false` cannot dispatch.
+There is no validated plain-text/schema fallback or automatic provider/model switch.
 Claude, other production providers, production mocks and automatic failover are
 unavailable. GitHub remains the only login. Do not initialize an account or submit
 paid requests merely to exercise configuration.

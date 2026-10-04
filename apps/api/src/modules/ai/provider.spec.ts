@@ -167,6 +167,55 @@ describe('neutral provider port and production registry', () => {
     );
     expect(fixture.calls).toBe(0);
   });
+  it('rejects disabled native structured output even when both profile and adapter omit it', () => {
+    const fixture = makeFixture([completed], { ...capabilities, structuredOutput: false });
+    const policy = fixtureAiPolicy({
+      AI_MODEL_PROFILES: JSON.stringify([{ ...FIXTURE_MODEL_PROFILE, structuredOutput: false }]),
+    });
+    expect(() => new AiProviderRegistry('test', policy, [fixture]).resolve()).toThrow(
+      AiProviderError,
+    );
+    expect(fixture.calls).toBe(0);
+  });
+  it('withholds native capability exceptions without falling back or dispatching', () => {
+    const adapter: AiProvider = {
+      id: 'openai',
+      implementation: 'production',
+      capabilities: () => {
+        throw new Error('private provider body and credential');
+      },
+      stream: () => {
+        throw new Error('Dispatch must not occur.');
+      },
+    };
+    try {
+      new AiProviderRegistry('production', fixtureAiPolicy(), [adapter]).resolve();
+      throw new Error('Expected rejection.');
+    } catch (error) {
+      expect(error).toBeInstanceOf(AiProviderError);
+      expect((error as AiProviderError).failure).toMatchObject({
+        code: 'capability-unsupported',
+        execution: 'definitely-unsent',
+      });
+      expect(String(error) + JSON.stringify(error)).not.toContain('private');
+    }
+  });
+  it.each(['development', 'test', 'production'] as const)(
+    'rejects unknown implementation brands in %s',
+    (mode) => {
+      const fixture = makeFixture();
+      const adapter = {
+        id: 'openai',
+        implementation: 'unregistered-brand',
+        capabilities: (model: string) => fixture.capabilities(model),
+        stream: fixture.stream.bind(fixture),
+      } as unknown as AiProvider;
+      expect(() => new AiProviderRegistry(mode, fixtureAiPolicy(), [adapter])).toThrow(
+        AiProviderError,
+      );
+      expect(fixture.calls).toBe(0);
+    },
+  );
   it('resolves only explicitly configured quality/model profiles and preserves old runs', () => {
     const higher = { ...FIXTURE_MODEL_PROFILE, quality: 'higher', model: 'fixture-higher-v1' };
     const policy = fixtureAiPolicy({

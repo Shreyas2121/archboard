@@ -71,7 +71,7 @@ const request = (): NormalizedProviderRequest => ({
 });
 const delta = (text = 'hello') => ({ type: 'response.output_text.delta', delta: text });
 function terminal(
-  scenario: Exclude<ProviderScenario, 'partial'> = 'completed',
+  scenario: 'completed' | 'refused' | 'incomplete' = 'completed',
   overrides: Record<string, unknown> = {},
 ) {
   return {
@@ -119,7 +119,14 @@ async function collect(
 
 providerContractSuite(
   'OpenAI SDK fixture transport / shared neutral contract',
-  (scenario) => fixture(scenario === 'partial' ? [delta()] : [delta(), terminal(scenario)]).adapter,
+  (scenario: ProviderScenario) =>
+    fixture(
+      scenario === 'partial'
+        ? [delta()]
+        : scenario === 'unknown-usage'
+          ? [delta(), terminal('completed', { usage: null })]
+          : [delta(), terminal(scenario)],
+    ).adapter,
   request,
 );
 

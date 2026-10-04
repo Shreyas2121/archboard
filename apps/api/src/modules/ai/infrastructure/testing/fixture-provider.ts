@@ -36,7 +36,16 @@ export class FixtureAiProvider implements AiProvider {
     input: NormalizedProviderRequest,
     signal: AbortSignal,
   ): AsyncIterable<ProviderEvent> {
-    const request = normalizedProviderRequestSchema.parse(input);
+    const parsed = normalizedProviderRequestSchema.safeParse(input);
+    if (!parsed.success)
+      throw new AiProviderError({
+        code: 'invalid-request',
+        execution: 'definitely-unsent',
+        usage: { status: 'unknown' },
+        retryAfterMs: null,
+        requestId: null,
+      });
+    const request = parsed.data;
     const capabilities = this.capabilities(request.model);
     if (
       !capabilities.streaming ||
@@ -84,6 +93,7 @@ export class FixtureAiProvider implements AiProvider {
       yield event;
       if (event.type !== 'text-delta') return;
     }
+    check(true);
     if (this.failure) throw new AiProviderError(this.failure);
     throw new AiProviderError({
       code: 'transport',

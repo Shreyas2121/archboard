@@ -245,13 +245,13 @@ function verifyNegativeFixtures() {
 }
 
 function inspectSource(path, sourcePackage) {
-  if (isTestFile(path)) return;
-  checkedSourceFiles += 1;
   for (const issue of aiSourceViolations(
     relative(workspace, path).replaceAll('\\', '/'),
     readFileSync(path, 'utf8'),
   ))
     report(path, issue);
+  if (isTestFile(path)) return;
+  checkedSourceFiles += 1;
   const source = ts.createSourceFile(
     path,
     readFileSync(path, 'utf8'),

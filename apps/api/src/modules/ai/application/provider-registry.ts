@@ -12,6 +12,7 @@ export class AiProviderRegistry {
     for (const adapter of adapters) {
       if (
         adapter.id !== 'openai' ||
+        (adapter.implementation !== 'production' && adapter.implementation !== 'test-fixture') ||
         providers.has(adapter.id) ||
         (adapter.implementation !== 'production' && mode !== 'test')
       )
@@ -55,7 +56,8 @@ export class AiProviderRegistry {
     if (
       !capabilities.streaming ||
       !capabilities.schemaVersions.includes(this.policy.versions.schema) ||
-      (profile.structuredOutput && !capabilities.structuredOutput) ||
+      !profile.structuredOutput ||
+      !capabilities.structuredOutput ||
       profile.maximumOutputTokens > capabilities.maximumOutputTokens ||
       profile.maximumInputTokens > capabilities.contextWindowTokens - profile.maximumOutputTokens
     )
