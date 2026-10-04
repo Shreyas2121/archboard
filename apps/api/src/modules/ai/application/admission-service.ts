@@ -12,6 +12,7 @@ import {
   type AiAttemptRecord,
 } from './persistence.js';
 import type { AiPolicy } from './operator-policy.js';
+import type { AiAvailability } from '@archboard/contracts';
 import { estimateAiReservation, priceAiUsage, checkedMoney } from './pricing.js';
 export const AI_ADMISSION_SERVICE = Symbol('AI_ADMISSION_SERVICE');
 const SECOND = 1000;
@@ -180,6 +181,69 @@ export class AiAdmissionService {
         add(record, 'committed', ONE);
         await scope.saveLedger(record);
       }
+    });
+  }
+  /** Advisory durable allowance only; creation still atomically reserves capacity. */
+  public async availability(
+    persistence: AiPersistence,
+    namespace: string,
+    actor: string,
+    board: string | null,
+  ): Promise<AiAvailability> {
+    const policy = this.enabled(namespace);
+    await this.request(persistence, namespace, actor, board, 'poll');
+    return persistence.run(async (scope) => {
+      await scope.authorize(actor, board);
+      await scope.lockAdmission(namespace, actor);
+      const now = await scope.now();
+      await this.prepare(scope, namespace, actor, now);
+      let fresh = policy.limits.freshPerDay;
+      for (const [period, limit] of [
+        ['day', policy.limits.freshPerDay],
+        ['minute', policy.limits.freshPerMinute],
+      ] as const) {
+        const row = await scope.getLedger(
+          key(namespace, 'actor', actor, 'capacity', 'fresh', period, now),
+        );
+        fresh = Math.min(fresh, Math.max(0, limit - Number(row.committed)));
+      }
+      let money = BigInt(policy.budgets.globalMicroUsd);
+      for (const locality of ['global', 'actor'] as const) {
+        const lifetime = await scope.getLedger(
+          key(namespace, locality, actor, 'budget', 'micro-usd', 'lifetime', now),
+        );
+        for (const [period, limit] of [
+          [
+            'day',
+            locality === 'actor'
+              ? (policy.budgets.actorDailyMicroUsd ?? policy.budgets.dailyMicroUsd)
+              : policy.budgets.dailyMicroUsd,
+          ],
+          ['month', policy.budgets.monthlyMicroUsd],
+          ['lifetime', policy.budgets.globalMicroUsd],
+        ] as const) {
+          const row = await scope.getLedger(
+            key(namespace, locality, actor, 'budget', 'micro-usd', period, now),
+          );
+          const remaining = BigInt(limit) - BigInt(row.committed) - BigInt(lifetime.reserved);
+          if (remaining < money) money = remaining;
+        }
+      }
+      if (money < ZERO) money = ZERO;
+      const allowance = {
+        remainingFreshRuns: fresh,
+        remainingMicroUsd: String(money),
+        resetsAt: null,
+      };
+      const profile = policy.profiles.find((profile) => profile.model === policy.defaultModel);
+      if (!profile) throw new AiAdmissionError('TEMPORARILY_UNAVAILABLE');
+      const reserve = estimateAiReservation(
+        snapshotAiConfiguration({ provider: policy.provider, profile, policy }),
+        policy.limits,
+      );
+      return fresh === 0 || money < BigInt(reserve.maximumMicroUsd)
+        ? { schemaVersion: 1, available: false, reason: 'allowance-reached', allowance }
+        : { schemaVersion: 1, available: true, allowance };
     });
   }
   public async fund(

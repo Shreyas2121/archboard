@@ -46,7 +46,8 @@ export class ApiExceptionFilter implements ExceptionFilter {
       response.locals.errorCode = featureCode;
       if (
         exception instanceof AiAdmissionError &&
-        featureCode === ERROR_CODES.RATE_LIMITED &&
+        (featureCode === ERROR_CODES.RATE_LIMITED ||
+          featureCode === ERROR_CODES.AI_ALLOWANCE_REACHED) &&
         Number.isSafeInteger(exception.retryAfterSeconds) &&
         exception.retryAfterSeconds! > 0
       )

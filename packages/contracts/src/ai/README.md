@@ -4,18 +4,19 @@ Import schemas, types, and limits through `@archboard/contracts`. These contract
 depend only on Zod and existing shared contracts. SDK types, provider configuration,
 credentials, pricing authority, and HTTP controller behavior belong on the server.
 
-| Contract                                      | Purpose                                                                                     |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `projectContextV1Schema` / `ProjectContextV1` | Strict project description; omitted input collections normalize to empty arrays             |
-| `parseProjectContextFile`                     | Enforce raw UTF-8 file bytes before parsing JSON and validating the normalized context      |
-| `aiCreateRunSchema` / `AiCreateRun`           | Versioned task, target, exact prompt, optional reviewed context and bounded private history |
-| `aiBoardContextSchema`                        | Selected graph, unique logical node bindings, and nullable confirmed server sequence        |
-| `aiResultSchema` / `AiResult`                 | Bounded diagram, clarification, guidance, edit, or presentation result                      |
-| `aiResultForRequestSchema`                    | Validate task, evidence and references against the parsed reviewed request                  |
-| `aiRunSchema` / `AiRun`                       | Lifecycle, safe failure, cache/deduplication source, and explicit available/expired content |
-| `aiRunEventSchema` / `AiRunEvent`             | Versioned ordered SSE events with decimal-string sequences and bounded deltas               |
-| `aiAvailabilitySchema`                        | Safe feature status and allowance; unknown money/reset facts are nullable                   |
-| `aiTokenPreflightSchema`                      | Server counting facts for rendered input and reserved output; not a client request field    |
+| Contract                                                                                     | Purpose                                                                                     |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `projectContextV1Schema` / `ProjectContextV1`                                                | Strict project description; omitted input collections normalize to empty arrays             |
+| `parseProjectContextFile`                                                                    | Enforce raw UTF-8 file bytes before parsing JSON and validating the normalized context      |
+| `aiCreateRunSchema` / `AiCreateRun`                                                          | Versioned task, target, exact prompt, optional reviewed context and bounded private history |
+| `aiBoardContextSchema`                                                                       | Selected graph, unique logical node bindings, and nullable confirmed server sequence        |
+| `aiResultSchema` / `AiResult`                                                                | Bounded diagram, clarification, guidance, edit, or presentation result                      |
+| `aiResultForRequestSchema`                                                                   | Validate task, evidence and references against the parsed reviewed request                  |
+| `aiRunSchema` / `AiRun`                                                                      | Lifecycle, safe failure, cache/deduplication source, and explicit available/expired content |
+| `aiRunEventSchema` / `AiRunEvent`                                                            | Versioned ordered SSE events with decimal-string sequences and bounded deltas               |
+| `aiAvailabilitySchema`                                                                       | Safe feature status and allowance; unknown money/reset facts are nullable                   |
+| `aiRunPathSchema`, `aiAvailabilityQuerySchema`, `aiEmptyQuerySchema`, `aiEventHeadersSchema` | Strict run UUID, optional board UUID and bounded snapshot resumption inputs                 |
+| `aiTokenPreflightSchema`                                                                     | Server counting facts for rendered input and reserved output; not a client request field    |
 
 Use `aiResultForRequestSchema(parsedRequest)` after assembling provider output and
 before returning or caching it. The standalone result schema establishes structure,
@@ -50,3 +51,8 @@ failures use safe codes and optional retry delays, never raw SDK error text. Int
 micro-USD allowances and server sequences use canonical decimal strings without
 numeric coercion. Text content remains untrusted and requires safe rendering and
 submission review; these schemas are not secret detection or redaction tools.
+
+The implemented [HTTP transport](../../../../docs/ai-http.md) sends authorized
+snapshots and expiry notices over SSE, with no private delta replay. Snapshot IDs
+are decimal update timestamps; a reconnect always reads current authority and
+never generates. Provider/model/accounting details remain internal.

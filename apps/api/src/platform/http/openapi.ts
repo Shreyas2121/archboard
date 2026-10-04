@@ -1,4 +1,12 @@
 import {
+  aiCreateRunSchema,
+  aiRunResponseSchema,
+  aiCancelRunSchema,
+  aiAvailabilityResponseSchema,
+  aiAvailabilityQuerySchema,
+  aiRunPathSchema,
+  aiRunEventSchema,
+  aiEventHeadersSchema,
   apiErrorEnvelopeSchema,
   boardDetailResponseSchema,
   boardSummaryResponseSchema,
@@ -53,6 +61,7 @@ import { z } from 'zod';
 
 const HTTP_OK = 200;
 const HTTP_CREATED = 201;
+const HTTP_ACCEPTED = 202;
 const HTTP_NO_CONTENT = 204;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
@@ -65,6 +74,11 @@ const HTTP_RATE_LIMITED = 429;
 const HTTP_UNAVAILABLE = 503;
 
 const schemas = {
+  AiCreateRunRequest: aiCreateRunSchema,
+  AiRunResponse: aiRunResponseSchema,
+  AiCancelRunRequest: aiCancelRunSchema,
+  AiAvailabilityResponse: aiAvailabilityResponseSchema,
+  AiRunEvent: aiRunEventSchema,
   CheckpointListResponse: checkpointListResponseSchema,
   CheckpointSummaryResponse: checkpointSummaryResponseSchema,
   CheckpointDetailResponse: checkpointDetailResponseSchema,
@@ -107,6 +121,8 @@ const schemas = {
 
 type SchemaName = keyof typeof schemas;
 type ParameterSchema =
+  | typeof aiRunPathSchema
+  | typeof aiAvailabilityQuerySchema
   | typeof checkpointPathSchema
   | typeof checkpointListQuerySchema
   | typeof boardIdPathSchema
@@ -131,9 +147,55 @@ interface RouteSpec {
   idempotent?: boolean;
   success?: number;
   errors?: readonly number[];
+  stream?: boolean;
 }
 
 const routes: readonly RouteSpec[] = [
+  {
+    method: 'post',
+    path: '/api/v1/ai/runs',
+    summary:
+      'Create or reuse a private AI run; server-owned configuration and current editor authority',
+    request: 'AiCreateRunRequest',
+    response: 'AiRunResponse',
+    idempotent: true,
+    success: HTTP_ACCEPTED,
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT, HTTP_GONE],
+  },
+  {
+    method: 'get',
+    path: '/api/v1/ai/availability',
+    summary: 'Read advisory durable application allowance; unknown reset times are null',
+    querySchema: aiAvailabilityQuerySchema,
+    response: 'AiAvailabilityResponse',
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT],
+  },
+  {
+    method: 'get',
+    path: '/api/v1/ai/runs/{runId}',
+    summary: 'Read current authorized run status and expiring private result',
+    pathSchema: aiRunPathSchema,
+    response: 'AiRunResponse',
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT, HTTP_GONE],
+  },
+  {
+    method: 'post',
+    path: '/api/v1/ai/runs/{runId}/cancel',
+    summary: 'Idempotently request cancellation; dispatched work may have an unknown outcome',
+    pathSchema: aiRunPathSchema,
+    request: 'AiCancelRunRequest',
+    response: 'AiRunResponse',
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT],
+  },
+  {
+    method: 'get',
+    path: '/api/v1/ai/runs/{runId}/events',
+    summary:
+      'Authorized SSE snapshots, 5-second heartbeat, no replay or generation on reconnect; terminal result-available/content-expired/failed/cancelled events close the stream',
+    pathSchema: aiRunPathSchema,
+    stream: true,
+    errors: [HTTP_FORBIDDEN, HTTP_NOT_FOUND, HTTP_CONFLICT, HTTP_GONE],
+  },
   {
     method: 'get',
     path: '/api/v1/boards/{id}/checkpoints',
@@ -438,6 +500,18 @@ export function createOpenApiDocument() {
       ]),
     ];
     const parameters = [
+      ...(route.stream
+        ? [
+            {
+              name: 'Last-Event-ID',
+              in: 'header',
+              required: false,
+              schema: z.toJSONSchema(aiEventHeadersSchema.shape.lastEventId, { io: 'input' }),
+              description:
+                'Canonical decimal snapshot ID; reconnect always returns a fresh authorized snapshot, never private history.',
+            },
+          ]
+        : []),
       ...(route.pathSchema ? parameterEntries(route.pathSchema, 'path') : []),
       ...(route.querySchema ? parameterEntries(route.querySchema, 'query') : []),
       ...(route.idempotent
@@ -467,7 +541,21 @@ export function createOpenApiDocument() {
           }
         : {}),
       responses: Object.fromEntries([
-        [String(success), response(success, route.response)],
+        [
+          String(success),
+          route.stream
+            ? {
+                description: 'Bounded authorized SSE; failures after headers close the stream.',
+                headers: { 'Cache-Control': { schema: { type: 'string', const: 'no-store' } } },
+                content: {
+                  'text/event-stream': {
+                    schema: { type: 'string' },
+                    'x-event-schema': { $ref: '#/components/schemas/AiRunEvent' },
+                  },
+                },
+              }
+            : response(success, route.response),
+        ],
         ...errors.map((status) => [String(status), response(status)]),
       ]),
     };

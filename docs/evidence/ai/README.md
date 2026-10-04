@@ -16,28 +16,30 @@ AI-C05 delivers durable run/accounting intent and bounded encrypted result stora
 AI-C06 delivers durable admission, conservative pricing, attempt claims and rollover-safe accounting.
 AI-C07 delivers bounded provider execution, cancellation/drain and fenced recovery.
 AI-C08 delivers exact private result reuse and bounded encrypted retention.
-AI-C09–AI-C19 are **NOT STARTED**;
+AI-C09 delivers authenticated strict HTTP routes, bounded body/SSE transport and safe availability.
+AI-C10–AI-C19 are **NOT STARTED**;
 AI-X01 is **NOT STARTED / separately selected optional work**. AI implementation,
 browser/database/live-provider acceptance, and the original Version 1 production
 release gate remain **OPEN**. The [Phase 8 closure](../../phase-8-closure.md) does
 not establish the original M00–M08 implementation-completion trigger.
 
-| Task   | Implementation status | Commit / parent                                                                               | Evidence and scope                                                                                                                |
-| ------ | --------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| AI-C00 | DOCUMENTED            | `3c1e6b324cbc06bd616d74d2e122020c41cec0f7`; parent `e3ba28cab6503d32de247ea7f355eedf9bdc8abc` | [AI-C00](AI-C00.md): accepted baseline, provider boundaries, verification deferrals, and C01 handoff                              |
-| AI-C01 | IMPLEMENTED           | `b57d165fdf9d671050bdb691ee108dc907a1583d`; parent `3c1e6b324cbc06bd616d74d2e122020c41cec0f7` | [AI-C01](AI-C01.md): versioned strict contracts, grounding/reference checks, limits and database-free fixtures                    |
-| AI-C02 | IMPLEMENTED           | `6064264dd489edf367ed4a26d9bdb87f58d4fbf0`; parent `b57d165fdf9d671050bdb691ee108dc907a1583d` | [AI-C02](AI-C02.md): provider port/registry, optional finite limits, secret-safe config, fixture/DI tests and static guards       |
-| AI-C03 | IMPLEMENTED           | `fdda6b362c4fb581b5f73b7b46fb3e0c613b4f1e`; parent `6064264dd489edf367ed4a26d9bdb87f58d4fbf0` | [AI-C03](AI-C03.md): OpenAI Responses adapter, prompt/schema rendering, bounded SDK fixture transports and safe usage/failures    |
-| AI-C04 | IMPLEMENTED           | `fa2e967e8c6b25508f5f3fbd1f4ac712e043141c`; parent `fdda6b362c4fb581b5f73b7b46fb3e0c613b4f1e` | [AI-C04](AI-C04.md): shared suite against SDK/SSE and independent fixtures, safe capability selection and static isolation checks |
-| AI-C05 | IMPLEMENTED           | `10a08bdb04a140453daeed7e793964b919747d57`; parent `fa2e967e8c6b25508f5f3fbd1f4ac712e043141c` | [AI-C05](AI-C05.md): durable runs/receipts/reservations, immutable accounting, encrypted payloads and prepared PostgreSQL tests   |
-| AI-C06 | IMPLEMENTED           | `f21dccbd9ee845d81c7e3e0611719d7a3763aba2`; parent `10a08bdb04a140453daeed7e793964b919747d57` | [AI-C06](AI-C06.md): durable quota/funding gates, integer pricing, per-attempt claims and unknown-liability rollover              |
-| AI-C07 | IMPLEMENTED           | `e4161e74f24a4a8d8f51952f3082206458265a3f`; parent `f21dccbd9ee845d81c7e3e0611719d7a3763aba2` | [AI-C07](AI-C07.md): bounded dispatch/retry/repair, cancel/drain, recovery fences and authorized subscriptions                    |
-| AI-C08 | IMPLEMENTED           | Introducing commit of AI-C08 evidence; parent `e4161e74f24a4a8d8f51952f3082206458265a3f`      | [AI-C08](AI-C08.md): exact keyed identity, private result reuse, aggregate encrypted retention and prepared DB races/faults       |
+| Task   | Implementation status | Commit / parent                                                                               | Evidence and scope                                                                                                                  |
+| ------ | --------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| AI-C00 | DOCUMENTED            | `3c1e6b324cbc06bd616d74d2e122020c41cec0f7`; parent `e3ba28cab6503d32de247ea7f355eedf9bdc8abc` | [AI-C00](AI-C00.md): accepted baseline, provider boundaries, verification deferrals, and C01 handoff                                |
+| AI-C01 | IMPLEMENTED           | `b57d165fdf9d671050bdb691ee108dc907a1583d`; parent `3c1e6b324cbc06bd616d74d2e122020c41cec0f7` | [AI-C01](AI-C01.md): versioned strict contracts, grounding/reference checks, limits and database-free fixtures                      |
+| AI-C02 | IMPLEMENTED           | `6064264dd489edf367ed4a26d9bdb87f58d4fbf0`; parent `b57d165fdf9d671050bdb691ee108dc907a1583d` | [AI-C02](AI-C02.md): provider port/registry, optional finite limits, secret-safe config, fixture/DI tests and static guards         |
+| AI-C03 | IMPLEMENTED           | `fdda6b362c4fb581b5f73b7b46fb3e0c613b4f1e`; parent `6064264dd489edf367ed4a26d9bdb87f58d4fbf0` | [AI-C03](AI-C03.md): OpenAI Responses adapter, prompt/schema rendering, bounded SDK fixture transports and safe usage/failures      |
+| AI-C04 | IMPLEMENTED           | `fa2e967e8c6b25508f5f3fbd1f4ac712e043141c`; parent `fdda6b362c4fb581b5f73b7b46fb3e0c613b4f1e` | [AI-C04](AI-C04.md): shared suite against SDK/SSE and independent fixtures, safe capability selection and static isolation checks   |
+| AI-C05 | IMPLEMENTED           | `10a08bdb04a140453daeed7e793964b919747d57`; parent `fa2e967e8c6b25508f5f3fbd1f4ac712e043141c` | [AI-C05](AI-C05.md): durable runs/receipts/reservations, immutable accounting, encrypted payloads and prepared PostgreSQL tests     |
+| AI-C06 | IMPLEMENTED           | `f21dccbd9ee845d81c7e3e0611719d7a3763aba2`; parent `10a08bdb04a140453daeed7e793964b919747d57` | [AI-C06](AI-C06.md): durable quota/funding gates, integer pricing, per-attempt claims and unknown-liability rollover                |
+| AI-C07 | IMPLEMENTED           | `e4161e74f24a4a8d8f51952f3082206458265a3f`; parent `f21dccbd9ee845d81c7e3e0611719d7a3763aba2` | [AI-C07](AI-C07.md): bounded dispatch/retry/repair, cancel/drain, recovery fences and authorized subscriptions                      |
+| AI-C08 | IMPLEMENTED           | `5e494b60a9dab7f06e53014975a3ac636bb9e215`; parent `e4161e74f24a4a8d8f51952f3082206458265a3f` | [AI-C08](AI-C08.md): exact keyed identity, private result reuse, aggregate encrypted retention and prepared DB races/faults         |
+| AI-C09 | IMPLEMENTED           | Introducing commit of AI-C09 evidence; parent `5e494b60a9dab7f06e53014975a3ac636bb9e215`      | [AI-C09](AI-C09.md): authenticated routes, bounded body/SSE transport, advisory allowance and prepared real session/stream fixtures |
 
 Resolve the introducing commit after it lands:
 
 ```powershell
-git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C08.md
+git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C09.md
 ```
 
 Map that actual hash in the next task's index update; do not amend this evidence to
@@ -73,7 +75,7 @@ aggregates that launch deferred children.
 
 ## Next task
 
-Select [AI-C09](../../../guide.md#ai-c09--rest-body-limits-sse-and-availability), depending on the actual AI-C08 commit. Expose strict authenticated REST/SSE through the server-owned application entry point, with bounded body/admission/polling/stream delivery and no-store. Preserve current authority, committed dispatch claims, conservative unknown liabilities and no generation on reconnect or recovery. Follow the [cache contract](../../ai-cache.md).
+Select [AI-C10](../../../guide.md#ai-c10--prompt-form-json-review-and-typed-transport), depending on the actual AI-C09 commit. Build explicit reviewed Generate intent, private actor/board-scoped drafts and typed API/SSE transport using the [HTTP contract](../../ai-http.md). Snapshot resumption never creates a run; fetch current authorized results after notices and show expiry/unknown/disabled states truthfully. Preserve current authority, committed dispatch claims, conservative unknown liabilities and the [cache contract](../../ai-cache.md).
 Database checks remain deferred until the user's Version 1 implementation trigger.
 Preserve the neutral provider port and
 [operator configuration](../../ai-operator-configuration.md).

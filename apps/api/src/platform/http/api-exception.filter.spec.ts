@@ -6,7 +6,7 @@ import { BoardServiceError } from '../../modules/boards/application/board-servic
 import { IdempotencyConflictError } from '../../modules/boards/infrastructure/idempotency.js';
 import { ApiExceptionFilter } from './api-exception.filter.js';
 import { requestContext } from './api-boundary.js';
-import { AiAdmissionError } from '../../modules/ai/application/index.js';
+import { AiAdmissionError, AiPersistenceError } from '../../modules/ai/application/index.js';
 
 const REQUEST_ID = 'test-request-id';
 describe('global HTTP error classification', () => {
@@ -28,6 +28,12 @@ describe('global HTTP error classification', () => {
       HttpStatus.TOO_MANY_REQUESTS,
       'AI allowance reached.',
       undefined,
+    ],
+    [
+      new AiAdmissionError('AI_ALLOWANCE_REACHED', 1),
+      HttpStatus.TOO_MANY_REQUESTS,
+      'AI allowance reached.',
+      '1',
     ],
     [
       new AiAdmissionError('AI_DISABLED'),
@@ -60,6 +66,18 @@ describe('global HTTP error classification', () => {
     },
   );
   it.each([
+    [
+      new AiPersistenceError('AI_RESULT_EXPIRED'),
+      HttpStatus.GONE,
+      ERROR_CODES.AI_RESULT_EXPIRED,
+      'AI request could not be completed.',
+    ],
+    [
+      new AiPersistenceError('AI_INPUT_TOO_LARGE'),
+      HttpStatus.PAYLOAD_TOO_LARGE,
+      ERROR_CODES.AI_INPUT_TOO_LARGE,
+      'AI request could not be completed.',
+    ],
     [
       new BoardServiceError(ERROR_CODES.NOT_FOUND, 'Board unavailable.'),
       HttpStatus.NOT_FOUND,

@@ -47,5 +47,5 @@ export function configureAuthHttp(
     return authHandler(request, response);
   });
 
-  configureProductHttp(application);
+  configureProductHttp(application, [config.publicApiOrigin, ...config.allowedWebOrigins]);
 }

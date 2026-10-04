@@ -9,6 +9,9 @@ import { AiModule } from './ai.module.js';
 import { AI_PERSISTENCE, AI_INTENT_SERVICE, AI_PAYLOAD_CIPHER } from './application/persistence.js';
 import { AiIntentService } from './application/intent-service.js';
 import { AiRunApplication } from './application/run-application.js';
+import { AiHttpService } from './application/http-service.js';
+import { AiController } from './ai.controller.js';
+import { AUTH_REQUEST_ACTOR } from '../auth/application/index.js';
 import { PostgresAiPersistence } from './infrastructure/persistence/postgres-ai-persistence.js';
 import {
   fixtureApiConfig,
@@ -27,6 +30,20 @@ class FixtureDatabase {}
   exports: [BoardPermissionService],
 })
 class FixtureAuthority {}
+@Module({
+  providers: [
+    {
+      provide: AUTH_REQUEST_ACTOR,
+      useValue: {
+        require: async () => {
+          throw new Error('No auth I/O in composition test');
+        },
+      },
+    },
+  ],
+  exports: [AUTH_REQUEST_ACTOR],
+})
+class FixtureAuth {}
 describe('AI durable Nest composition without database or provider I/O', () => {
   it.each([true, false])('constructs persistence only with AI enabled=%s', async (enabled) => {
     source.createQueryRunner.mockClear();
@@ -44,12 +61,15 @@ describe('AI durable Nest composition without database or provider I/O', () => {
         },
         authority: FixtureAuthority,
       },
+      { module: FixtureAuth },
     );
     const context = await NestFactory.createApplicationContext(registration, {
       logger: false,
       abortOnError: false,
     });
     try {
+      expect(context.get(AiController)).toBeInstanceOf(AiController);
+      expect(context.get(AiHttpService)).toBeInstanceOf(AiHttpService);
       if (enabled) {
         expect(context.get(AI_PERSISTENCE)).toBeInstanceOf(PostgresAiPersistence);
         expect(context.get(AI_INTENT_SERVICE)).toBeInstanceOf(AiIntentService);

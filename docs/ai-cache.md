@@ -102,7 +102,7 @@ for an explicit new request; authorized old-run reads report safe content expiry
 and never regenerate. No dual-key plaintext cache or implicit re-encryption is
 introduced. The operator key-rotation procedure and background cleanup are C17.
 
-Protected HTTP/SSE delivery must use `Cache-Control: no-store` in C09. Application
+Protected [HTTP/SSE delivery](ai-http.md) uses `Cache-Control: no-store` from C09. Application
 result caching does not authorize CDN, service-worker or browser response caching.
 Provider prompt caching remains a separate metered adapter mechanism for C16.
 

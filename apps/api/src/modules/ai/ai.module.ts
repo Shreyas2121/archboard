@@ -17,6 +17,9 @@ import { AiRunSubscriptions } from './application/run-subscriptions.js';
 import { AiPrivateIdentity } from './application/private-identity.js';
 import { AiResultCache } from './application/result-cache.js';
 import { AiRunApplication } from './application/run-application.js';
+import { AiHttpService } from './application/http-service.js';
+import { AiController } from './ai.controller.js';
+import { AiEvents } from './ai-events.js';
 import { AI_ADMISSION_SERVICE, AiAdmissionService } from './application/admission-service.js';
 import { AI_CONNECTION_GATE, AiConnectionGate } from './application/connection-gate.js';
 import type { ApiConfig } from '../../platform/config/index.js';
@@ -36,6 +39,7 @@ export class AiModule {
   public static register(
     config: ApiConfig,
     persistence?: { database: DynamicModule; authority: Type<object> },
+    auth?: DynamicModule,
   ): DynamicModule {
     const durableProviders: Provider[] =
       config.ai.enabled && persistence
@@ -120,9 +124,38 @@ export class AiModule {
         : [];
     return {
       module: AiModule,
-      imports:
-        config.ai.enabled && persistence ? [persistence.database, persistence.authority] : [],
+      imports: [
+        ...(auth ? [auth] : []),
+        ...(config.ai.enabled && persistence ? [persistence.database, persistence.authority] : []),
+      ],
+      controllers: auth ? [AiController] : [],
       providers: [
+        AiEvents,
+        {
+          provide: AiHttpService,
+          inject: durableProviders.length
+            ? [
+                AiRunApplication,
+                AI_RUN_COORDINATOR,
+                AiRunSubscriptions,
+                AI_ADMISSION_SERVICE,
+                AI_PERSISTENCE,
+              ]
+            : [],
+          useFactory: (
+            application?: AiRunApplication,
+            runs?: AiRunCoordinator,
+            subscriptions?: AiRunSubscriptions,
+            admission?: AiAdmissionService,
+            store?: AiPersistence,
+          ) =>
+            new AiHttpService(
+              config.ai.enabled ? config.ai.policy : null,
+              application && runs && subscriptions && admission && store
+                ? { application, runs, subscriptions, admission, persistence: store }
+                : undefined,
+            ),
+        },
         ...durableProviders,
         { provide: AI_POLICY, useValue: config.ai.enabled ? config.ai.policy : null },
         { provide: AI_OPERATOR_SECRETS, useValue: config.ai.enabled ? config.ai.secrets : null },

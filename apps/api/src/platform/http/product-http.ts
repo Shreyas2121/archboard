@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { performance } from 'node:perf_hooks';
 
-import { ERROR_CODES, MAX_IMPORT_REQUEST_BYTES } from '@archboard/contracts';
+import { ERROR_CODES, MAX_IMPORT_REQUEST_BYTES, MAX_AI_REQUEST_BYTES } from '@archboard/contracts';
 import { parseBoundedJson, PortableFileError } from '@archboard/export';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 
@@ -16,6 +16,7 @@ const MAX_ORDINARY_JSON_BYTES = 65_536;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_PAYLOAD_TOO_LARGE = 413;
 const HTTP_RATE_LIMITED = 429;
+const HTTP_FORBIDDEN = 403;
 const INVITE_WINDOW_MS = 60_000;
 const INVITE_REQUEST_LIMIT = 120;
 const MAX_TRACKED_CLIENTS = 10_000;
@@ -38,10 +39,13 @@ interface ApiResponse extends ServerResponse {
   json(body: unknown): void;
 }
 
-export function configureProductHttp(application: NestExpressApplication): void {
+export function configureProductHttp(
+  application: NestExpressApplication,
+  aiOrigins: readonly string[] = [],
+): void {
   const inviteWindows = new Map<string, InviteWindow>();
   application.use((request: ApiRequest, response: ApiResponse, next: () => void) => {
-    if (!request.path.startsWith('/api/v1/') && !request.path.startsWith('/health/')) {
+    if (!/^\/api\/v1\//i.test(request.path) && !request.path.startsWith('/health/')) {
       next();
       return;
     }
@@ -81,6 +85,19 @@ export function configureProductHttp(application: NestExpressApplication): void 
           .status(HTTP_PAYLOAD_TOO_LARGE)
           .json(errorEnvelope(ERROR_CODES.PAYLOAD_TOO_LARGE, 'Request is too large.'));
         return;
+      }
+      if (/^\/api\/v1\/ai\//i.test(request.path)) {
+        const origin = request.headers.origin;
+        if (
+          request.headers['sec-fetch-site'] === 'cross-site' ||
+          (origin !== undefined && (typeof origin !== 'string' || !aiOrigins.includes(origin)))
+        ) {
+          response.locals.errorCode = ERROR_CODES.FORBIDDEN;
+          response
+            .status(HTTP_FORBIDDEN)
+            .json(errorEnvelope(ERROR_CODES.FORBIDDEN, 'Request origin is not allowed.'));
+          return;
+        }
       }
       if (request.path.includes('/invites')) {
         // Use the direct peer address; forwarded headers are untrusted without a configured proxy.
@@ -124,6 +141,26 @@ export function configureProductHttp(application: NestExpressApplication): void 
     });
   });
   // Better Auth is registered before this parser and receives its original request stream.
+  // The larger allowance has its own route-selected parser; ordinary/import parser limits stay unchanged.
+  application.useBodyParser('json', {
+    limit: MAX_AI_REQUEST_BYTES,
+    type: (request: IncomingMessage) =>
+      request.method === 'POST' &&
+      request.url?.split('?')[0] === '/api/v1/ai/runs' &&
+      request.headers['content-type']?.split(';')[0]?.trim().toLowerCase() === 'application/json',
+    verify: (_request: IncomingMessage, _response: ServerResponse, bytes: Buffer) => {
+      try {
+        parseBoundedJson(bytes, MAX_AI_REQUEST_BYTES);
+      } catch (error) {
+        throw Object.assign(new Error('Invalid AI request.'), {
+          status:
+            error instanceof PortableFileError && error.reason === 'size'
+              ? HTTP_PAYLOAD_TOO_LARGE
+              : HTTP_BAD_REQUEST,
+        });
+      }
+    },
+  });
   application.useBodyParser('json', {
     limit: MAX_JSON_BYTES,
     verify: (request: IncomingMessage, _response: ServerResponse, bytes: Buffer) => {

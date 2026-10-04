@@ -223,6 +223,14 @@ export const aiRunSchema = z
 export const aiRunResponseSchema = objectEnvelopeSchema(aiRunSchema);
 export const aiCancelRunSchema = z.strictObject({ schemaVersion: z.literal(AI_SCHEMA_VERSION) });
 export const aiRunPathSchema = z.strictObject({ runId: applicationIdSchema });
+export const aiEmptyQuerySchema = z.strictObject({});
+export const aiAvailabilityQuerySchema = z.strictObject({
+  boardId: applicationIdSchema.optional(),
+});
+// Select this one header from the HTTP header bag; credentials belong only in cookies.
+export const aiEventHeadersSchema = z.strictObject({
+  lastEventId: aiUnsignedDecimalSchema.optional(),
+});
 
 export const aiAllowanceSchema = z.strictObject({
   remainingFreshRuns: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),

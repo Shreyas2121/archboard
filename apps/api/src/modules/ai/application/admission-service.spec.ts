@@ -65,6 +65,76 @@ const unsent = (run: AiRunRecord) =>
     usage: { status: 'unknown' },
   });
 describe('integer AI pricing and full-attempt conservative reservation', () => {
+  it('availability includes current reservations and unknown liabilities across rollover', async () => {
+    const f = setup({
+      AI_DAILY_BUDGET_MICRO_USD: '6',
+      AI_MONTHLY_BUDGET_MICRO_USD: '6',
+      AI_GLOBAL_BUDGET_MICRO_USD: '6',
+    });
+    const input = f.intent();
+    const before = await f.admission.availability(
+      f.store,
+      input.deploymentNamespace,
+      input.actorUserId,
+      null,
+    );
+    expect(before).toMatchObject({
+      available: true,
+      allowance: { remainingMicroUsd: '6', resetsAt: null },
+    });
+    const run = (await f.service.create(input)).run;
+    const held = await f.admission.availability(
+      f.store,
+      input.deploymentNamespace,
+      input.actorUserId,
+      null,
+    );
+    expect(held).toMatchObject({
+      available: false,
+      reason: 'allowance-reached',
+      allowance: { remainingMicroUsd: '0', resetsAt: null },
+    });
+    const dispatched = await f.service.markDispatch(
+      input.deploymentNamespace,
+      input.actorUserId,
+      run.id,
+    );
+    await f.service.settle(
+      input.deploymentNamespace,
+      input.actorUserId,
+      fixtureSettlement(dispatched, {
+        mode: 'unknown',
+        phase: 'outcome-unknown',
+        usage: { status: 'unknown' },
+        actualMicroUsd: null,
+        failureCode: 'AI_OUTCOME_UNKNOWN',
+      }),
+    );
+    f.store.clock = new Date(f.store.clock.getTime() + DAY);
+    const unknown = await f.admission.availability(
+      f.store,
+      input.deploymentNamespace,
+      input.actorUserId,
+      null,
+    );
+    expect(unknown).toMatchObject({
+      available: false,
+      allowance: { remainingMicroUsd: '0', resetsAt: null },
+    });
+  });
+  it('availability consumes poll frequency and rechecks board authority', async () => {
+    const f = setup({ AI_POLLS_PER_MINUTE: '1' });
+    const input = f.intent();
+    await f.admission.availability(f.store, input.deploymentNamespace, input.actorUserId, null);
+    await expect(
+      f.admission.availability(f.store, input.deploymentNamespace, input.actorUserId, null),
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    const board = randomUUID();
+    f.store.denied.set(JSON.stringify([input.actorUserId, board]), 'FORBIDDEN');
+    await expect(
+      f.admission.availability(f.store, input.deploymentNamespace, input.actorUserId, board),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
   it('covers per-category upward rounding when full input is split among read/write/uncached classes', () => {
     const { snapshot } = setup();
     const split = {

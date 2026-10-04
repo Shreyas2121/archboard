@@ -29,7 +29,7 @@ export class AppModule {
       module: AppModule,
       imports: [
         RuntimeAdmissionModule,
-        AiModule.register(config, { database, authority: BoardAuthorityModule }),
+        AiModule.register(config, { database, authority: BoardAuthorityModule }, auth),
         auth,
         database,
         collaboration,

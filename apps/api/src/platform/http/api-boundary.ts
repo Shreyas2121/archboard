@@ -37,8 +37,10 @@ export function errorStatus(code: ErrorCode): number {
     case ERROR_CODES.INVITE_EXHAUSTED:
       return HttpStatus.CONFLICT;
     case ERROR_CODES.INVITE_EXPIRED:
+    case ERROR_CODES.AI_RESULT_EXPIRED:
       return HttpStatus.GONE;
     case ERROR_CODES.PAYLOAD_TOO_LARGE:
+    case ERROR_CODES.AI_INPUT_TOO_LARGE:
       return HttpStatus.PAYLOAD_TOO_LARGE;
     case ERROR_CODES.RATE_LIMITED:
     case ERROR_CODES.AI_ALLOWANCE_REACHED:

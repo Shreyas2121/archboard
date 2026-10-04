@@ -1,0 +1,117 @@
+import {
+  aiRunSchema,
+  type AiCreateRun,
+  type AiRun,
+  type AiAvailability,
+} from '@archboard/contracts';
+import type { AiRunApplication } from './run-application.js';
+import type { AiRunCoordinator } from './run-coordinator.js';
+import type { AiRunSubscriptions } from './run-subscriptions.js';
+import type { AiAdmissionService } from './admission-service.js';
+import { AiPersistenceError, type AiPersistence } from './persistence.js';
+import type { AiPolicy } from './operator-policy.js';
+
+type Snapshot = Awaited<ReturnType<AiRunCoordinator['read']>>;
+export function publicAiRun(snapshot: Snapshot, source: AiRun['source'] = 'generation'): AiRun {
+  const { run, result, content } = snapshot;
+  const state =
+    run.phase === 'completed'
+      ? result?.kind === 'clarification'
+        ? 'needs-input'
+        : 'ready-for-review'
+      : run.phase === 'cancelled'
+        ? 'cancelled'
+        : run.phase === 'outcome-unknown'
+          ? 'outcome-unknown'
+          : content === 'pending'
+            ? run.phase === 'dispatching'
+              ? 'generating'
+              : 'validating'
+            : 'failed';
+  return aiRunSchema.parse({
+    schemaVersion: 1,
+    id: run.id,
+    task: run.task,
+    state,
+    createdAt: run.createdAt.toISOString(),
+    updatedAt: run.updatedAt.toISOString(),
+    content:
+      content === 'available' && result && run.payloadExpiresAt
+        ? { status: 'available', result, expiresAt: run.payloadExpiresAt.toISOString() }
+        : content === 'expired'
+          ? { status: 'expired', expiredAt: (run.payloadExpiresAt ?? run.updatedAt).toISOString() }
+          : { status: content },
+    failure:
+      state === 'outcome-unknown'
+        ? { code: 'AI_OUTCOME_UNKNOWN' }
+        : state === 'failed'
+          ? { code: run.failureCode ?? 'AI_GENERATION_FAILED' }
+          : null,
+    source,
+  });
+}
+export interface AiHttpRuntime {
+  application: AiRunApplication;
+  runs: AiRunCoordinator;
+  subscriptions: AiRunSubscriptions;
+  admission: AiAdmissionService;
+  persistence: AiPersistence;
+}
+/** Always registered: disabled mode needs neither credentials nor database providers. */
+export class AiHttpService {
+  public constructor(
+    private readonly policy: AiPolicy | null,
+    private readonly runtime?: AiHttpRuntime,
+  ) {}
+  private enabled() {
+    if (!this.policy) throw new AiPersistenceError('AI_DISABLED');
+    if (!this.runtime) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
+    return { ...this.runtime, namespace: this.policy.deploymentNamespace };
+  }
+  public async create(actor: string, key: string, body: AiCreateRun) {
+    const { application } = this.enabled();
+    const snapshot = await application.create(actor, key, body);
+    return publicAiRun(
+      snapshot,
+      snapshot.source === 'cache'
+        ? 'cache'
+        : snapshot.source === 'deduplicated'
+          ? 'deduplicated'
+          : 'generation',
+    );
+  }
+  public async read(actor: string, id: string) {
+    const { admission, persistence, runs, namespace } = this.enabled();
+    await admission.request(persistence, namespace, actor, null, 'poll');
+    return publicAiRun(await runs.read(namespace, actor, id));
+  }
+  public async cancel(actor: string, id: string) {
+    const { admission, persistence, runs, namespace } = this.enabled();
+    await admission.request(persistence, namespace, actor, null, 'poll');
+    await runs.cancel(namespace, actor, id);
+    return publicAiRun(await runs.read(namespace, actor, id));
+  }
+  public async availability(actor: string, board: string | null): Promise<AiAvailability> {
+    if (!this.policy)
+      return { schemaVersion: 1, available: false, reason: 'disabled', allowance: null };
+    if (!this.runtime)
+      return { schemaVersion: 1, available: false, reason: 'unavailable', allowance: null };
+    return this.runtime.admission.availability(
+      this.runtime.persistence,
+      this.policy.deploymentNamespace,
+      actor,
+      board,
+    );
+  }
+  public open(actor: string, id: string) {
+    const { subscriptions, namespace, admission, persistence } = this.enabled();
+    const subscription = subscriptions.open(namespace, actor, id);
+    return {
+      close: subscription.close,
+      next: async () => {
+        await admission.request(persistence, namespace, actor, null, 'poll');
+        return publicAiRun(await subscription.next());
+      },
+    };
+  }
+}
