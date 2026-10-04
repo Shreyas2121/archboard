@@ -9,6 +9,12 @@ import {
   type AiEncryptedPayload,
 } from '../../application/persistence.js';
 import type { ErrorCode } from '@archboard/contracts';
+import type {
+  AiLedgerRecord,
+  AiAllocationRecord,
+  AiAttemptRecord,
+} from '../../application/persistence.js';
+import { aiLedgerIdentity } from '../../application/admission-service.js';
 
 // Preserve Date/byte prototypes in the Jest VM; structuredClone produces host-
 // realm objects that strict schemas deliberately do not recognize as VM dates.
@@ -31,6 +37,9 @@ export class InMemoryAiPersistence implements AiPersistence {
     reservations: new Map<string, AiReservationRecord>(),
     settlements: new Map<string, AiSettlement>(),
     payloads: new Map<string, AiEncryptedPayload>(),
+    ledger: new Map<string, AiLedgerRecord>(),
+    allocations: [] as AiAllocationRecord[],
+    attempts: [] as AiAttemptRecord[],
   };
   public clock = new Date('2026-10-04T10:00:00Z');
   public denied = new Map<string, ErrorCode>();
@@ -51,6 +60,30 @@ export class InMemoryAiPersistence implements AiPersistence {
       run?.deploymentNamespace === namespace && run.actorUserId === actor ? clone(run) : null;
     const copy = <V>(value: V | undefined): V | null => (value === undefined ? null : clone(value));
     const scope: AiPersistenceScope = {
+      getLedger: async (key) => {
+        const id = aiLedgerIdentity(key);
+        let row = state.ledger.get(id);
+        if (!row) {
+          row = { ...clone(key), committed: '0', reserved: '0' };
+          state.ledger.set(id, row);
+        }
+        return clone(row);
+      },
+      saveLedger: async (row) => {
+        state.ledger.set(aiLedgerIdentity(row), clone(row));
+      },
+      findAllocations: async (id) => clone(state.allocations.filter((row) => row.runId === id)),
+      insertAllocations: async (rows) => {
+        state.allocations.push(...clone(rows));
+      },
+      findAttempts: async (id) => clone(state.attempts.filter((row) => row.runId === id)),
+      insertAttempt: async (row) => {
+        if (
+          state.attempts.some((value) => value.runId === row.runId && value.ordinal === row.ordinal)
+        )
+          throw new Error('duplicate attempt');
+        state.attempts.push(clone(row));
+      },
       now: async () => new Date(this.clock),
       authorize: async (actor, board) => {
         this.locks.push('authority');

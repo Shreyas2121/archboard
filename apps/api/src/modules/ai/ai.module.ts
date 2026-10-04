@@ -12,6 +12,8 @@ import {
   type AiPayloadCipher,
 } from './application/persistence.js';
 import { AiIntentService } from './application/intent-service.js';
+import { AI_ADMISSION_SERVICE, AiAdmissionService } from './application/admission-service.js';
+import { AI_CONNECTION_GATE, AiConnectionGate } from './application/connection-gate.js';
 import type { ApiConfig } from '../../platform/config/index.js';
 import { OpenAiProvider } from './infrastructure/providers/openai/openai-provider.js';
 import {
@@ -34,6 +36,14 @@ export class AiModule {
       config.ai.enabled && persistence
         ? [
             {
+              provide: AI_CONNECTION_GATE,
+              useFactory: () => new AiConnectionGate(config.ai.enabled ? config.ai.policy : null),
+            },
+            {
+              provide: AI_ADMISSION_SERVICE,
+              useFactory: () => new AiAdmissionService(config.ai.enabled ? config.ai.policy : null),
+            },
+            {
               provide: AI_PERSISTENCE,
               inject: [DataSource, BoardPermissionService, RuntimeAdmission],
               useFactory: (
@@ -55,9 +65,12 @@ export class AiModule {
             },
             {
               provide: AI_INTENT_SERVICE,
-              inject: [AI_PERSISTENCE, AI_PAYLOAD_CIPHER],
-              useFactory: (store: AiPersistence, cipher: AiPayloadCipher) =>
-                new AiIntentService(store, cipher),
+              inject: [AI_PERSISTENCE, AI_PAYLOAD_CIPHER, AI_ADMISSION_SERVICE],
+              useFactory: (
+                store: AiPersistence,
+                cipher: AiPayloadCipher,
+                admission: AiAdmissionService,
+              ) => new AiIntentService(store, cipher, admission),
             },
           ]
         : [];
@@ -90,7 +103,9 @@ export class AiModule {
       exports: [
         AI_POLICY,
         AI_PROVIDER_REGISTRY,
-        ...(durableProviders.length ? [AI_PERSISTENCE, AI_INTENT_SERVICE] : []),
+        ...(durableProviders.length
+          ? [AI_PERSISTENCE, AI_INTENT_SERVICE, AI_ADMISSION_SERVICE, AI_CONNECTION_GATE]
+          : []),
       ],
     };
   }

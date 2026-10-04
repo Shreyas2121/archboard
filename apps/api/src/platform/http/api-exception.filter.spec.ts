@@ -6,9 +6,59 @@ import { BoardServiceError } from '../../modules/boards/application/board-servic
 import { IdempotencyConflictError } from '../../modules/boards/infrastructure/idempotency.js';
 import { ApiExceptionFilter } from './api-exception.filter.js';
 import { requestContext } from './api-boundary.js';
+import { AiAdmissionError } from '../../modules/ai/application/index.js';
 
 const REQUEST_ID = 'test-request-id';
 describe('global HTTP error classification', () => {
+  it.each([
+    [
+      new AiAdmissionError('RATE_LIMITED', 1),
+      HttpStatus.TOO_MANY_REQUESTS,
+      'Too many AI requests.',
+      '1',
+    ],
+    [
+      new AiAdmissionError('RATE_LIMITED'),
+      HttpStatus.TOO_MANY_REQUESTS,
+      'Too many AI requests.',
+      undefined,
+    ],
+    [
+      new AiAdmissionError('AI_ALLOWANCE_REACHED'),
+      HttpStatus.TOO_MANY_REQUESTS,
+      'AI allowance reached.',
+      undefined,
+    ],
+    [
+      new AiAdmissionError('AI_DISABLED'),
+      HttpStatus.SERVICE_UNAVAILABLE,
+      'AI is disabled.',
+      undefined,
+    ],
+  ])(
+    'maps safe AI quota errors with only authoritative Retry-After %#',
+    (error, status, message, retry) => {
+      const exception = error as AiAdmissionError;
+      exception.message = 'private provider/SQL content';
+      const response = {
+        locals: {},
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+        setHeader: jest.fn(),
+      };
+      const host = {
+        switchToHttp: () => ({ getResponse: () => response }),
+      } as unknown as ArgumentsHost;
+      new ApiExceptionFilter().catch(exception, host);
+      expect(response.status).toHaveBeenCalledWith(status);
+      expect(apiErrorEnvelopeSchema.parse(response.json.mock.calls[0]![0]).error).toMatchObject({
+        code: exception.code,
+        message,
+      });
+      if (retry) expect(response.setHeader).toHaveBeenCalledWith('Retry-After', retry);
+      else expect(response.setHeader).not.toHaveBeenCalled();
+    },
+  );
   it.each([
     [
       new BoardServiceError(ERROR_CODES.NOT_FOUND, 'Board unavailable.'),

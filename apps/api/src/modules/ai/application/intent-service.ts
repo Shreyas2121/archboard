@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { aiResultSchema, type AiResult } from '@archboard/contracts';
+import type { AiAdmissionService } from './admission-service.js';
 import {
   AiPersistenceError,
   aiIntentSchema,
@@ -21,6 +22,7 @@ export class AiIntentService {
   public constructor(
     private readonly persistence: AiPersistence,
     private readonly cipher: AiPayloadCipher,
+    private readonly admission?: AiAdmissionService,
   ) {}
 
   public async create(
@@ -29,17 +31,25 @@ export class AiIntentService {
     const parsed = aiIntentSchema.safeParse(input);
     if (!parsed.success) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
     const intent = parsed.data;
+    await this.admission?.request(
+      this.persistence,
+      intent.deploymentNamespace,
+      intent.actorUserId,
+      intent.boardId,
+      'create',
+    );
     return this.persistence.run(async (scope) => {
       // Existing board lock order is preserved before any AI coordinator/receipt.
       await scope.authorize(intent.actorUserId, intent.boardId);
       await scope.lockAdmission(intent.deploymentNamespace, intent.actorUserId);
+      const now = await scope.now();
+      await this.admission?.prepare(scope, intent.deploymentNamespace, intent.actorUserId, now);
       await scope.lockFingerprint(
         intent.deploymentNamespace,
         intent.actorUserId,
         intent.fingerprint,
       );
       await scope.lockReceipt(intent.deploymentNamespace, intent.actorUserId, intent.key);
-      const now = await scope.now();
       const receipt = await scope.findReceipt(
         intent.deploymentNamespace,
         intent.actorUserId,
@@ -94,12 +104,14 @@ export class AiIntentService {
       await scope.lockRun(run.id);
       if (!active) {
         await scope.insertRun(run);
-        await scope.insertReservation({
+        const reservation = {
           ...intent.reservation,
           runId: run.id,
-          status: 'pending',
+          status: 'pending' as const,
           fundedAt: null,
-        });
+        };
+        await scope.insertReservation(reservation);
+        await this.admission?.fund(scope, run, reservation, now);
       }
       await scope.insertReceipt({
         deploymentNamespace: intent.deploymentNamespace,
@@ -127,6 +139,7 @@ export class AiIntentService {
     if (!prior) throw new AiPersistenceError('NOT_FOUND');
     if (disclose) await scope.authorize(actor, prior.boardId);
     await scope.lockAdmission(namespace, actor);
+    await this.admission?.prepare(scope, namespace, actor, await scope.now(), id);
     await scope.lockFingerprint(namespace, actor, prior.fingerprint);
     await scope.lockRun(id);
     const run = await scope.findRun(namespace, actor, id);
@@ -141,6 +154,7 @@ export class AiIntentService {
       const now = await scope.now();
       // Pending C05 intent is not funded. This cannot dispatch until C06 writes
       // reserved capacity and changes the phase in the same admission transaction.
+      if (!this.admission) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
       if (
         run.phase !== 'admitted' ||
         reservation?.status !== 'reserved' ||
@@ -154,6 +168,7 @@ export class AiIntentService {
       run.leaseExpiresAt = run.deadlineAt;
       run.updatedAt = now;
       await scope.updateRun(run);
+      await this.admission.claim(scope, run, now);
       return run;
     });
   }
@@ -196,6 +211,9 @@ export class AiIntentService {
       const now = await scope.now();
       if (settlement.mode === 'known' && (!run.leaseExpiresAt || run.leaseExpiresAt <= now))
         throw new AiPersistenceError('AI_OUTCOME_UNKNOWN');
+      if (reservation.status !== 'pending' && !this.admission)
+        throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
+      await this.admission?.settle(scope, run, reservation, settlement, now);
       run.phase = settlement.phase;
       run.usage = settlement.usage;
       run.failureCode = settlement.failureCode;
@@ -222,6 +240,16 @@ export class AiIntentService {
       await scope.insertSettlement(settlement);
       await scope.updateReservation(reservation);
       await scope.updateRun(run);
+    });
+  }
+
+  /** C07 must claim every retry/repair before making its additional network call. */
+  public claimAttempt(namespace: string, actor: string, id: string, dispatchToken: string) {
+    return this.persistence.run(async (scope) => {
+      const run = await this.owned(scope, namespace, actor, id);
+      if (!this.admission || run.dispatchToken !== dispatchToken)
+        throw new AiPersistenceError('AI_OUTCOME_UNKNOWN');
+      return this.admission.claim(scope, run, await scope.now());
     });
   }
 

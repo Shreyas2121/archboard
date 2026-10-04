@@ -7,11 +7,13 @@ import type { ArgumentsHost, ExceptionFilter } from '@nestjs/common';
 import { contextSnapshot, errorEnvelope, errorStatus } from './api-boundary.js';
 import { BoardServiceError } from '../../modules/boards/application/board-service.js';
 import { IdempotencyConflictError } from '../../modules/boards/infrastructure/idempotency.js';
+import { AiPersistenceError, AiAdmissionError } from '../../modules/ai/application/index.js';
 
 interface ApiResponse {
   locals: Record<string, unknown>;
   status(code: number): ApiResponse;
   json(body: unknown): void;
+  setHeader(name: string, value: string): void;
 }
 
 const statusCode: Record<number, ErrorCode> = {
@@ -33,14 +35,33 @@ export class ApiExceptionFilter implements ExceptionFilter {
     // Only documented feature errors expose their safe messages. Unknown exceptions
     // (including response-schema failures) keep the standard unavailable envelope.
     const featureCode =
-      exception instanceof BoardServiceError
+      exception instanceof AiPersistenceError
         ? exception.code
-        : exception instanceof IdempotencyConflictError
-          ? ERROR_CODES.IDEMPOTENCY_CONFLICT
-          : undefined;
+        : exception instanceof BoardServiceError
+          ? exception.code
+          : exception instanceof IdempotencyConflictError
+            ? ERROR_CODES.IDEMPOTENCY_CONFLICT
+            : undefined;
     if (featureCode !== undefined && exception instanceof Error) {
       response.locals.errorCode = featureCode;
-      response.status(errorStatus(featureCode)).json(errorEnvelope(featureCode, exception.message));
+      if (
+        exception instanceof AiAdmissionError &&
+        featureCode === ERROR_CODES.RATE_LIMITED &&
+        Number.isSafeInteger(exception.retryAfterSeconds) &&
+        exception.retryAfterSeconds! > 0
+      )
+        response.setHeader('Retry-After', String(exception.retryAfterSeconds));
+      const message =
+        exception instanceof AiPersistenceError
+          ? featureCode === ERROR_CODES.AI_ALLOWANCE_REACHED
+            ? 'AI allowance reached.'
+            : featureCode === ERROR_CODES.RATE_LIMITED
+              ? 'Too many AI requests.'
+              : featureCode === ERROR_CODES.AI_DISABLED
+                ? 'AI is disabled.'
+                : 'AI request could not be completed.'
+          : exception.message;
+      response.status(errorStatus(featureCode)).json(errorEnvelope(featureCode, message));
       return;
     }
     const parserStatus =

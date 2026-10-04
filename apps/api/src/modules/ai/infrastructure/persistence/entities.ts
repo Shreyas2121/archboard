@@ -150,7 +150,7 @@ export class AiCounterEntity {
     | 'poll'
     | 'sse';
   @PrimaryColumn({ name: 'period', type: 'text' })
-  period!: 'minute' | 'day' | 'active';
+  period!: 'second' | 'minute' | 'day' | 'active';
   @PrimaryColumn({ name: 'period_start', type: 'timestamptz' })
   periodStart!: Date;
   @Column({ name: 'committed', type: 'bigint' })
@@ -199,7 +199,18 @@ export class AiAllocationEntity {
   amount!: string;
 }
 
+@Entity({ name: 'ai_provider_attempts' })
+export class AiAttemptEntity {
+  @PrimaryColumn({ name: 'run_id', type: 'uuid' }) runId!: string;
+  @PrimaryColumn({ name: 'ordinal', type: 'integer' }) ordinal!: number;
+  @Column({ name: 'dispatch_token', type: 'uuid' }) dispatchToken!: string;
+  @Column({ name: 'claimed_at', type: 'timestamptz' }) claimedAt!: Date;
+  @Column({ name: 'input_capacity', type: 'bigint' }) inputCapacity!: string;
+  @Column({ name: 'output_capacity', type: 'bigint' }) outputCapacity!: string;
+}
+
 export const AI_ENTITIES = [
+  AiAttemptEntity,
   AiRunEntity,
   AiReceiptEntity,
   AiReservationEntity,

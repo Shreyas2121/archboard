@@ -13,6 +13,10 @@ import {
   type AiReservationRecord,
   type AiSettlement,
   type AiEncryptedPayload,
+  type AiLedgerKey,
+  type AiLedgerRecord,
+  type AiAllocationRecord,
+  type AiAttemptRecord,
 } from '../../application/persistence.js';
 import { normalizedUsageSchema } from '../../application/provider.js';
 import {
@@ -21,6 +25,10 @@ import {
   AiReservationEntity,
   AiSettlementEntity,
   AiPayloadEntity,
+  AiCounterEntity,
+  AiBudgetPeriodEntity,
+  AiAllocationEntity,
+  AiAttemptEntity,
 } from './entities.js';
 
 const MAX_CLEANUP_BATCH = 64;
@@ -54,6 +62,96 @@ class PostgresAiScope implements AiPersistenceScope {
   private get manager() {
     return this.runner.manager;
   }
+  public async getLedger(key: AiLedgerKey): Promise<AiLedgerRecord> {
+    const { deploymentNamespace, scope, subject, periodStart } = key;
+    if (key.kind === 'capacity') {
+      const identity = {
+        deploymentNamespace,
+        scope,
+        subject,
+        periodStart,
+        metric: key.metric as AiCounterEntity['metric'],
+        period: key.period as AiCounterEntity['period'],
+      };
+      await this.manager
+        .getRepository(AiCounterEntity)
+        .createQueryBuilder()
+        .insert()
+        .values({ ...identity, committed: '0', reserved: '0' })
+        .orIgnore()
+        .execute();
+      const row = await this.manager
+        .getRepository(AiCounterEntity)
+        .createQueryBuilder('capacity')
+        .where(identity)
+        .setLock('pessimistic_write')
+        .getOneOrFail();
+      return { ...key, committed: row.committed, reserved: row.reserved };
+    }
+    const identity = {
+      deploymentNamespace,
+      scope,
+      subject,
+      periodStart,
+      period: key.period as AiBudgetPeriodEntity['period'],
+    };
+    await this.manager
+      .getRepository(AiBudgetPeriodEntity)
+      .createQueryBuilder()
+      .insert()
+      .values({ ...identity, committedMicroUsd: '0', reservedMicroUsd: '0' })
+      .orIgnore()
+      .execute();
+    const row = await this.manager
+      .getRepository(AiBudgetPeriodEntity)
+      .createQueryBuilder('budget')
+      .where(identity)
+      .setLock('pessimistic_write')
+      .getOneOrFail();
+    return { ...key, committed: row.committedMicroUsd, reserved: row.reservedMicroUsd };
+  }
+  public async saveLedger(record: AiLedgerRecord): Promise<void> {
+    const { deploymentNamespace, scope, subject, periodStart } = record;
+    if (record.kind === 'capacity') {
+      await this.manager.update(
+        AiCounterEntity,
+        {
+          deploymentNamespace,
+          scope,
+          subject,
+          periodStart,
+          metric: record.metric as AiCounterEntity['metric'],
+          period: record.period as AiCounterEntity['period'],
+        },
+        { committed: record.committed, reserved: record.reserved },
+      );
+    } else
+      await this.manager.update(
+        AiBudgetPeriodEntity,
+        {
+          deploymentNamespace,
+          scope,
+          subject,
+          periodStart,
+          period: record.period as AiBudgetPeriodEntity['period'],
+        },
+        { committedMicroUsd: record.committed, reservedMicroUsd: record.reserved },
+      );
+  }
+  public async findAllocations(runId: string): Promise<AiAllocationRecord[]> {
+    const rows = await this.manager.findBy(AiAllocationEntity, { runId });
+    return rows.map((row) => ({ ...row, period: row.period as AiLedgerKey['period'] }));
+  }
+  public async insertAllocations(records: AiAllocationRecord[]): Promise<void> {
+    await this.manager.insert(AiAllocationEntity, records);
+  }
+  public findAttempts(runId: string): Promise<AiAttemptRecord[]> {
+    return this.manager.find(AiAttemptEntity, { where: { runId }, order: { ordinal: 'ASC' } });
+  }
+  public async insertAttempt(record: AiAttemptRecord): Promise<void> {
+    await this.manager.insert(AiAttemptEntity, record);
+  }
+
   public async now(): Promise<Date> {
     // PostgreSQL owns lifecycle time; transaction_timestamp would hide lock waits.
     const rows: { now: Date }[] = await this.runner.query('SELECT clock_timestamp() AS now');

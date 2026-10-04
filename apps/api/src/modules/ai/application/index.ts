@@ -4,3 +4,6 @@ export * from './provider-registry.js';
 export * from './prompt-renderer.js';
 export * from './persistence.js';
 export * from './intent-service.js';
+export * from './admission-service.js';
+export * from './pricing.js';
+export * from './connection-gate.js';

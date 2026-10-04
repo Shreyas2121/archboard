@@ -41,8 +41,10 @@ export function errorStatus(code: ErrorCode): number {
     case ERROR_CODES.PAYLOAD_TOO_LARGE:
       return HttpStatus.PAYLOAD_TOO_LARGE;
     case ERROR_CODES.RATE_LIMITED:
+    case ERROR_CODES.AI_ALLOWANCE_REACHED:
       return HttpStatus.TOO_MANY_REQUESTS;
     case ERROR_CODES.TEMPORARILY_UNAVAILABLE:
+    case ERROR_CODES.AI_DISABLED:
       return HttpStatus.SERVICE_UNAVAILABLE;
     default:
       return HttpStatus.BAD_REQUEST;

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from '@jest/globals';
 import { AiIntentService } from './intent-service.js';
+import { AiAdmissionService } from './admission-service.js';
 import {
   AiPersistenceError,
   aiIntentSchema,
@@ -13,6 +14,7 @@ import {
   fixtureAiIntent,
   fixtureAiResult,
   fixtureSettlement,
+  fixturePersistencePolicy,
   TEST_KEY,
   TEST_KEY_VERSION,
   TEST_NAMESPACE,
@@ -27,24 +29,22 @@ const setup = (store = new InMemoryAiPersistence()) => ({
   service: new AiIntentService(store, new AesGcmAiPayloadCipher(TEST_KEY, TEST_KEY_VERSION)),
 });
 async function fund(store: AiPersistence, run: AiRunRecord): Promise<void> {
-  await store.run(async (scope) => {
-    await scope.authorize(run.actorUserId, run.boardId);
-    await scope.lockAdmission(run.deploymentNamespace, run.actorUserId);
-    await scope.lockFingerprint(run.deploymentNamespace, run.actorUserId, run.fingerprint);
-    await scope.lockRun(run.id);
-    const hold = (await scope.findReservation(run.id))!;
-    hold.status = 'reserved';
-    hold.fundedAt = await scope.now();
-    const current = (await scope.findRun(run.deploymentNamespace, run.actorUserId, run.id))!;
-    current.phase = 'admitted';
-    await scope.updateReservation(hold);
-    await scope.updateRun(current);
-  });
+  await new AiAdmissionService(fixturePersistencePolicy()).admit(
+    store,
+    run.deploymentNamespace,
+    run.actorUserId,
+    run.id,
+  );
 }
 async function dispatched() {
   const context = setup();
   const { run } = await context.service.create(fixtureAiIntent());
   await fund(context.store, run);
+  context.service = new AiIntentService(
+    context.store,
+    new AesGcmAiPayloadCipher(TEST_KEY, TEST_KEY_VERSION),
+    new AiAdmissionService(fixturePersistencePolicy()),
+  );
   return {
     ...context,
     run: await context.service.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id),
@@ -205,7 +205,7 @@ describe('durable AI intent service with transactional memory adapter', () => {
     store.clock = new Date(store.clock.getTime() + DAY_MS);
     expect(store.state.reservations.get(run.id)).toMatchObject({
       status: 'unknown',
-      maximumMicroUsd: '10',
+      maximumMicroUsd: fixtureAiIntent().reservation.maximumMicroUsd,
     });
     expect((await service.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).content).toBe('unavailable');
     await expect(
@@ -252,6 +252,7 @@ describe('durable AI intent service with transactional memory adapter', () => {
     const service = new AiIntentService(
       store,
       new AesGcmAiPayloadCipher(TEST_KEY, TEST_KEY_VERSION, 1),
+      new AiAdmissionService(fixturePersistencePolicy()),
     );
     await expect(
       service.settle(TEST_NAMESPACE, TEST_ACTOR, fixtureSettlement(run), fixtureAiResult),

@@ -123,11 +123,16 @@ describe('Postgres AI adapter with database-free QueryRunner probes', () => {
   });
 });
 describe('checked-in AI entity and forward-schema source alignment (no migration execution)', () => {
-  it('aligns all eight ORM tables/column types with the forward migration source and runtime registry', async () => {
-    const source = await readFile(
-      new URL('../../../../migrations/1791072000000-AiPersistenceFoundation.ts', import.meta.url),
-      'utf8',
-    );
+  it('aligns ORM tables/column types with the checked-in forward migration sources and runtime registry', async () => {
+    const source =
+      (await readFile(
+        new URL('../../../../migrations/1791072000000-AiPersistenceFoundation.ts', import.meta.url),
+        'utf8',
+      )) +
+      (await readFile(
+        new URL('../../../../migrations/1791072000001-AiAdmissionFoundation.ts', import.meta.url),
+        'utf8',
+      ));
     const metadata = getMetadataArgsStorage();
     for (const entity of AI_ENTITIES) {
       expect(DATABASE_ENTITIES).toContain(entity);

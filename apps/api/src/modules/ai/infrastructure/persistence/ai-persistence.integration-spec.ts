@@ -5,6 +5,10 @@ import { DataSource } from 'typeorm';
 import { InitialDatabaseFoundation1789300000000 } from '../../../../migrations/1789300000000-InitialDatabaseFoundation.js';
 import { RetainCompactedUpdateReceipts1790426800000 } from '../../../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
 import { AiPersistenceFoundation1791072000000 } from '../../../../migrations/1791072000000-AiPersistenceFoundation.js';
+import { AiAdmissionFoundation1791072000001 } from '../../../../migrations/1791072000001-AiAdmissionFoundation.js';
+import { AiAdmissionService } from '../../application/admission-service.js';
+import { estimateAiReservation } from '../../application/pricing.js';
+import { snapshotAiConfiguration } from '../../application/persistence.js';
 import { DATABASE_ENTITIES } from '../../../../platform/database/database-entities.js';
 import { BoardPermissionService } from '../../../boards/application/index.js';
 import { PostgresBoardAuthorityReader } from '../../../boards/infrastructure/postgres-board-authority-reader.js';
@@ -29,6 +33,7 @@ import {
   fixtureAiIntent,
   fixtureAiResult,
   fixtureSettlement,
+  fixturePersistencePolicy,
   TEST_KEY,
   TEST_KEY_VERSION,
   TEST_ACTOR,
@@ -72,6 +77,7 @@ beforeAll(async () => {
       InitialDatabaseFoundation1789300000000,
       RetainCompactedUpdateReceipts1790426800000,
       AiPersistenceFoundation1791072000000,
+      AiAdmissionFoundation1791072000001,
     ],
     synchronize: false,
     migrationsRun: false,
@@ -86,7 +92,7 @@ beforeAll(async () => {
   ]);
   const authority = new BoardPermissionService(new PostgresBoardAuthorityReader(source));
   store = new PostgresAiPersistence(source, authority);
-  service = new AiIntentService(store, cipher);
+  service = new AiIntentService(store, cipher, new AiAdmissionService(fixturePersistencePolicy()));
 });
 afterAll(async () => {
   if (source?.isInitialized) await source.destroy();
@@ -96,21 +102,137 @@ afterAll(async () => {
   }
 });
 async function fund(run: AiRunRecord) {
-  await store.run(async (scope) => {
-    await scope.authorize(run.actorUserId, run.boardId);
-    await scope.lockAdmission(run.deploymentNamespace, run.actorUserId);
-    await scope.lockFingerprint(run.deploymentNamespace, run.actorUserId, run.fingerprint);
-    await scope.lockRun(run.id);
-    const hold = (await scope.findReservation(run.id))!;
-    hold.status = 'reserved';
-    hold.fundedAt = await scope.now();
-    run.phase = 'admitted';
-    await scope.updateReservation(hold);
-    await scope.updateRun(run);
-  });
+  await new AiAdmissionService(fixturePersistencePolicy()).admit(
+    store,
+    run.deploymentNamespace,
+    run.actorUserId,
+    run.id,
+  );
   return service.markDispatch(run.deploymentNamespace, run.actorUserId, run.id);
 }
 describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
+  it.each([
+    ['AI_DAILY_BUDGET_MICRO_USD', '6'],
+    ['AI_GLOBAL_CONCURRENCY', '1'],
+    ['AI_PROVIDER_RPM', '3'],
+    ['AI_PROVIDER_INPUT_TPM', '3000'],
+    ['AI_PROVIDER_OUTPUT_TPM', '300'],
+  ])(
+    'C06: serializes real concurrent %s reservations across repository instances',
+    async (control, limit) => {
+      const policy = fixturePersistencePolicy({
+        AI_DEPLOYMENT_NAMESPACE: 'race-' + randomUUID(),
+        AI_ACTOR_CONCURRENCY: control === 'AI_GLOBAL_CONCURRENCY' ? '1' : '100',
+        AI_GLOBAL_CONCURRENCY: '100',
+        [control]: limit,
+      });
+      const snapshot = snapshotAiConfiguration({
+        provider: 'openai',
+        profile: policy.profiles[0]!,
+        policy,
+      });
+      const first = new AiIntentService(store, cipher, new AiAdmissionService(policy));
+      const secondStore = new PostgresAiPersistence(
+        source,
+        new BoardPermissionService(new PostgresBoardAuthorityReader(source)),
+      );
+      const second = new AiIntentService(secondStore, cipher, new AiAdmissionService(policy));
+      const input = () => ({
+        ...fresh(),
+        deploymentNamespace: policy.deploymentNamespace,
+        snapshot,
+        reservation: estimateAiReservation(snapshot, policy.limits),
+      });
+      const results = await Promise.allSettled([first.create(input()), second.create(input())]);
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(
+        await source
+          .getRepository(AiRunEntity)
+          .countBy({ deploymentNamespace: policy.deploymentNamespace }),
+      ).toBe(1);
+      const wallet = await source.getRepository(AiBudgetPeriodEntity).findOneByOrFail({
+        deploymentNamespace: policy.deploymentNamespace,
+        scope: 'global',
+        subject: '',
+        period: 'lifetime',
+      });
+      expect(wallet.reservedMicroUsd).toBe('6');
+    },
+  );
+  it('C06: rejects a forged funded phase without the required allocations', async () => {
+    const { run } = await new AiIntentService(store, cipher).create(fresh());
+    await expect(
+      source.transaction(async (manager) => {
+        await manager.update(AiReservationEntity, run.id, {
+          status: 'reserved',
+          fundedAt: new Date(),
+        });
+        await manager.update(AiRunEntity, run.id, { phase: 'admitted' });
+      }),
+    ).rejects.toMatchObject({ driverError: { code: '23514' } });
+    expect(
+      (await source.getRepository(AiReservationEntity).findOneByOrFail({ runId: run.id })).status,
+    ).toBe('pending');
+  });
+  it('C06: preserves unknown liability over a fake-clock calendar transition in real transactions', async () => {
+    const policy = fixturePersistencePolicy({
+      AI_DEPLOYMENT_NAMESPACE: 'rollover-' + randomUUID(),
+      AI_DAILY_BUDGET_MICRO_USD: '10',
+      AI_MONTHLY_BUDGET_MICRO_USD: '10',
+    });
+    const snapshot = snapshotAiConfiguration({
+      provider: 'openai',
+      profile: policy.profiles[0]!,
+      policy,
+    });
+    const input = () => ({
+      ...fresh(),
+      deploymentNamespace: policy.deploymentNamespace,
+      snapshot,
+      reservation: estimateAiReservation(snapshot, policy.limits),
+    });
+    const current = new AiIntentService(store, cipher, new AiAdmissionService(policy));
+    const { run } = await current.create(input());
+    const started = await current.markDispatch(policy.deploymentNamespace, TEST_ACTOR, run.id);
+    await current.settle(
+      policy.deploymentNamespace,
+      TEST_ACTOR,
+      fixtureSettlement(started, {
+        mode: 'unknown',
+        phase: 'outcome-unknown',
+        actualMicroUsd: null,
+        usage: { status: 'unknown' },
+      }),
+    );
+    const DAY_MS = 86_400_000;
+    const future: AiPersistence = {
+      run: <T>(work: (scope: AiPersistenceScope) => Promise<T>) =>
+        store.run((scope) =>
+          work(
+            new Proxy(scope, {
+              get: (target, property) => {
+                if (property === 'now') return async () => new Date(Date.now() + DAY_MS);
+                const value = Reflect.get(target, property);
+                return typeof value === 'function' ? value.bind(target) : value;
+              },
+            }),
+          ),
+        ),
+    };
+    await expect(
+      new AiIntentService(future, cipher, new AiAdmissionService(policy)).create(input()),
+    ).rejects.toMatchObject({ code: 'AI_ALLOWANCE_REACHED' });
+    expect(
+      (
+        await source.getRepository(AiBudgetPeriodEntity).findOneByOrFail({
+          deploymentNamespace: policy.deploymentNamespace,
+          scope: 'global',
+          subject: '',
+          period: 'lifetime',
+        })
+      ).reservedMicroUsd,
+    ).toBe('6');
+  });
   it('coordinates two repository instances across concurrent same-key and different-key creation', async () => {
     const input = fresh();
     const second = new AiIntentService(
@@ -119,6 +241,7 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
         new BoardPermissionService(new PostgresBoardAuthorityReader(source)),
       ),
       cipher,
+      new AiAdmissionService(fixturePersistencePolicy()),
     );
     const results = await Promise.all([
       service.create(input),
@@ -180,7 +303,13 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
           ),
         ),
     };
-    await expect(new AiIntentService(failed, cipher).create(input)).rejects.toMatchObject({
+    await expect(
+      new AiIntentService(
+        failed,
+        cipher,
+        new AiAdmissionService(fixturePersistencePolicy()),
+      ).create(input),
+    ).rejects.toMatchObject({
       code: 'TEMPORARILY_UNAVAILABLE',
     });
     expect(
@@ -195,7 +324,7 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
     ).rejects.toMatchObject({ driverError: { code: '23505' } });
   });
   it('rejects admitted or dispatching phase without funded admission at deferred commit', async () => {
-    const { run } = await service.create(fresh());
+    const { run } = await new AiIntentService(store, cipher).create(fresh());
     await expect(
       source.transaction(async (manager) => {
         await manager.update(AiRunEntity, run.id, { phase: 'admitted' });
@@ -319,7 +448,10 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
     );
     expect(
       await source.getRepository(AiReservationEntity).findOneByOrFail({ runId: run.id }),
-    ).toMatchObject({ status: 'unknown', maximumMicroUsd: '10' });
+    ).toMatchObject({
+      status: 'unknown',
+      maximumMicroUsd: fixtureAiIntent().reservation.maximumMicroUsd,
+    });
     await expect(
       service.settle(TEST_NAMESPACE, TEST_ACTOR, fixtureSettlement(started)),
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });

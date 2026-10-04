@@ -3,6 +3,7 @@ import { InitialDatabaseFoundation1789300000000 } from '../../migrations/1789300
 import { RetainCompactedUpdateReceipts1790426800000 } from '../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
 import { DATABASE_ENTITIES } from './database-entities.js';
 import { AiPersistenceFoundation1791072000000 } from '../../migrations/1791072000000-AiPersistenceFoundation.js';
+import { AiAdmissionFoundation1791072000001 } from '../../migrations/1791072000001-AiAdmissionFoundation.js';
 
 export function runtimeDataSourceOptions(config: ApiConfig) {
   return {
@@ -13,6 +14,7 @@ export function runtimeDataSourceOptions(config: ApiConfig) {
       InitialDatabaseFoundation1789300000000,
       RetainCompactedUpdateReceipts1790426800000,
       AiPersistenceFoundation1791072000000,
+      AiAdmissionFoundation1791072000001,
     ],
     synchronize: false,
     migrationsRun: false,

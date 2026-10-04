@@ -52,7 +52,7 @@ describe('server-owned AI operator configuration', () => {
       actorDailyMicroUsd: null,
     });
     expect(config.policy.limits).toMatchObject({
-      providerRequestsPerMinute: 2,
+      providerRequestsPerMinute: 3,
       providerInputTokensPerMinute: 60000,
       providerOutputTokensPerMinute: 10000,
     });

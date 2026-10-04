@@ -1,8 +1,8 @@
 # AI persistence foundation
 
-AI-C05 adds feature-owned durable intent and encrypted result storage. It has no
-HTTP routes, provider execution, funded quota admission, background queue or exact
-result-cache index. Those follow in [AI-C06 and later tasks](../guide.md#ai-c06--durable-rate-token-concurrency-and-spending-gates).
+AI-C05 adds feature-owned durable intent and encrypted result storage. AI-C06 adds
+[durable admission and spending gates](ai-admission.md). HTTP routes, provider
+execution, background orchestration and exact result caching follow in later tasks.
 Database acceptance remains OPEN under the [verification policy](verification-policy.md).
 
 ## Records and lifetime
@@ -45,7 +45,7 @@ Acquisition order for user creation/read/dispatch is:
 
 1. Current board authority using the shared locked permission operation, then actor existence.
 2. Namespace-global AI transaction advisory lock, then actor AI lock.
-3. C06's deterministically sorted capacity/budget period rows, when admission is added.
+3. Deterministically sorted current/origin capacity and budget rows, global before actor.
 4. Actor-private fingerprint advisory lock.
 5. Creation receipt advisory lock, when creating/replaying.
 6. Run advisory fence and existing run row lock.
@@ -59,11 +59,12 @@ payload cleanup takes only the namespace lock and a bounded ordered batch of at
 most 64 rows; it never waits for a board lock.
 
 PostgreSQL `clock_timestamp()` owns lifecycle times, including time after lock
-waits. New intent, pending reservation and receipt commit together. Creation itself
-does not claim a funded budget. Dispatch requires admitted phase, reserved funding,
+waits. Foundation-only creation commits pending intent/reservation/receipt. Enabled
+C06 composition also funds them in that transaction. Dispatch requires admitted phase, reserved funding,
 positive maximum money and an unexpired deadline; it writes a fresh UUID fence and
-deadline-bounded lease before any later network call. C06 must fund admission and
-apply capacity/budget settlement in these same transactions; a status transition
+deadline-bounded lease before any later network call. C06 funds admission and
+applies capacity/budget settlement in these same transactions. Its forward
+constraints require allocations and balanced liability; a status transition
 alone is not proof of quota admission.
 
 The forward migration defines active uniqueness, owner-linked receipt/payload

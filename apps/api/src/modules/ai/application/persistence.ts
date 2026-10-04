@@ -211,6 +211,12 @@ export class AiPersistenceError extends Error {
   }
 }
 export interface AiPersistenceScope {
+  getLedger(key: AiLedgerKey): Promise<AiLedgerRecord>;
+  saveLedger(record: AiLedgerRecord): Promise<void>;
+  findAllocations(runId: string): Promise<AiAllocationRecord[]>;
+  insertAllocations(records: AiAllocationRecord[]): Promise<void>;
+  findAttempts(runId: string): Promise<AiAttemptRecord[]>;
+  insertAttempt(record: AiAttemptRecord): Promise<void>;
   now(): Promise<Date>;
   authorize(actorUserId: string, boardId: string | null): Promise<void>;
   lockAdmission(namespace: string, actorUserId: string): Promise<void>;
@@ -239,6 +245,31 @@ export interface AiPersistenceScope {
     id: string,
   ): Promise<AiEncryptedPayload | null>;
   deleteExpiredPayloads(namespace: string, maximum: number): Promise<number>;
+}
+export interface AiLedgerKey {
+  kind: 'capacity' | 'budget';
+  deploymentNamespace: string;
+  scope: 'global' | 'actor';
+  subject: string;
+  metric: string;
+  period: 'second' | 'minute' | 'day' | 'month' | 'lifetime' | 'active';
+  periodStart: Date;
+}
+export interface AiLedgerRecord extends AiLedgerKey {
+  committed: string;
+  reserved: string;
+}
+export interface AiAllocationRecord extends AiLedgerKey {
+  runId: string;
+  amount: string;
+}
+export interface AiAttemptRecord {
+  runId: string;
+  ordinal: number;
+  dispatchToken: string;
+  claimedAt: Date;
+  inputCapacity: string;
+  outputCapacity: string;
 }
 export interface AiPersistence {
   run<T>(work: (scope: AiPersistenceScope) => Promise<T>): Promise<T>;

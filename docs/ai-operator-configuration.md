@@ -85,12 +85,14 @@ spending and per-actor frequency/concurrency limits still apply. Money is bounde
 by PostgreSQL signed bigint without floating-point conversion.
 
 Omitted or blank `AI_PROVIDER_RPM`, `AI_PROVIDER_INPUT_TPM`, and
-`AI_PROVIDER_OUTPUT_TPM` use application ceilings of 2 requests/minute, 60,000
+`AI_PROVIDER_OUTPUT_TPM` use application ceilings of 3 requests/minute, 60,000
 input tokens/minute, and 10,000 output tokens/minute. Explicit overrides remain
 positive bounded integers. These are application defaults, not measured provider
 quotas; lower them when necessary to fit the account's reviewed limits. A profile's
 per-run input/output caps must fit the resolved ceilings; if they exceed defaults,
-reduce the profile bounds or explicitly raise the relevant ceiling.
+reduce the profile bounds or explicitly raise the relevant ceiling. C06 reserves
+all configured attempts, so the default RPM now covers the initial attempt plus
+one repair and one definitive-rejection retry. All overrides remain optional.
 These settings are configuration only, not implemented quota/accounting enforcement.
 
 | Optional setting                                      | Default       | Bound/relationship                                                                    |
