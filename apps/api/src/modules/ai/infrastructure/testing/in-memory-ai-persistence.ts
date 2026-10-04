@@ -7,6 +7,7 @@ import {
   type AiReservationRecord,
   type AiSettlement,
   type AiEncryptedPayload,
+  type AiCacheRecord,
 } from '../../application/persistence.js';
 import type { ErrorCode } from '@archboard/contracts';
 import type {
@@ -15,6 +16,7 @@ import type {
   AiAttemptRecord,
 } from '../../application/persistence.js';
 import { aiLedgerIdentity } from '../../application/admission-service.js';
+const MAX_CONTENT_BATCH = 64;
 
 // Preserve Date/byte prototypes in the Jest VM; structuredClone produces host-
 // realm objects that strict schemas deliberately do not recognize as VM dates.
@@ -37,6 +39,7 @@ export class InMemoryAiPersistence implements AiPersistence {
     reservations: new Map<string, AiReservationRecord>(),
     settlements: new Map<string, AiSettlement>(),
     payloads: new Map<string, AiEncryptedPayload>(),
+    cache: new Map<string, AiCacheRecord>(),
     ledger: new Map<string, AiLedgerRecord>(),
     allocations: [] as AiAllocationRecord[],
     attempts: [] as AiAttemptRecord[],
@@ -45,6 +48,8 @@ export class InMemoryAiPersistence implements AiPersistence {
   public denied = new Map<string, ErrorCode>();
   public locks: string[] = [];
   public failReceipt = false;
+  public failPayload = false;
+  public failCache = false;
   private tail: Promise<void> = Promise.resolve();
   public async run<T>(work: (scope: AiPersistenceScope) => Promise<T>): Promise<T> {
     const before = this.tail;
@@ -60,6 +65,57 @@ export class InMemoryAiPersistence implements AiPersistence {
       run?.deploymentNamespace === namespace && run.actorUserId === actor ? clone(run) : null;
     const copy = <V>(value: V | undefined): V | null => (value === undefined ? null : clone(value));
     const scope: AiPersistenceScope = {
+      findCache: async (ns, actor, fingerprint) =>
+        copy(state.cache.get(key(ns, actor, fingerprint))),
+      putCache: async (record) => {
+        if (this.failCache) throw new Error('private cache failure');
+        state.cache.set(
+          key(record.deploymentNamespace, record.actorUserId, record.fingerprint),
+          clone(record),
+        );
+      },
+      payloadUsage: async (ns, actor) => {
+        const rows = [...state.payloads.values()].filter(
+          (p) => p.deploymentNamespace === ns && (actor === undefined || p.actorUserId === actor),
+        );
+        return { entries: rows.length, bytes: rows.reduce((sum, p) => sum + p.byteLength, 0) };
+      },
+      oldestPayloads: async (ns, actor) =>
+        clone(
+          [...state.payloads.values()]
+            .filter(
+              (p) =>
+                p.deploymentNamespace === ns && (actor === undefined || p.actorUserId === actor),
+            )
+            .sort(
+              (a, b) => a.expiresAt.getTime() - b.expiresAt.getTime() || a.id.localeCompare(b.id),
+            )
+            .slice(0, MAX_CONTENT_BATCH)
+            .map(({ id, actorUserId, byteLength, expiresAt }) => ({
+              id,
+              actorUserId,
+              byteLength,
+              expiresAt,
+            })),
+        ),
+      deletePayloads: async (ns, ids) => {
+        for (const id of ids) {
+          if (state.payloads.get(id)?.deploymentNamespace !== ns) continue;
+          state.payloads.delete(id);
+          for (const [key, entry] of state.cache)
+            if (entry.payloadId === id) state.cache.delete(key);
+        }
+      },
+      tryContent: async (work) => {
+        const before = { payloads: clone(state.payloads), cache: clone(state.cache) };
+        try {
+          return await work();
+        } catch {
+          state.payloads = before.payloads;
+          state.cache = before.cache;
+          return null;
+        }
+      },
       getLedger: async (key) => {
         const id = aiLedgerIdentity(key);
         let row = state.ledger.get(id);
@@ -140,6 +196,7 @@ export class InMemoryAiPersistence implements AiPersistence {
         state.settlements.set(final.runId, clone(final));
       },
       insertPayload: async (payload) => {
+        if (this.failPayload) throw new Error('private payload failure');
         state.payloads.set(payload.id, clone(payload));
       },
       findPayload: async (ns, actor, id) => {
@@ -156,7 +213,7 @@ export class InMemoryAiPersistence implements AiPersistence {
           .sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime())
           .slice(0, maximum)
           .map((payload) => payload.id);
-        ids.forEach((id) => state.payloads.delete(id));
+        await scope.deletePayloads(ns, ids);
         return ids.length;
       },
     };

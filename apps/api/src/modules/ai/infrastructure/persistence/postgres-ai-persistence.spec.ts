@@ -121,6 +121,26 @@ describe('Postgres AI adapter with database-free QueryRunner probes', () => {
     ).rejects.toMatchObject({ code: 'TEMPORARILY_UNAVAILABLE' });
     expect(runner.query).not.toHaveBeenCalled();
   });
+  it('rolls an optional write back to its savepoint without aborting accounting', async () => {
+    const { store, runner } = harness();
+    await store.run(async (scope) => {
+      expect(
+        await scope.tryContent(async () => {
+          throw new Error('private payload/provider detail');
+        }),
+      ).toBeNull();
+      expect(await scope.tryContent(async () => true)).toBe(true);
+    });
+    expect(runner.query.mock.calls.map(([sql]) => sql)).toEqual([
+      'SAVEPOINT ai_content_1',
+      'ROLLBACK TO SAVEPOINT ai_content_1',
+      'RELEASE SAVEPOINT ai_content_1',
+      'SAVEPOINT ai_content_2',
+      'RELEASE SAVEPOINT ai_content_2',
+    ]);
+    expect(runner.commitTransaction).toHaveBeenCalledTimes(1);
+    expect(runner.rollbackTransaction).not.toHaveBeenCalled();
+  });
 });
 describe('checked-in AI entity and forward-schema source alignment (no migration execution)', () => {
   it('aligns ORM tables/column types with the checked-in forward migration sources and runtime registry', async () => {
@@ -131,6 +151,10 @@ describe('checked-in AI entity and forward-schema source alignment (no migration
       )) +
       (await readFile(
         new URL('../../../../migrations/1791072000001-AiAdmissionFoundation.ts', import.meta.url),
+        'utf8',
+      )) +
+      (await readFile(
+        new URL('../../../../migrations/1791072000002-AiResultCache.ts', import.meta.url),
         'utf8',
       ));
     const metadata = getMetadataArgsStorage();

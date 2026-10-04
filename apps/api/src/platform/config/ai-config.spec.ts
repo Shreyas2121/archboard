@@ -203,6 +203,7 @@ describe('server-owned AI operator configuration', () => {
     { AI_PROVIDER_INPUT_TPM: '999' },
     { AI_CACHE_ACTOR_ENTRIES: '129' },
     { AI_CACHE_BYTES: '1' },
+    { AI_CACHE_TTL_MS: '900001' },
   ])('rejects invalid pricing/model/budget relationships %j', (overrides) => {
     expect(() => loadAiConfig({ ...FIXTURE_AI_ENVIRONMENT, ...overrides })).toThrow(
       AiConfigurationError,

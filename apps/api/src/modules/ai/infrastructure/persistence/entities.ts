@@ -4,6 +4,7 @@ import type {
   AiReceiptRecord,
   AiReservationRecord,
   AiSettlement,
+  AiCacheRecord,
 } from '../../application/persistence.js';
 
 @Entity({ name: 'ai_runs' })
@@ -49,6 +50,17 @@ export class AiRunEntity implements AiRunRecord {
   usage!: AiRunRecord['usage'];
   @Column({ name: 'failure_code', type: 'text', nullable: true })
   failureCode!: AiRunRecord['failureCode'];
+}
+
+@Entity({ name: 'ai_result_cache' })
+export class AiCacheEntity implements AiCacheRecord {
+  @PrimaryColumn({ name: 'deployment_namespace', type: 'text' }) deploymentNamespace!: string;
+  @PrimaryColumn({ name: 'actor_user_id', type: 'text' }) actorUserId!: string;
+  @PrimaryColumn({ name: 'fingerprint', type: 'text' }) fingerprint!: string;
+  @Column({ name: 'run_id', type: 'uuid' }) runId!: string;
+  @Column({ name: 'payload_id', type: 'uuid' }) payloadId!: string;
+  @Column({ name: 'created_at', type: 'timestamptz' }) createdAt!: Date;
+  @Column({ name: 'expires_at', type: 'timestamptz' }) expiresAt!: Date;
 }
 
 @Entity({ name: 'ai_creation_receipts' })
@@ -210,6 +222,7 @@ export class AiAttemptEntity {
 }
 
 export const AI_ENTITIES = [
+  AiCacheEntity,
   AiAttemptEntity,
   AiRunEntity,
   AiReceiptEntity,

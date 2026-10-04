@@ -1,0 +1,207 @@
+import { randomUUID } from 'node:crypto';
+import type { AiCreateRun, AiResult } from '@archboard/contracts';
+import { RuntimeAdmission } from '../../../platform/lifecycle/runtime-admission.js';
+import { InMemoryAiPersistence } from '../infrastructure/testing/in-memory-ai-persistence.js';
+import { AesGcmAiPayloadCipher } from '../infrastructure/persistence/payload-cipher.js';
+import {
+  fixturePersistencePolicy,
+  fixtureAiResult,
+  TEST_ACTOR,
+  TEST_KEY,
+  TEST_KEY_VERSION,
+} from '../infrastructure/testing/persistence-fixtures.js';
+import { FIXTURE_MODEL_PROFILE } from '../infrastructure/testing/fixture-config.js';
+import { AiPrivateIdentity } from './private-identity.js';
+import { AiProviderRegistry } from './provider-registry.js';
+import { AiRunCoordinator } from './run-coordinator.js';
+import { AiRunApplication } from './run-application.js';
+import { AiIntentService } from './intent-service.js';
+import { AiAdmissionService } from './admission-service.js';
+import { AiResultCache } from './result-cache.js';
+import type { AiProvider } from './provider.js';
+
+const INPUT_TOKENS = 65536;
+const CONTEXT_TOKENS = 131072;
+const MAX_TURNS = 100;
+const TWO = 2;
+const semanticDiagram: AiResult = {
+  kind: 'diagram',
+  schemaVersion: 1,
+  nodes: [
+    {
+      key: 'api',
+      kind: 'component',
+      title: 'API',
+      color: 'blue',
+      content: {
+        category: 'service',
+        technology: '',
+        description: 'Proposed service',
+        externalUrl: null,
+      },
+    },
+  ],
+  edges: [],
+  boundaries: [],
+  steps: [],
+  explanation: 'Proposed design',
+  claims: [],
+  assumptions: [],
+  questions: [],
+};
+const body: AiCreateRun = {
+  schemaVersion: 1,
+  task: 'diagram-described',
+  target: { kind: 'new-board' },
+  prompt: 'Describe API and queue',
+  history: [],
+};
+function setup(overrides: NodeJS.ProcessEnv = {}, output: AiResult = fixtureAiResult) {
+  const policy = fixturePersistencePolicy({
+    AI_MODEL_PROFILES: JSON.stringify([
+      {
+        ...FIXTURE_MODEL_PROFILE,
+        maximumInputTokens: INPUT_TOKENS,
+        contextWindowTokens: CONTEXT_TOKENS,
+      },
+    ]),
+    ...overrides,
+  });
+  const store = new InMemoryAiPersistence();
+  const cipher = new AesGcmAiPayloadCipher(TEST_KEY, TEST_KEY_VERSION);
+  const intents = new AiIntentService(
+    store,
+    cipher,
+    new AiAdmissionService(policy),
+    new AiResultCache(cipher, policy.cache),
+  );
+  const runtime = new RuntimeAdmission();
+  runtime.setOwnership(true);
+  runtime.setSchemaCompatible(true);
+  const runs = new AiRunCoordinator(intents, runtime, policy, () => store.clock.getTime());
+  let calls = 0;
+  const adapter: AiProvider = {
+    id: 'openai',
+    implementation: 'test-fixture',
+    capabilities: () => ({
+      streaming: true,
+      structuredOutput: true,
+      schemaVersions: [policy.versions.schema],
+      promptCaching: false,
+      contextWindowTokens: CONTEXT_TOKENS,
+      maximumOutputTokens: FIXTURE_MODEL_PROFILE.maximumOutputTokens,
+    }),
+    stream: async function* () {
+      calls++;
+      yield {
+        type: 'completed',
+        text: JSON.stringify({ result: output }),
+        usage: {
+          status: 'known',
+          uncachedInputTokens: 1,
+          cacheReadInputTokens: 0,
+          cacheWriteInputTokens: [],
+          outputTokens: 1,
+          separatelyBilledReasoningTokens: 0,
+          reasoningTokens: null,
+        },
+        requestId: null,
+      };
+    },
+  };
+  const application = new AiRunApplication(
+    new AiPrivateIdentity(TEST_KEY),
+    new AiProviderRegistry('test', policy, [adapter]),
+    runs,
+  );
+  return { store, policy, runs, application, calls: () => calls };
+}
+async function ready(f: ReturnType<typeof setup>, id: string) {
+  for (let turn = 0; turn < MAX_TURNS && !f.store.state.settlements.has(id); turn++)
+    await new Promise((resolve) => setImmediate(resolve));
+  expect(f.store.state.settlements.has(id)).toBe(true);
+}
+it('server-constructed exact cache hits and receipt replay make one provider call', async () => {
+  const f = setup();
+  const key = randomUUID();
+  const first = await f.application.create(TEST_ACTOR, key, body);
+  await ready(f, first.run.id);
+  const hit = await f.application.create(TEST_ACTOR, randomUUID(), body);
+  expect(hit.source).toBe('cache');
+  expect(hit.result).toEqual(fixtureAiResult);
+  const replay = await f.application.create(TEST_ACTOR, key, body);
+  expect(replay.source).toBe('replayed');
+  expect(f.calls()).toBe(1);
+  expect(f.store.state.payloads.size).toBe(1);
+  expect(f.store.state.attempts).toHaveLength(1);
+  await f.runs.drain();
+});
+it('counts cache-hit request frequency without adding paid capacity', async () => {
+  const f = setup({ AI_CREATE_PER_MINUTE: '2', AI_CREATE_BURST: '2' });
+  const first = await f.application.create(TEST_ACTOR, randomUUID(), body);
+  await ready(f, first.run.id);
+  expect((await f.application.create(TEST_ACTOR, randomUUID(), body)).source).toBe('cache');
+  await expect(f.application.create(TEST_ACTOR, randomUUID(), body)).rejects.toMatchObject({
+    code: 'RATE_LIMITED',
+  });
+  expect(f.calls()).toBe(1);
+  expect(f.store.state.reservations.size).toBe(1);
+  await f.runs.drain();
+});
+it('GET-style reads after expiry never generate', async () => {
+  const f = setup();
+  const first = await f.application.create(TEST_ACTOR, randomUUID(), body);
+  await ready(f, first.run.id);
+  f.store.clock = new Date(f.store.clock.getTime() + f.policy.cache.ttlMs);
+  expect((await f.runs.read(f.policy.deploymentNamespace, TEST_ACTOR, first.run.id)).content).toBe(
+    'expired',
+  );
+  expect(f.calls()).toBe(1);
+  await f.runs.drain();
+});
+it('caches semantic proposals without graph UUIDs, geometry or application receipts', async () => {
+  const f = setup({}, semanticDiagram);
+  const first = await f.application.create(TEST_ACTOR, randomUUID(), body);
+  await ready(f, first.run.id);
+  const hit = await f.application.create(TEST_ACTOR, randomUUID(), body);
+  expect(hit.source).toBe('cache');
+  expect(hit.result).toEqual(semanticDiagram);
+  expect(hit.result).not.toHaveProperty('receipt');
+  expect(hit.result).toMatchObject({ nodes: [{ key: 'api' }] });
+  const node = hit.result?.kind === 'diagram' ? hit.result.nodes[0] : null;
+  expect(node).not.toHaveProperty('id');
+  expect(node).not.toHaveProperty('position');
+  expect(f.calls()).toBe(1);
+  await f.runs.drain();
+});
+it('never caches results citing nonexistent reviewed evidence, even after the allowed repair', async () => {
+  if (semanticDiagram.kind !== 'diagram') throw new Error('Fixture requires diagram');
+  const ungrounded: AiResult = {
+    ...semanticDiagram,
+    claims: [
+      { text: 'Invented proof', provenance: 'evidenced', evidenceKeys: ['missing-evidence'] },
+    ],
+  };
+  const f = setup({}, ungrounded);
+  const first = await f.application.create(TEST_ACTOR, randomUUID(), body);
+  await ready(f, first.run.id);
+  expect(f.calls()).toBe(TWO);
+  expect(f.store.state.runs.get(first.run.id)?.phase).toBe('failed');
+  expect(f.store.state.cache.size).toBe(0);
+  expect(f.store.state.payloads.size).toBe(0);
+  await f.runs.drain();
+});
+it('changed exact prompt or local history is a new explicit generation, not approximate reuse', async () => {
+  const f = setup();
+  const first = await f.application.create(TEST_ACTOR, randomUUID(), body);
+  await ready(f, first.run.id);
+  const changed = await f.application.create(TEST_ACTOR, randomUUID(), {
+    ...body,
+    prompt: body.prompt + ' ',
+    history: [{ role: 'user', text: 'Keep the queue private' }],
+  });
+  expect(changed.source).toBe('created');
+  await ready(f, changed.run.id);
+  expect(f.calls()).toBe(TWO);
+  await f.runs.drain();
+});

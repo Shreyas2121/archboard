@@ -1,8 +1,9 @@
 # AI persistence foundation
 
 AI-C05 adds feature-owned durable intent and encrypted result storage. AI-C06 adds
-[durable admission and spending gates](ai-admission.md). HTTP routes, provider
-execution, background orchestration and exact result caching follow in later tasks.
+[durable admission and spending gates](ai-admission.md). AI-C07 adds bounded
+provider execution/recovery and AI-C08 adds [exact result caching and aggregate
+retention](ai-cache.md). HTTP routes and scheduled cleanup follow in later tasks.
 Database acceptance remains OPEN under the [verification policy](verification-policy.md).
 
 ## Records and lifetime
@@ -21,13 +22,14 @@ Database acceptance remains OPEN under the [verification policy](verification-po
 Prompt, conversation, context and plaintext results are never stored in these
 accounting rows. Snapshot schemas select explicit nonsecret fields and reject
 unknown fields. Private result JSON is validated against the shared semantic
-contract before encryption. Payload capacity across entries/actors and exact cache
-reuse belong to C16; C05 bounds each payload and cleanup batch, and does not claim
-that aggregate cache capacity is enforced.
+contract before encryption. AI-C08 enforces aggregate capacity across all unique
+payloads and actors and adds an exact-cache index without duplicating ciphertext.
+C05's historical evidence covers only per-payload and cleanup-batch bounds.
 
 The intent port is internal server infrastructure. Its hashes must come from
 trusted server canonicalization and keyed private-content hashing; they are not
-client assertions. C07/C16 provide request construction and exact cache identity.
+client assertions. AI-C08 provides server-owned request construction and keyed
+exact cache identity.
 A matching receipt returns its original run without renewing its deadline or
 result TTL. A changed body conflicts. An expired receipt returns
 `AI_RESULT_EXPIRED`, never a fresh paid intent. A different key can alias the same
@@ -78,7 +80,7 @@ these constraints and migration rollback/forward behavior is still deferred.
 `settle` is a trusted worker operation with no returned private data. It records
 accounting even when the initiating actor subsequently loses board access.
 Creation receipt replay, run reads and dispatch still recheck current authority.
-C08 must expose an explicit public projection through authenticated routes, never
+C09 must expose an explicit public projection through authenticated routes, never
 serialize these internal records or expose the worker settlement port.
 
 Only the matching dispatch fence can settle dispatched work. Known usage requires

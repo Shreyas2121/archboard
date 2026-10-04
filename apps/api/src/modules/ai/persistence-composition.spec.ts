@@ -8,6 +8,7 @@ import { RuntimeAdmission } from '../../platform/lifecycle/runtime-admission.js'
 import { AiModule } from './ai.module.js';
 import { AI_PERSISTENCE, AI_INTENT_SERVICE, AI_PAYLOAD_CIPHER } from './application/persistence.js';
 import { AiIntentService } from './application/intent-service.js';
+import { AiRunApplication } from './application/run-application.js';
 import { PostgresAiPersistence } from './infrastructure/persistence/postgres-ai-persistence.js';
 import {
   fixtureApiConfig,
@@ -52,6 +53,7 @@ describe('AI durable Nest composition without database or provider I/O', () => {
       if (enabled) {
         expect(context.get(AI_PERSISTENCE)).toBeInstanceOf(PostgresAiPersistence);
         expect(context.get(AI_INTENT_SERVICE)).toBeInstanceOf(AiIntentService);
+        expect(context.get(AiRunApplication)).toBeInstanceOf(AiRunApplication);
         expect(JSON.stringify(context.get(AI_PAYLOAD_CIPHER))).not.toContain(
           FIXTURE_AI_ENVIRONMENT.AI_CONTENT_ENCRYPTION_KEY,
         );

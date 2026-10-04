@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { aiResultSchema, type AiResult } from '@archboard/contracts';
 import type { AiAdmissionService } from './admission-service.js';
+import type { AiResultCache } from './result-cache.js';
 import {
   AiPersistenceError,
   aiIntentSchema,
@@ -23,11 +24,12 @@ export class AiIntentService {
     private readonly persistence: AiPersistence,
     private readonly cipher: AiPayloadCipher,
     private readonly admission?: AiAdmissionService,
+    private readonly cache?: AiResultCache,
   ) {}
 
   public async create(
     input: AiIntent,
-  ): Promise<{ run: AiRunRecord; source: 'created' | 'replayed' | 'deduplicated' }> {
+  ): Promise<{ run: AiRunRecord; source: 'created' | 'replayed' | 'deduplicated' | 'cache' }> {
     const parsed = aiIntentSchema.safeParse(input);
     if (!parsed.success) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
     const intent = parsed.data;
@@ -67,6 +69,22 @@ export class AiIntentService {
         );
         if (!run || run.boardId !== intent.boardId) throw new AiPersistenceError('NOT_FOUND');
         return { run, source: 'replayed' };
+      }
+      // Authority and the same namespace/fingerprint locks protect both the
+      // completed-result lookup and fresh admission, including settlement races.
+      const cached = await this.cache?.lookup(scope, intent, now);
+      if (cached) {
+        await scope.lockRun(cached.id);
+        await scope.insertReceipt({
+          deploymentNamespace: intent.deploymentNamespace,
+          actorUserId: intent.actorUserId,
+          key: intent.key,
+          requestHash: intent.requestHash,
+          runId: cached.id,
+          createdAt: now,
+          expiresAt: new Date(now.getTime() + intent.snapshot.receiptTtlMs),
+        });
+        return { run: cached, source: 'cache' };
       }
       const active = await scope.findActive(
         intent.deploymentNamespace,
@@ -235,9 +253,27 @@ export class AiIntentService {
           },
           validated.data,
         );
-        await scope.insertPayload(payload);
-        run.payloadId = payload.id;
-        run.payloadExpiresAt = expiresAt;
+        const retained = this.cache
+          ? await this.cache.retain(
+              scope,
+              payload,
+              settlement.mode === 'known' && settlement.failureCode === null
+                ? {
+                    deploymentNamespace: namespace,
+                    actorUserId: actor,
+                    fingerprint: run.fingerprint,
+                    runId: run.id,
+                    payloadId: payload.id,
+                    createdAt: now,
+                    expiresAt,
+                  }
+                : null,
+            )
+          : await scope.insertPayload(payload).then(() => true);
+        if (retained) {
+          run.payloadId = payload.id;
+          run.payloadExpiresAt = expiresAt;
+        }
       }
       reservation.status = settlement.mode === 'unknown' ? 'unknown' : 'settled';
       await scope.insertSettlement(settlement);

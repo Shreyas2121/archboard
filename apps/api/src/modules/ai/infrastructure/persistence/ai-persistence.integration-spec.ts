@@ -6,6 +6,8 @@ import { InitialDatabaseFoundation1789300000000 } from '../../../../migrations/1
 import { RetainCompactedUpdateReceipts1790426800000 } from '../../../../migrations/1790426800000-RetainCompactedUpdateReceipts.js';
 import { AiPersistenceFoundation1791072000000 } from '../../../../migrations/1791072000000-AiPersistenceFoundation.js';
 import { AiAdmissionFoundation1791072000001 } from '../../../../migrations/1791072000001-AiAdmissionFoundation.js';
+import { AiResultCache1791072000002 } from '../../../../migrations/1791072000002-AiResultCache.js';
+import { AiResultCache } from '../../application/result-cache.js';
 import { AiAdmissionService } from '../../application/admission-service.js';
 import { estimateAiReservation } from '../../application/pricing.js';
 import { snapshotAiConfiguration } from '../../application/persistence.js';
@@ -78,6 +80,7 @@ beforeAll(async () => {
       RetainCompactedUpdateReceipts1790426800000,
       AiPersistenceFoundation1791072000000,
       AiAdmissionFoundation1791072000001,
+      AiResultCache1791072000002,
     ],
     synchronize: false,
     migrationsRun: false,
@@ -502,6 +505,88 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
     expect((await service.create(intent)).source).toBe('replayed');
     await expect(service.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id)).rejects.toThrow();
   });
+  it('reuses one encrypted payload for concurrent exact-cache keys without new paid reservations', async () => {
+    const policy = fixturePersistencePolicy();
+    const cached = new AiIntentService(
+      store,
+      cipher,
+      new AiAdmissionService(policy),
+      new AiResultCache(cipher, policy.cache),
+    );
+    const input = fresh();
+    const { run } = await cached.create(input);
+    const dispatched = await cached.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id);
+    await cached.settle(TEST_NAMESPACE, TEST_ACTOR, fixtureSettlement(dispatched), fixtureAiResult);
+    const results = await Promise.all([
+      cached.create({ ...input, key: randomUUID() }),
+      cached.create({ ...input, key: randomUUID() }),
+    ]);
+    expect(results.every((value) => value.source === 'cache' && value.run.id === run.id)).toBe(
+      true,
+    );
+    const payloads = await source.getRepository(AiPayloadEntity).countBy({ originRunId: run.id });
+    expect(payloads).toBe(1);
+    expect(await source.getRepository(AiReservationEntity).countBy({ runId: run.id })).toBe(1);
+  });
+  it('serializes capacity eviction and settlement, cascading indexes while retaining accounting', async () => {
+    const policy = fixturePersistencePolicy();
+    const cached = new AiIntentService(
+      store,
+      cipher,
+      new AiAdmissionService(policy),
+      new AiResultCache(cipher, { ...policy.cache, entries: 1, actorEntries: 1 }),
+    );
+    const inputs = [fresh(), fresh()];
+    const admitted = await Promise.all(inputs.map((input) => cached.create(input)));
+    const dispatched = await Promise.all(
+      admitted.map(({ run }) => cached.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id)),
+    );
+    await Promise.all(
+      dispatched.map((run) =>
+        cached.settle(TEST_NAMESPACE, TEST_ACTOR, fixtureSettlement(run), fixtureAiResult),
+      ),
+    );
+    expect(
+      await source.getRepository(AiPayloadEntity).countBy({ deploymentNamespace: TEST_NAMESPACE }),
+    ).toBe(1);
+    const snapshots = await Promise.all(
+      admitted.map(({ run }) => cached.read(TEST_NAMESPACE, TEST_ACTOR, run.id)),
+    );
+    expect(snapshots.map((value) => value.content).sort()).toEqual(['available', 'expired']);
+    for (const input of inputs) expect((await cached.create(input)).source).toBe('replayed');
+  });
+  it('isolates an actual FK cache write failure with a savepoint and still commits known settlement', async () => {
+    const policy = fixturePersistencePolicy();
+    const faulty: AiPersistence = {
+      run: (work) =>
+        store.run((scope) =>
+          work(
+            new Proxy(scope, {
+              get(target, property) {
+                if (property === 'putCache')
+                  return (entry: Parameters<AiPersistenceScope['putCache']>[0]) =>
+                    target.putCache({ ...entry, payloadId: randomUUID() });
+                const value: unknown = Reflect.get(target, property);
+                return typeof value === 'function' ? value.bind(target) : value;
+              },
+            }),
+          ),
+        ),
+    };
+    const cached = new AiIntentService(
+      faulty,
+      cipher,
+      new AiAdmissionService(policy),
+      new AiResultCache(cipher, policy.cache),
+    );
+    const input = fresh();
+    const { run } = await cached.create(input);
+    const dispatched = await cached.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id);
+    await cached.settle(TEST_NAMESPACE, TEST_ACTOR, fixtureSettlement(dispatched), fixtureAiResult);
+    expect((await cached.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).content).toBe('available');
+    expect((await cached.create(input)).source).toBe('replayed');
+    expect(await source.getRepository(AiSettlementEntity).countBy({ runId: run.id })).toBe(1);
+  });
   it('round trips the AI forward migration in an independent empty schema', async () => {
     // This isolated migration test is explicitly deferred with the entire suite.
     const isolated = schema + '_migration';
@@ -519,11 +604,16 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
         await migration.up(runner);
         await migration.down(runner);
         await migration.up(runner);
+        await new AiAdmissionFoundation1791072000001().up(runner);
+        const cacheMigration = new AiResultCache1791072000002();
+        await cacheMigration.up(runner);
+        await cacheMigration.down(runner);
+        await cacheMigration.up(runner);
         const rows: { count: string }[] = await runner.query(
           "SELECT count(*)::text AS count FROM information_schema.tables WHERE table_schema=$1 AND table_name LIKE 'ai_%'",
           [isolated],
         );
-        const AI_TABLES = 8;
+        const AI_TABLES = 10;
         expect(rows[0]?.count).toBe(String(AI_TABLES));
       } finally {
         await runner.release();

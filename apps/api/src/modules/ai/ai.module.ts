@@ -14,6 +14,9 @@ import {
 import { AiIntentService } from './application/intent-service.js';
 import { AI_RUN_COORDINATOR, AiRunCoordinator } from './application/run-coordinator.js';
 import { AiRunSubscriptions } from './application/run-subscriptions.js';
+import { AiPrivateIdentity } from './application/private-identity.js';
+import { AiResultCache } from './application/result-cache.js';
+import { AiRunApplication } from './application/run-application.js';
 import { AI_ADMISSION_SERVICE, AiAdmissionService } from './application/admission-service.js';
 import { AI_CONNECTION_GATE, AiConnectionGate } from './application/connection-gate.js';
 import type { ApiConfig } from '../../platform/config/index.js';
@@ -37,6 +40,30 @@ export class AiModule {
     const durableProviders: Provider[] =
       config.ai.enabled && persistence
         ? [
+            {
+              provide: AiPrivateIdentity,
+              useFactory: () => {
+                if (!config.ai.enabled) throw new Error('AI disabled.');
+                return new AiPrivateIdentity(config.ai.secrets.cacheKeySecret);
+              },
+            },
+            {
+              provide: AiResultCache,
+              inject: [AI_PAYLOAD_CIPHER],
+              useFactory: (cipher: AiPayloadCipher) => {
+                if (!config.ai.enabled) throw new Error('AI disabled.');
+                return new AiResultCache(cipher, config.ai.policy.cache);
+              },
+            },
+            {
+              provide: AiRunApplication,
+              inject: [AiPrivateIdentity, AI_PROVIDER_REGISTRY, AI_RUN_COORDINATOR],
+              useFactory: (
+                identity: AiPrivateIdentity,
+                registry: AiProviderRegistry,
+                runs: AiRunCoordinator,
+              ) => new AiRunApplication(identity, registry, runs),
+            },
             {
               provide: AiRunSubscriptions,
               inject: [AI_RUN_COORDINATOR, AI_CONNECTION_GATE],
@@ -81,12 +108,13 @@ export class AiModule {
             },
             {
               provide: AI_INTENT_SERVICE,
-              inject: [AI_PERSISTENCE, AI_PAYLOAD_CIPHER, AI_ADMISSION_SERVICE],
+              inject: [AI_PERSISTENCE, AI_PAYLOAD_CIPHER, AI_ADMISSION_SERVICE, AiResultCache],
               useFactory: (
                 store: AiPersistence,
                 cipher: AiPayloadCipher,
                 admission: AiAdmissionService,
-              ) => new AiIntentService(store, cipher, admission),
+                cache: AiResultCache,
+              ) => new AiIntentService(store, cipher, admission, cache),
             },
           ]
         : [];
@@ -127,6 +155,7 @@ export class AiModule {
               AI_CONNECTION_GATE,
               AI_RUN_COORDINATOR,
               AiRunSubscriptions,
+              AiRunApplication,
             ]
           : []),
       ],

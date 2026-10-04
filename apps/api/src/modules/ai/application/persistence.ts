@@ -199,6 +199,21 @@ export interface AiEncryptedPayload extends AiPayloadBinding {
   ciphertext: Uint8Array;
   byteLength: number;
 }
+export interface AiCacheRecord {
+  deploymentNamespace: string;
+  actorUserId: string;
+  fingerprint: string;
+  runId: string;
+  payloadId: string;
+  createdAt: Date;
+  expiresAt: Date;
+}
+export interface AiPayloadSummary {
+  id: string;
+  actorUserId: string;
+  byteLength: number;
+  expiresAt: Date;
+}
 export interface AiPayloadCipher {
   readonly keyVersion: string;
   seal(binding: AiPayloadBinding, result: AiResult): AiEncryptedPayload;
@@ -211,6 +226,13 @@ export class AiPersistenceError extends Error {
   }
 }
 export interface AiPersistenceScope {
+  findCache(namespace: string, actor: string, fingerprint: string): Promise<AiCacheRecord | null>;
+  putCache(record: AiCacheRecord): Promise<void>;
+  payloadUsage(namespace: string, actor?: string): Promise<{ entries: number; bytes: number }>;
+  oldestPayloads(namespace: string, actor?: string): Promise<AiPayloadSummary[]>;
+  deletePayloads(namespace: string, ids: string[]): Promise<void>;
+  /** Savepoint protects accounting from optional content/index write failure. */
+  tryContent<T>(work: () => Promise<T>): Promise<T | null>;
   getLedger(key: AiLedgerKey): Promise<AiLedgerRecord>;
   saveLedger(record: AiLedgerRecord): Promise<void>;
   findAllocations(runId: string): Promise<AiAllocationRecord[]>;

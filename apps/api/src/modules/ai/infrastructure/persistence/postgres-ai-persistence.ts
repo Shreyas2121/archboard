@@ -17,6 +17,8 @@ import {
   type AiLedgerRecord,
   type AiAllocationRecord,
   type AiAttemptRecord,
+  type AiCacheRecord,
+  type AiPayloadSummary,
 } from '../../application/persistence.js';
 import { normalizedUsageSchema } from '../../application/provider.js';
 import {
@@ -29,6 +31,7 @@ import {
   AiBudgetPeriodEntity,
   AiAllocationEntity,
   AiAttemptEntity,
+  AiCacheEntity,
 } from './entities.js';
 
 const MAX_CLEANUP_BATCH = 64;
@@ -62,12 +65,91 @@ export class PostgresAiPersistence implements AiPersistence {
   }
 }
 class PostgresAiScope implements AiPersistenceScope {
+  private contentSavepoint = 0;
   public constructor(
     private readonly runner: QueryRunner,
     private readonly authority: BoardPermissionService,
   ) {}
   private get manager() {
     return this.runner.manager;
+  }
+  public findCache(
+    namespace: string,
+    actor: string,
+    fingerprint: string,
+  ): Promise<AiCacheRecord | null> {
+    return this.manager.findOneBy(AiCacheEntity, {
+      deploymentNamespace: namespace,
+      actorUserId: actor,
+      fingerprint,
+    });
+  }
+  public async putCache(record: AiCacheRecord): Promise<void> {
+    await this.manager.upsert(AiCacheEntity, record, [
+      'deploymentNamespace',
+      'actorUserId',
+      'fingerprint',
+    ]);
+  }
+  public async payloadUsage(
+    namespace: string,
+    actor?: string,
+  ): Promise<{ entries: number; bytes: number }> {
+    const query = this.manager
+      .getRepository(AiPayloadEntity)
+      .createQueryBuilder('payload')
+      .select('COUNT(payload.id)', 'entries')
+      .addSelect('COALESCE(SUM(payload.byteLength), 0)', 'bytes')
+      .where('payload.deploymentNamespace = :namespace', { namespace });
+    if (actor !== undefined) query.andWhere('payload.actorUserId = :actor', { actor });
+    const totals = await query.getRawOne<{ entries: string; bytes: string }>();
+    const entries = Number(totals?.entries ?? 0);
+    const bytes = Number(totals?.bytes ?? 0);
+    if (![entries, bytes].every((value) => Number.isSafeInteger(value) && value >= 0))
+      throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
+    return { entries, bytes };
+  }
+  public oldestPayloads(namespace: string, actor?: string): Promise<AiPayloadSummary[]> {
+    const query = this.manager
+      .getRepository(AiPayloadEntity)
+      .createQueryBuilder('payload')
+      .select(['payload.id', 'payload.actorUserId', 'payload.byteLength', 'payload.expiresAt'])
+      .where('payload.deploymentNamespace = :namespace', { namespace });
+    if (actor !== undefined) query.andWhere('payload.actorUserId = :actor', { actor });
+    return query
+      .orderBy('payload.expiresAt', 'ASC')
+      .addOrderBy('payload.id', 'ASC')
+      .take(MAX_CLEANUP_BATCH)
+      .getMany();
+  }
+  public async deletePayloads(namespace: string, ids: string[]): Promise<void> {
+    if (!ids.length) return;
+    if (ids.length > MAX_CLEANUP_BATCH) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
+    // All content writers/cleanup hold the namespace coordinator before this delete.
+    // The cache's FK cascades; run locators/accounting intentionally survive eviction.
+    await this.manager
+      .getRepository(AiPayloadEntity)
+      .createQueryBuilder()
+      .delete()
+      .where('deployment_namespace = :namespace', { namespace })
+      .andWhere('id IN (:...ids)', { ids })
+      .execute();
+  }
+  public async tryContent<T>(work: () => Promise<T>): Promise<T | null> {
+    this.contentSavepoint++;
+    // Internal integer-only name, never input. Savepoints are transaction control
+    // unavailable through Repository APIs and isolate optional content writes.
+    const name = 'ai_content_' + this.contentSavepoint;
+    await this.runner.query('SAVEPOINT ' + name);
+    try {
+      const value = await work();
+      await this.runner.query('RELEASE SAVEPOINT ' + name);
+      return value;
+    } catch {
+      await this.runner.query('ROLLBACK TO SAVEPOINT ' + name);
+      await this.runner.query('RELEASE SAVEPOINT ' + name);
+      return null;
+    }
   }
   public async getLedger(key: AiLedgerKey): Promise<AiLedgerRecord> {
     const { deploymentNamespace, scope, subject, periodStart } = key;

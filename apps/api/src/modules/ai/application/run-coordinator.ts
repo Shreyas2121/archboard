@@ -83,7 +83,12 @@ export class AiRunCoordinator {
     private readonly now: () => number = Date.now,
   ) {}
 
-  public async start(intent: AiIntent, adapter: AiProvider, input: NormalizedProviderRequest) {
+  public async start(
+    intent: AiIntent,
+    adapter: AiProvider,
+    input: NormalizedProviderRequest,
+    validateResult: (result: AiResult) => AiResult = (result) => result,
+  ) {
     this.runtime.assertAccepting();
     if (this.stopping) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
     const request = normalizedProviderRequestSchema.parse(structuredClone(input));
@@ -117,7 +122,7 @@ export class AiRunCoordinator {
     const abort = new AbortController();
     // Schedule only after the intent transaction has committed.
     const done = Promise.resolve()
-      .then(() => this.execute(created.run, adapter, request, abort))
+      .then(() => this.execute(created.run, adapter, request, abort, validateResult))
       .catch(() => {
         /* Durable intent remains recoverable; never regenerate after persistence failure. */
       })
@@ -185,6 +190,7 @@ export class AiRunCoordinator {
     adapter: AiProvider,
     input: NormalizedProviderRequest,
     abort: AbortController,
+    validateResult: (result: AiResult) => AiResult,
   ) {
     const ns = prior.deploymentNamespace;
     const actor = prior.actorUserId;
@@ -262,8 +268,8 @@ export class AiRunCoordinator {
           break;
         }
         try {
-          result = aiResultSchema.parse(
-            aiModelOutputSchema.parse(JSON.parse(terminal.text)).result,
+          result = validateResult(
+            aiResultSchema.parse(aiModelOutputSchema.parse(JSON.parse(terminal.text)).result),
           );
           if (result.kind !== 'clarification' && result.kind !== RESULT_KINDS[run.task])
             throw new Error('Wrong task');

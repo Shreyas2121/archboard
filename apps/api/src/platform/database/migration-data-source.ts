@@ -8,6 +8,7 @@ import { loadApiConfig } from '../config/index.js';
 import { DATABASE_ENTITIES } from './database-entities.js';
 import { AiPersistenceFoundation1791072000000 } from '../../migrations/1791072000000-AiPersistenceFoundation.js';
 import { AiAdmissionFoundation1791072000001 } from '../../migrations/1791072000001-AiAdmissionFoundation.js';
+import { AiResultCache1791072000002 } from '../../migrations/1791072000002-AiResultCache.js';
 
 const config = loadApiConfig(process.env);
 
@@ -20,6 +21,7 @@ export default new DataSource({
     RetainCompactedUpdateReceipts1790426800000,
     AiPersistenceFoundation1791072000000,
     AiAdmissionFoundation1791072000001,
+    AiResultCache1791072000002,
   ],
   synchronize: false,
   migrationsRun: false,
