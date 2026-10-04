@@ -190,7 +190,10 @@ export class AiIntentService {
     )
       throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
     const settlement = parsed.data;
-    return this.persistence.run(async (scope) => {
+    const transact =
+      this.persistence.runAdmitted?.bind(this.persistence) ??
+      this.persistence.run.bind(this.persistence);
+    return transact(async (scope) => {
       const run = await this.owned(scope, namespace, actor, settlement.runId, false);
       const existing = await scope.findSettlement(run.id);
       if (existing) {
@@ -250,6 +253,33 @@ export class AiIntentService {
       if (!this.admission || run.dispatchToken !== dispatchToken)
         throw new AiPersistenceError('AI_OUTCOME_UNKNOWN');
       return this.admission.claim(scope, run, await scope.now());
+    });
+  }
+
+  /** Never redispatch: expired durable intent is either unsent or uncertain. */
+  public async recover(namespace: string, actor: string, id: string): Promise<void> {
+    const transact =
+      this.persistence.runAdmitted?.bind(this.persistence) ??
+      this.persistence.run.bind(this.persistence);
+    const expired = await transact(async (scope) => {
+      const run = await this.owned(scope, namespace, actor, id, false);
+      const now = await scope.now();
+      const expired =
+        run.phase === 'dispatching'
+          ? run.leaseExpiresAt !== null && run.leaseExpiresAt <= now
+          : run.deadlineAt <= now;
+      if (!ACTIVE_PHASES.has(run.phase) || !expired) return null;
+      return run;
+    });
+    if (!expired) return;
+    await this.settle(namespace, actor, {
+      runId: id,
+      dispatchToken: expired.dispatchToken,
+      mode: expired.dispatchToken ? 'unknown' : 'unsent',
+      phase: expired.dispatchToken ? 'outcome-unknown' : 'failed',
+      actualMicroUsd: expired.dispatchToken ? null : '0',
+      usage: { status: 'unknown' },
+      failureCode: expired.dispatchToken ? 'AI_OUTCOME_UNKNOWN' : 'AI_GENERATION_FAILED',
     });
   }
 

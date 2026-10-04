@@ -26,6 +26,8 @@ it('waits for admitted transactions while refusing new work and allowing gracefu
   expect(idle).toBe(false);
   expect(() => admission.beginTransaction()).toThrow();
   expect(() => admission.assertCanCommit()).not.toThrow();
+  const settled = admission.beginTransaction(true);
+  settled();
   done();
   done();
   await waiting;
@@ -39,6 +41,7 @@ it('ownership loss permanently fences in-flight commits', () => {
   const done = admission.beginTransaction();
   admission.setOwnership(false);
   expect(() => admission.assertCanCommit()).toThrow();
+  expect(() => admission.beginTransaction(true)).toThrow();
   admission.setOwnership(true);
   expect(admission.accepting).toBe(false);
   expect(() => admission.assertCanCommit()).toThrow();

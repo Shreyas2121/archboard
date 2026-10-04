@@ -1,4 +1,4 @@
-# AI implementation evidence index
+﻿# AI implementation evidence index
 
 Branch: `ai-diagram-integration`.
 Accepted planning baseline: `e3ba28cab6503d32de247ea7f355eedf9bdc8abc` (`updated`),
@@ -14,7 +14,8 @@ AI-C03 delivers the OpenAI Responses adapter and fixture transport proof.
 AI-C04 delivers shared provider and abstraction boundary proof.
 AI-C05 delivers durable run/accounting intent and bounded encrypted result storage.
 AI-C06 delivers durable admission, conservative pricing, attempt claims and rollover-safe accounting.
-AI-C07–AI-C19 are **NOT STARTED**;
+AI-C07 delivers bounded provider execution, cancellation/drain and fenced recovery.
+AI-C08–AI-C19 are **NOT STARTED**;
 AI-X01 is **NOT STARTED / separately selected optional work**. AI implementation,
 browser/database/live-provider acceptance, and the original Version 1 production
 release gate remain **OPEN**. The [Phase 8 closure](../../phase-8-closure.md) does
@@ -28,12 +29,13 @@ not establish the original M00–M08 implementation-completion trigger.
 | AI-C03 | IMPLEMENTED           | `fdda6b362c4fb581b5f73b7b46fb3e0c613b4f1e`; parent `6064264dd489edf367ed4a26d9bdb87f58d4fbf0` | [AI-C03](AI-C03.md): OpenAI Responses adapter, prompt/schema rendering, bounded SDK fixture transports and safe usage/failures    |
 | AI-C04 | IMPLEMENTED           | `fa2e967e8c6b25508f5f3fbd1f4ac712e043141c`; parent `fdda6b362c4fb581b5f73b7b46fb3e0c613b4f1e` | [AI-C04](AI-C04.md): shared suite against SDK/SSE and independent fixtures, safe capability selection and static isolation checks |
 | AI-C05 | IMPLEMENTED           | `10a08bdb04a140453daeed7e793964b919747d57`; parent `fa2e967e8c6b25508f5f3fbd1f4ac712e043141c` | [AI-C05](AI-C05.md): durable runs/receipts/reservations, immutable accounting, encrypted payloads and prepared PostgreSQL tests   |
-| AI-C06 | IMPLEMENTED           | Introducing commit of AI-C06 evidence; parent `10a08bdb04a140453daeed7e793964b919747d57`      | [AI-C06](AI-C06.md): durable quota/funding gates, integer pricing, per-attempt claims and unknown-liability rollover              |
+| AI-C06 | IMPLEMENTED           | `f21dccbd9ee845d81c7e3e0611719d7a3763aba2`; parent `10a08bdb04a140453daeed7e793964b919747d57` | [AI-C06](AI-C06.md): durable quota/funding gates, integer pricing, per-attempt claims and unknown-liability rollover              |
+| AI-C07 | IMPLEMENTED           | Introducing commit of AI-C07 evidence; parent `f21dccbd9ee845d81c7e3e0611719d7a3763aba2`      | [AI-C07](AI-C07.md): bounded dispatch/retry/repair, cancel/drain, recovery fences and authorized subscriptions                    |
 
 Resolve the introducing commit after it lands:
 
 ```powershell
-git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C06.md
+git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C07.md
 ```
 
 Map that actual hash in the next task's index update; do not amend this evidence to
@@ -69,11 +71,7 @@ aggregates that launch deferred children.
 
 ## Next task
 
-Select [AI-C07](../../../guide.md#ai-c07--run-orchestration-and-recovery), depending on the actual
-AI-C06 commit. Implement provider execution outside locks, classified bounded
-retry/repair, lease/crash/shutdown recovery and bounded retained outputs/subscribers.
-Use the [admission/accounting ports](../../ai-admission.md) and
-[persistence contract and lock order](../../ai-persistence.md).
+Select [AI-C08](../../../guide.md#ai-c08--exact-result-cache-and-private-retention), depending on the actual AI-C07 commit. Implement keyed exact private result caching, current-authority checks and fixed bounded encrypted retention. Preserve committed dispatch claims, conservative unknown liabilities and no generation on reconnect or recovery.
 Database checks remain deferred until the user's Version 1 implementation trigger.
 Preserve the neutral provider port and
 [operator configuration](../../ai-operator-configuration.md).

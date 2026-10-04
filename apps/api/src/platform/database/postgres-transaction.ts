@@ -8,8 +8,11 @@ export class PostgresTransaction {
     private readonly admission?: RuntimeAdmission,
   ) {}
 
-  public async run<T>(work: (runner: QueryRunner) => Promise<T>): Promise<T> {
-    const finish = this.admission?.beginTransaction();
+  public async run<T>(
+    work: (runner: QueryRunner) => Promise<T>,
+    alreadyAdmitted = false,
+  ): Promise<T> {
+    const finish = this.admission?.beginTransaction(alreadyAdmitted);
     let runner: QueryRunner | undefined;
     try {
       runner = this.dataSource.createQueryRunner();

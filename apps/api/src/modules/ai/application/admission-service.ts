@@ -335,6 +335,8 @@ export class AiAdmissionService {
       !hold.fundedAt ||
       run.phase !== 'dispatching' ||
       !run.dispatchToken ||
+      !run.leaseExpiresAt ||
+      run.leaseExpiresAt <= now ||
       run.deadlineAt <= now ||
       attempts.length >= hold.maximumAttempts ||
       hold.maximumAttempts > MAX_ATTEMPTS

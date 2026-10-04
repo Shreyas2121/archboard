@@ -42,8 +42,9 @@ export class RuntimeAdmission {
     if (!this.accepting)
       fail(ERROR_CODES.TEMPORARILY_UNAVAILABLE, 'Service temporarily unavailable.');
   }
-  public beginTransaction(): () => void {
-    this.assertAccepting();
+  public beginTransaction(alreadyAdmitted = false): () => void {
+    if (alreadyAdmitted) this.assertCanCommit();
+    else this.assertAccepting();
     this.transactions++;
     let finished = false;
     return () => {

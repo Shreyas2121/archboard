@@ -12,6 +12,8 @@ import {
   type AiPayloadCipher,
 } from './application/persistence.js';
 import { AiIntentService } from './application/intent-service.js';
+import { AI_RUN_COORDINATOR, AiRunCoordinator } from './application/run-coordinator.js';
+import { AiRunSubscriptions } from './application/run-subscriptions.js';
 import { AI_ADMISSION_SERVICE, AiAdmissionService } from './application/admission-service.js';
 import { AI_CONNECTION_GATE, AiConnectionGate } from './application/connection-gate.js';
 import type { ApiConfig } from '../../platform/config/index.js';
@@ -35,6 +37,20 @@ export class AiModule {
     const durableProviders: Provider[] =
       config.ai.enabled && persistence
         ? [
+            {
+              provide: AiRunSubscriptions,
+              inject: [AI_RUN_COORDINATOR, AI_CONNECTION_GATE],
+              useFactory: (runs: AiRunCoordinator, gate: AiConnectionGate) =>
+                new AiRunSubscriptions(runs, gate),
+            },
+            {
+              provide: AI_RUN_COORDINATOR,
+              inject: [AI_INTENT_SERVICE, RuntimeAdmission],
+              useFactory: (intents: AiIntentService, runtime: RuntimeAdmission) => {
+                if (!config.ai.enabled) throw new Error('AI disabled.');
+                return new AiRunCoordinator(intents, runtime, config.ai.policy);
+              },
+            },
             {
               provide: AI_CONNECTION_GATE,
               useFactory: () => new AiConnectionGate(config.ai.enabled ? config.ai.policy : null),
@@ -104,7 +120,14 @@ export class AiModule {
         AI_POLICY,
         AI_PROVIDER_REGISTRY,
         ...(durableProviders.length
-          ? [AI_PERSISTENCE, AI_INTENT_SERVICE, AI_ADMISSION_SERVICE, AI_CONNECTION_GATE]
+          ? [
+              AI_PERSISTENCE,
+              AI_INTENT_SERVICE,
+              AI_ADMISSION_SERVICE,
+              AI_CONNECTION_GATE,
+              AI_RUN_COORDINATOR,
+              AiRunSubscriptions,
+            ]
           : []),
       ],
     };

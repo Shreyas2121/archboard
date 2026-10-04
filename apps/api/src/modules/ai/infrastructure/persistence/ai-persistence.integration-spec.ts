@@ -478,6 +478,30 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
         .insert({ ...base, period: 'day', committedMicroUsd: '0', reservedMicroUsd: '0' }),
     ).rejects.toMatchObject({ driverError: { code: '23514' } });
   });
+  it('fences competing expired-worker recovery and late completion without redispatch', async () => {
+    const intent = fresh();
+    const { run } = await service.create(intent);
+    const dispatched = await service.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id);
+    // Simulates durable intent left behind by a terminated worker, with no provider I/O.
+    await source.getRepository(AiRunEntity).update(run.id, {
+      leaseExpiresAt: new Date(0),
+    });
+    await expect(
+      service.claimAttempt(TEST_NAMESPACE, TEST_ACTOR, run.id, dispatched.dispatchToken!),
+    ).rejects.toThrow();
+    await Promise.all([
+      service.recover(TEST_NAMESPACE, TEST_ACTOR, run.id),
+      service.recover(TEST_NAMESPACE, TEST_ACTOR, run.id),
+    ]);
+    await expect(
+      service.settle(TEST_NAMESPACE, TEST_ACTOR, fixtureSettlement(dispatched), fixtureAiResult),
+    ).rejects.toThrow();
+    expect((await service.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).run.phase).toBe(
+      'outcome-unknown',
+    );
+    expect((await service.create(intent)).source).toBe('replayed');
+    await expect(service.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id)).rejects.toThrow();
+  });
   it('round trips the AI forward migration in an independent empty schema', async () => {
     // This isolated migration test is explicitly deferred with the entire suite.
     const isolated = schema + '_migration';

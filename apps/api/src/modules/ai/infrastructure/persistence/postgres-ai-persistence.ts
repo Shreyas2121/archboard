@@ -42,10 +42,17 @@ export class PostgresAiPersistence implements AiPersistence {
   ) {
     this.transactions = new PostgresTransaction(source, admission);
   }
-  public async run<T>(work: (scope: AiPersistenceScope) => Promise<T>): Promise<T> {
+  public runAdmitted<T>(work: (scope: AiPersistenceScope) => Promise<T>): Promise<T> {
+    return this.run(work, true);
+  }
+  public async run<T>(
+    work: (scope: AiPersistenceScope) => Promise<T>,
+    alreadyAdmitted = false,
+  ): Promise<T> {
     try {
-      return await this.transactions.run((runner) =>
-        work(new PostgresAiScope(runner, this.authority)),
+      return await this.transactions.run(
+        (runner) => work(new PostgresAiScope(runner, this.authority)),
+        alreadyAdmitted,
       );
     } catch (error) {
       if (error instanceof AiPersistenceError) throw error;

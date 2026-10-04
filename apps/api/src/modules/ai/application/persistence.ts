@@ -273,4 +273,6 @@ export interface AiAttemptRecord {
 }
 export interface AiPersistence {
   run<T>(work: (scope: AiPersistenceScope) => Promise<T>): Promise<T>;
+  /** Trusted settlement/recovery only; still fenced by writer ownership. */
+  runAdmitted?<T>(work: (scope: AiPersistenceScope) => Promise<T>): Promise<T>;
 }
