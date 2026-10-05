@@ -13,6 +13,7 @@ import { AiContextFormFields } from './ai-context-form';
 import { AiContextReview } from './ai-context-review';
 import { AI_JSON_INDENT, contextFromForm, aiValidationMessage } from './ai-review-model';
 import { AiDiagramPreparation } from './ai-diagram-preparation';
+import { AiApplyRecovery } from './ai-apply-recovery';
 
 export function AiPanel({
   session,
@@ -53,6 +54,15 @@ export function AiPanel({
       >
         Check AI availability
       </Button>
+      {!state.run && !state.intent && !state.busy && (
+        <AiApplyRecovery
+          session={session}
+          allowed={() => workflow.currentScope()}
+          recover={(runId) => {
+            if (online) void workflow.refresh(runId);
+          }}
+        />
+      )}
       <div role="status" className="text-xs leading-5">
         {!online
           ? 'Offline. Generation is disabled and will not be queued.'
@@ -258,6 +268,7 @@ export function AiPanel({
                 <AiDiagramPreparation
                   key={`${state.run!.id}:${state.run!.updatedAt}`}
                   proposal={result}
+                  runId={state.run!.id}
                   session={session}
                   allowed={() =>
                     workflow.currentScope() &&

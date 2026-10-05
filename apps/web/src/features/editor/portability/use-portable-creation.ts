@@ -4,22 +4,38 @@ import { apiRequest, ApiClientError } from '@/platform/api';
 import { HTTP_SERVER_ERROR, PortableSubmission } from './portability-policy';
 import type { PortabilityScope } from './use-portability-scope';
 
+export interface PortableCreationRecovery {
+  read: () => PortableSubmission | null;
+  write: (intent: PortableSubmission | null) => void;
+  allowed?: () => boolean;
+}
+
 export function usePortableCreation<T>(
   scope: PortabilityScope,
   path: `/${string}`,
   schema: z.ZodType<T>,
   confirmed: (result: T) => void,
   inspect: () => Promise<unknown>,
+  recovery?: PortableCreationRecovery,
 ) {
   const intent = useRef<PortableSubmission | null>(null);
   const flight = useRef<AbortController | null>(null);
   const mounted = useRef(false);
+  const initialRecovery = useRef(recovery);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [failure, setFailure] = useState<ApiClientError | null>(null);
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     mounted.current = true;
+    const restore = initialRecovery.current;
+    try {
+      intent.current = restore?.read() ?? intent.current;
+      if (intent.current?.state === 'pending') intent.current.state = 'uncertain';
+      setRevision((value) => value + 1);
+    } catch {
+      setError('Creation recovery could not be read. Creation is blocked.');
+    }
     return () => {
       mounted.current = false;
       flight.current?.abort();
@@ -39,9 +55,15 @@ export function usePortableCreation<T>(
     setError('');
     setFailure(null);
     let sent = false;
-    const wasUncertain = intent.current?.state === 'uncertain';
+    let wasUncertain = intent.current?.state === 'uncertain';
     const token = scope.capture();
     try {
+      const stored = recovery?.read();
+      if (stored && !intent.current) {
+        intent.current = stored;
+        if (stored.state === 'pending') stored.state = 'uncertain';
+      }
+      wasUncertain = intent.current?.state === 'uncertain';
       await scope.authenticate();
       if (!scope.accepts(token)) return;
       if (intent.current && !intent.current.retryable(Date.now()))
@@ -54,7 +76,9 @@ export function usePortableCreation<T>(
         intent.current = new PortableSubmission(crypto.randomUUID(), body, Date.now());
       }
       const request = intent.current;
+      if (recovery?.allowed && !recovery.allowed()) throw new Error('Creation authority changed.');
       request.state = 'pending';
+      recovery?.write(request);
       sent = true;
       const result = await apiRequest(path, schema, {
         method: 'POST',
@@ -62,13 +86,16 @@ export function usePortableCreation<T>(
         signal: controller.signal,
         headers: { 'Idempotency-Key': request.key },
       });
-      if (!scope.accepts(token)) {
+      if (!scope.accepts(token) || (recovery?.allowed && !recovery.allowed())) {
         request.state = 'uncertain';
         return;
       }
       confirmed(result);
+      recovery?.write(null);
       intent.current = null;
     } catch (cause) {
+      if (!sent && intent.current?.state === 'pending')
+        intent.current.state = wasUncertain ? 'uncertain' : 'rejected';
       if (sent && intent.current) {
         const definite =
           !wasUncertain &&
@@ -91,6 +118,13 @@ export function usePortableCreation<T>(
       }
     } finally {
       if (sent && intent.current?.state === 'pending') intent.current.state = 'uncertain';
+      if (intent.current) {
+        try {
+          recovery?.write(intent.current);
+        } catch {
+          /* Retain the already persisted original intent. */
+        }
+      }
       flight.current = null;
       if (mounted.current) {
         setBusy(false);
@@ -112,6 +146,7 @@ export function usePortableCreation<T>(
       await inspect();
       if (!scope.accepts(token)) return;
       intent.current = null;
+      recovery?.write(null);
       setError('Reviewed current results. Submit again to use a new key.');
       setRevision((value) => value + 1);
     } catch (cause) {

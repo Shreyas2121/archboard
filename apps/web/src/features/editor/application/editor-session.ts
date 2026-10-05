@@ -59,6 +59,7 @@ import {
 } from '@archboard/sync-client';
 
 import { registerUpdateSession, unregisterUpdateSession } from './update-sessions';
+import { aiCreatedIdsState, applyAiGraphBatch } from '../ai/ai-apply-intent';
 
 export const DEMO_BOARD_ID = '6f5eb829-0b42-4e62-8a8a-3db5176adf67';
 
@@ -455,6 +456,21 @@ export class EditorSession {
     if (!this.canEdit()) return null;
     const binding = this.writerSession.getWritableBinding();
     return binding === null ? null : Y.encodeStateAsUpdate(binding.document);
+  }
+
+  public inspectAiCreatedIds(ids: Readonly<Record<string, string>>) {
+    if (!this.canEdit()) throw new Error('Editing is unavailable for this board.');
+    const binding = this.writerSession.getWritableBinding();
+    if (!binding) throw new Error('The board is unavailable.');
+    return aiCreatedIdsState(binding.document, ids);
+  }
+
+  public applyAiDiagram(graph: GraphProjection): void {
+    this.executeMutation((document) => applyAiGraphBatch(document, graph));
+  }
+
+  public whenLocalWritesIdle(): Promise<void> {
+    return this.writerSession.whenIdle();
   }
 
   public editText(target: GraphTextTarget, edit: TextEdit | readonly TextEdit[]): void {

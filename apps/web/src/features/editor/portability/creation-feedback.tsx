@@ -6,11 +6,13 @@ export function CreationFeedback({
   error,
   busy,
   restart,
+  persisted = false,
 }: {
   readonly intent: PortableSubmission | null;
   readonly error: string;
   readonly busy: boolean;
   readonly restart: () => Promise<void>;
+  readonly persisted?: boolean;
 }) {
   return (
     <>
@@ -21,10 +23,16 @@ export function CreationFeedback({
       )}
       {intent?.state === 'uncertain' && (
         <p role="status" className="text-sm">
-          Creation is unconfirmed. Keep this view open: the exact payload and original key are
-          retained in memory. Retry sends that identical request; reconnect does not submit it.
-          Reload loses this request. After 24 hours, inspect results before starting again; a new
-          creation may duplicate it.
+          {persisted ? (
+            'Creation is unconfirmed. The exact payload and original key are retained in this account and board’s local recovery journal. Reload recovery sends only the identical request. Reconnect does not submit it. After 24 hours, inspect results before starting again; a new creation may duplicate it.'
+          ) : (
+            <>
+              Creation is unconfirmed. Keep this view open: the exact payload and original key are
+              retained in memory. Retry sends that identical request; reconnect does not submit it.
+              Reload loses this request. After 24 hours, inspect results before starting again; a
+              new creation may duplicate it.
+            </>
+          )}
         </p>
       )}
       {intent && !intent.retryable(Date.now()) && intent.state !== 'pending' && (

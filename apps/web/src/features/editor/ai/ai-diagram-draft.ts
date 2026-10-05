@@ -150,7 +150,7 @@ export function mapAiDiagram(
 export function preflightAiDiagram(
   source: Uint8Array,
   graph: GraphProjection,
-  limits: { updateBytes?: number; stateBytes?: number } = {},
+  limits: { updateBytes?: number; stateBytes?: number; clientId?: number } = {},
 ): AiDiagramDraft['preflight'] {
   const updateLimit = Math.min(
     limits.updateBytes ?? MAX_CLIENT_UPDATE_BYTES,
@@ -167,6 +167,8 @@ export function preflightAiDiagram(
   try {
     Y.applyUpdate(candidate, source);
     Y.applyUpdate(accepted, source);
+    // Apply uses the live writer's ID so variable-width CRDT IDs cannot undercount bytes.
+    if (limits.clientId !== undefined) candidate.clientID = limits.clientId;
     validateGraphDocument(candidate);
     const vector = Y.encodeStateVector(candidate);
     const batch = graphProjectionSchema.parse(graph);

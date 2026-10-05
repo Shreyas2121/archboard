@@ -1,5 +1,6 @@
 import {
   aiCreateRunSchema,
+  applicationIdSchema,
   MAX_AI_CONTEXT_FILE_BYTES,
   type AiRun,
   type AiAvailability,
@@ -306,17 +307,21 @@ export class AiReviewSession {
       }
     }
   }
-  public async refresh() {
-    if (!this.currentScope() || !this.online() || this.state.busy || !this.state.run) return;
+  public async refresh(recoveredId?: string) {
+    const id = recoveredId ?? this.state.run?.id;
+    if (!this.currentScope() || !this.online() || this.state.busy || !id) return;
+    if (recoveredId && (this.state.intent || this.state.run)) return;
+    applicationIdSchema.parse(id);
     this.stream?.abort();
     const epoch = this.epoch;
     const abort = new AbortController();
     this.request = abort;
     this.patch({ busy: true, observing: false, problem: '' });
     try {
-      const run = await this.transport.read(this.state.run.id, abort.signal);
+      const run = await this.transport.read(id, abort.signal);
       if (!this.accepts(epoch)) return;
-      this.acceptRun(run, this.state.run?.id);
+      this.acceptRun(run, id);
+      if (recoveredId) this.patch({ phase: 'known' });
       if (pending(this.state.run)) void this.observe();
     } catch (error) {
       if (this.accepts(epoch) && !this.accessFailure(error))

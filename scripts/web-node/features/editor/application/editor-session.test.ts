@@ -15,6 +15,7 @@ import * as Y from 'yjs';
 
 import { EditorSession } from '@/features/editor/application/editor-session';
 import { closeEditorSession } from '@/features/editor/application/close-editor-session';
+import { localDurability } from '@/features/editor/portability/portability-policy';
 
 const mocks = vi.hoisted(() => ({ writer: vi.fn(), sync: vi.fn() }));
 vi.mock('@archboard/sync-client', async (original) => ({
@@ -26,6 +27,7 @@ vi.mock('@archboard/sync-client', async (original) => ({
 }));
 
 const NODE_SIZE = { width: 240, height: 140 };
+const EXPECTED_ADDITIVE_NODE_COUNT = 2;
 
 function harness() {
   let documentGeneration = 0;
@@ -63,7 +65,7 @@ function harness() {
       documentGeneration,
       phase,
       writable,
-      persistence: { editingPaused: !writable },
+      persistence: { editingPaused: !writable, savedOnDevice: true, pendingWrites: 0 },
     }),
     getWritableBinding: () => (writable ? { document, persistence } : null),
     subscribe: (listener: () => void) => {
@@ -87,6 +89,8 @@ function harness() {
       phase: 'disconnected',
       errorCode: null,
       role: BOARD_ROLES.VIEWER,
+      connected: false,
+      pendingCount: 0,
     }),
     subscribe: vi.fn(() => vi.fn()),
     resumeDrain: vi.fn(),
@@ -337,6 +341,72 @@ describe('editor text binding availability', () => {
         report.mockRestore();
       }
     } finally {
+      state.initial.destroy();
+    }
+  });
+});
+
+describe('AI additive editor integration', () => {
+  it('routes one structural batch through the writer and requires committed ACK for server save', async () => {
+    const state = harness();
+    try {
+      await state.session.open();
+      await state.session.setBoardAccess(BOARD_ROLES.EDITOR, false);
+      const existing = projectGraphDocument(state.initial);
+      const node = { ...existing.nodes[0]!, id: crypto.randomUUID(), title: 'AI addition' };
+      const graph = {
+        ...existing,
+        nodes: [node],
+        steps: [
+          {
+            id: crypto.randomUUID(),
+            title: 'Reviewed tour',
+            notes: '',
+            order: 0,
+            rect: { ...node.position, ...node.size },
+            nodeIds: [node.id],
+            edgeIds: [],
+          },
+        ],
+      };
+      const route = vi.spyOn(state.writer, 'executeMutation');
+      const outboxUpdates: Uint8Array[] = [];
+      state.initial.on('update', (bytes) => {
+        outboxUpdates.push(bytes);
+      });
+      state.session.applyAiDiagram(graph);
+      state.notify();
+      expect(route).toHaveBeenCalledTimes(1);
+      expect(outboxUpdates).toHaveLength(1);
+      expect(projectGraphDocument(state.initial).nodes).toHaveLength(EXPECTED_ADDITIVE_NODE_COUNT);
+      expect(projectGraphDocument(state.initial).steps).toEqual(graph.steps);
+      expect(state.session.getSnapshot().canUndo).toBe(false);
+      expect(localDurability(state.session.getSnapshot(), false).acknowledged).toBe(false);
+      const current = state.sync.getSnapshot();
+      vi.spyOn(state.sync, 'getSnapshot').mockReturnValue({
+        ...current,
+        ready: true,
+        connected: true,
+        phase: 'saved-to-server',
+      });
+      state.notify();
+      expect(localDurability(state.session.getSnapshot(), true)).toMatchObject({
+        authoritative: true,
+        acknowledged: true,
+        persistencePending: false,
+        outboxPending: false,
+      });
+      for (const access of [
+        { role: BOARD_ROLES.VIEWER, archived: false },
+        { role: BOARD_ROLES.EDITOR, archived: true },
+      ]) {
+        await state.session.setBoardAccess(access.role, access.archived);
+        const before = Y.encodeStateAsUpdate(state.initial);
+        expect(() => state.session.applyAiDiagram(graph)).toThrow();
+        expect(Y.encodeStateAsUpdate(state.initial)).toEqual(before);
+      }
+    } finally {
+      await state.session.close();
       state.initial.destroy();
     }
   });

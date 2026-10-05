@@ -443,3 +443,33 @@ describe('AI reviewed inputs and session-only lifecycle', () => {
     expect(f.session.snapshot().prompt).toBe('');
   });
 });
+
+describe('recorded AI Apply run recovery', () => {
+  it('reads the recorded run without creating another provider intent', async () => {
+    const h = setup();
+    const original = run();
+    h.transport.read.mockResolvedValue(original);
+    await h.session.refresh(original.id);
+    expect(h.transport.read).toHaveBeenCalledWith(original.id, expect.any(AbortSignal));
+    expect(h.session.snapshot().run?.id).toBe(original.id);
+    expect(h.transport.create).not.toHaveBeenCalled();
+    expect(h.key).not.toHaveBeenCalled();
+  });
+  it('fences recovery when account or access changes while reading', async () => {
+    const h = setup();
+    let finish!: (value: ReturnType<typeof run>) => void;
+    const original = run();
+    h.transport.read.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = h.session.refresh(original.id);
+    h.guard.allowed = false;
+    finish(original);
+    await pending;
+    expect(h.session.snapshot().run).toBeNull();
+    expect(h.transport.create).not.toHaveBeenCalled();
+  });
+});
