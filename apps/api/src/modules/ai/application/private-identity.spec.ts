@@ -49,6 +49,38 @@ it('canonicalizes object keys while preserving arrays, exact case and whitespace
   ])
     expect(prepare(changed).fingerprint).not.toBe(prepare().fingerprint);
 });
+it('separates provider routing partitions from exact private result and receipt identity', () => {
+  const resolved = config();
+  resolved.profile = { ...resolved.profile, promptCaching: 'openai-in-memory' };
+  const identity = new AiPrivateIdentity(TEST_KEY);
+  const first = identity.prepare(TEST_ACTOR, randomUUID(), body, resolved);
+  const changed = identity.prepare(
+    TEST_ACTOR,
+    randomUUID(),
+    { ...body, prompt: 'Changed private task', history: [] },
+    resolved,
+  );
+  expect(first.request.promptCache).toBe('stable-prefix');
+  expect(first.request.cachePartition).toMatch(/^[a-f0-9]{64}$/);
+  expect(changed.request.cachePartition).toBe(first.request.cachePartition);
+  expect(changed.intent.fingerprint).not.toBe(first.intent.fingerprint);
+  expect(
+    identity.prepare('other-actor', randomUUID(), body, resolved).request.cachePartition,
+  ).not.toBe(first.request.cachePartition);
+  expect(
+    identity.prepare(
+      TEST_ACTOR,
+      randomUUID(),
+      { ...body, target: { kind: 'board', boardId: randomUUID() } },
+      resolved,
+    ).request.cachePartition,
+  ).not.toBe(first.request.cachePartition);
+  const disabled = identity.prepare(TEST_ACTOR, randomUUID(), body, config());
+  expect(disabled.request.cachePartition).toBeUndefined();
+  expect(disabled.request.promptCache).toBe('disabled');
+  expect(disabled.intent.requestHash).toBe(first.intent.requestHash);
+  expect(disabled.intent.fingerprint).not.toBe(first.intent.fingerprint);
+});
 it('isolates actors, boards, new-board scope, deployments and cache secrets', () => {
   const initial = prepare();
   expect(prepare(body, config(), 'other-actor').fingerprint).not.toBe(initial.fingerprint);

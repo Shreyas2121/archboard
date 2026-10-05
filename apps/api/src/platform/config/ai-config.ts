@@ -79,6 +79,9 @@ export const aiModelProfileSchema = z
     maximumInputTokens: tokenLimit,
     maximumOutputTokens: tokenLimit,
     structuredOutput: z.boolean(),
+    promptCaching: z
+      .enum(['disabled', 'openai-in-memory', 'openai-explicit-30m'])
+      .default('disabled'),
     prices: z.strictObject({
       uncachedInputMicroUsdPerMillion: positiveMoney,
       cacheReadMicroUsdPerMillion: microUsd,
@@ -90,6 +93,17 @@ export const aiModelProfileSchema = z
     }),
   })
   .superRefine((profile, context) => {
+    if (
+      profile.promptCaching === 'openai-explicit-30m' &&
+      !profile.prices.cacheWrites.some(
+        (entry) => entry.writeClass === 'openai-30m' && entry.microUsdPerMillion !== '0',
+      )
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['prices', 'cacheWrites'],
+        message: 'Explicit caching requires a positive openai-30m write rate.',
+      });
     if (profile.maximumInputTokens > profile.contextWindowTokens - profile.maximumOutputTokens)
       context.addIssue({
         code: 'custom',
@@ -308,7 +322,6 @@ export function loadAiConfig(environment: NodeJS.ProcessEnv): AiOperatorConfig {
       payloadBytes: MAX_AI_RESULT_BYTES,
       receiptTtlMs: RECEIPT_TTL_MS,
       readsWhenDisabled: false as const,
-      promptCaching: 'disabled' as const,
     },
   };
   const policy: AiPolicy = freezeDeep({

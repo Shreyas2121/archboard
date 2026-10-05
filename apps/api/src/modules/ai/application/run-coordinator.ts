@@ -25,13 +25,18 @@ export const AI_RUN_COORDINATOR = Symbol('AI_RUN_COORDINATOR');
 const SHUTDOWN_MS = 5000;
 const REJECTION_BACKOFF_MS = 250;
 const MAX_PROVIDER_EVENTS = 8192;
+// Conservatively account for the adapter's developer-block/cache-marker framing.
+// This is admission headroom, never prompt padding or a provider-native option.
+const CACHE_PREFIX_FRAMING_BYTES = 256;
 function inputBytes(request: NormalizedProviderRequest): number {
-  return Buffer.byteLength(
-    JSON.stringify({
-      instructions: request.instructions,
-      messages: request.messages,
-      structuredOutput: request.structuredOutput ?? null,
-    }),
+  return (
+    Buffer.byteLength(
+      JSON.stringify({
+        instructions: request.instructions,
+        messages: request.messages,
+        structuredOutput: request.structuredOutput ?? null,
+      }),
+    ) + (request.promptCache === 'stable-prefix' ? CACHE_PREFIX_FRAMING_BYTES : 0)
   );
 }
 const ZERO_USAGE: NormalizedUsage = {

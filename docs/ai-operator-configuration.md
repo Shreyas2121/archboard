@@ -46,6 +46,52 @@ internal server operation; public requests do not gain a model/quality override.
 `AI_MODEL_PROFILES` is a JSON array bounded to 64 KiB. Every profile requires these
 fields; unknown properties are rejected:
 
+The optional `promptCaching` profile field defaults to `disabled`. It is specific
+to the selected OpenAI model, with these supported operator assertions:
+
+| Value                 | Adapter behavior                                                                                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `disabled` / omitted  | Omit optimization key, retention, options and breakpoints; native automatic provider caching may still occur                                             |
+| `openai-in-memory`    | Legacy-compatible `in_memory` retention and an opaque scoped routing key; no modern options/breakpoints                                                  |
+| `openai-explicit-30m` | Explicit-only caching with one breakpoint after static developer instructions, before all reviewed user data; `30m` TTL and an opaque scoped routing key |
+
+Use the legacy setting only for models/accounts supporting in-memory retention.
+Use explicit mode only for models supporting the modern explicit API. The profile
+does not infer capability from a model name or prove live compatibility. Unknown
+settings, extended retention and explicit caching without a positive
+`prices.cacheWrites` rate for `writeClass: 'openai-30m'` fail configuration.
+Adapter capability must also agree before admission. Enabling a legacy model does
+not provide an explicit cache boundary: native implicit caching can include user
+suffixes. Reviewed cloud data remains private under application authorization;
+the routing key is an optimization partition, not an access-control mechanism.
+
+Explicit mode places static authority in a developer text block; user prompt,
+context, evidence, graph, notes and history follow in user data without a breakpoint.
+The output schema and task instructions are stable across private input changes;
+presentation mode is read from reviewed user data and remains locally validated.
+Routing uses a hash of model, instructions, schema, adapter version, cache mechanism
+and a server HMAC of deployment/actor/target. No raw account IDs or private content
+appear in cache metadata. Changing model/schema/authority/partition invalidates
+routing; exact actor-private application result reuse still requires every reviewed
+field and current authorization independently.
+
+The adapter normalizes ordinary input as total input minus disjoint cache reads and
+writes. Explicit writes use the configured `openai-30m` rate instead of ordinary
+input pricing; reasoning included in output is charged once. Missing/inconsistent
+explicit write counts, unpriced writes and new unsupported categories remain unknown
+and keep conservative liability. Admission reserves the maximum of uncached/read/
+write rates for the full input and all allowed attempts, including per-category
+rounding; it never assumes a cache hit. Existing finite operator ceilings apply.
+
+This implementation follows the [official OpenAI prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching).
+Its modern `30m` TTL is a minimum lifetime, and provider retention may be longer;
+legacy in-memory retention is provider-managed. `store: false` does not disable
+prompt caching. There is no padding, prewarming, extended-retention option or paid
+background cache work. Live compatibility, retention, hit rate and savings remain
+UNRUN pending separate budget authorization and reviewed inputs.
+
+The required profile fields are:
+
 | Field                                                                       | Value                                                                                                 |
 | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `quality`                                                                   | `standard` or `higher`                                                                                |

@@ -58,6 +58,9 @@ export class AiProviderRegistry {
       !capabilities.schemaVersions.includes(this.policy.versions.schema) ||
       !profile.structuredOutput ||
       !capabilities.structuredOutput ||
+      (profile.promptCaching &&
+        profile.promptCaching !== 'disabled' &&
+        !capabilities.promptCaching) ||
       profile.maximumOutputTokens > capabilities.maximumOutputTokens ||
       profile.maximumInputTokens > capabilities.contextWindowTokens - profile.maximumOutputTokens
     )

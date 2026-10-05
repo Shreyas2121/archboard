@@ -70,7 +70,7 @@ export function renderAiPrompt(
       'Do not produce geometry, credentials, tools, executable actions or arbitrary patches.',
       ...(presentation
         ? [
-            `Use presentation mode ${request.presentationMode ?? 'append'} exactly as reviewed.`,
+            'Use presentationMode from reviewed user data exactly; omission means append.',
             'Propose a named ordered recruiter or interview walkthrough with concise talking-point notes. Array order is the intended step order.',
             'Use only reviewed node and edge IDs, never invent components or IDs. Empty references frame the complete reviewed selection.',
             'For append use empty expectedStepIds; for replace-reviewed name every reviewed step ID. Never infer replacement permission from history.',
@@ -110,12 +110,12 @@ export function renderAiPrompt(
     messages: [{ role: 'user', text: JSON.stringify(request) }],
     structuredOutput: {
       name: presentation
-        ? 'archboard_presentation_v4'
+        ? 'archboard_presentation_v5'
         : edits
-          ? 'archboard_edits_v4'
+          ? 'archboard_edits_v5'
           : guidance
-            ? 'archboard_guidance_v4'
-            : 'archboard_result_v4',
+            ? 'archboard_guidance_v5'
+            : 'archboard_result_v5',
       version: AI_VERSIONS.schema,
       schema: renderSchema(
         z.toJSONSchema(

@@ -23,6 +23,8 @@ const nativeNames = new Set([
   'previous_response_id',
   'prompt_cache_key',
   'prompt_cache_retention',
+  'prompt_cache_options',
+  'prompt_cache_breakpoint',
   'tool_choice',
   'parallel_tool_calls',
   'ResponseCreateParamsStreaming',
@@ -163,6 +165,14 @@ export function aiEnvironmentViolations(text) {
 
 export function verifyAiNegativeFixtures() {
   const cases = [
+    [
+      'packages/contracts/src/ai/negative.ts',
+      "const request = { prompt_cache_options: { mode: 'explicit' } };",
+    ],
+    [
+      'apps/api/src/modules/ai/application/negative.ts',
+      "const block = { prompt_cache_breakpoint: { mode: 'explicit' } };",
+    ],
     ['packages/contracts/src/ai/negative.ts', "type Client = import('openai').OpenAI;"],
     ['apps/api/src/modules/ai/application/negative.ts', "import Client = require('openai');"],
     ['packages/contracts/src/ai/negative.ts', "import type { Client } from 'openai';"],

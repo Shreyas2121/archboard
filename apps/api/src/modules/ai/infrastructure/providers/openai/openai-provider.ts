@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { createHash } from 'node:crypto';
 import type {
   Response as OpenAIResponse,
   ResponseCreateParamsStreaming,
@@ -63,29 +64,40 @@ const safeIdentifier = (value: unknown): string | null =>
 const count = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
-export function normalizeOpenAiUsage(usage: ResponseUsage | null | undefined): NormalizedUsage {
+export function normalizeOpenAiUsage(
+  usage: ResponseUsage | null | undefined,
+  profile?: AiModelProfile,
+): NormalizedUsage {
   if (!usage) return unknownUsage;
   const cached = usage.input_tokens_details?.cached_tokens;
   const writes = usage.input_tokens_details?.cache_write_tokens;
   const reasoning = usage.output_tokens_details?.reasoning_tokens;
-  // A new/unpriced write category cannot silently become free work. Older Responses
-  // payloads omit cache_write_tokens; nonzero writes need an explicitly priced adapter.
+  const explicit = profile?.promptCaching === 'openai-explicit-30m';
+  const writeTokens = writes ?? 0;
+  const pricedWrites = profile?.prices.cacheWrites.some(
+    (entry) => entry.writeClass === 'openai-30m' && entry.microUsdPerMillion !== '0',
+  );
+  // Categories partition input; writes are billed instead of ordinary input.
+  // Legacy payloads may omit writes. Explicit-mode missing/unpriced usage stays unknown.
   if (
     !count(usage.input_tokens) ||
     !count(cached) ||
-    cached > usage.input_tokens ||
+    !count(writeTokens) ||
+    (writes !== undefined && !count(writes)) ||
+    cached + writeTokens > usage.input_tokens ||
     !count(usage.output_tokens) ||
     !count(usage.total_tokens) ||
     usage.total_tokens !== usage.input_tokens + usage.output_tokens ||
-    (writes !== undefined && writes !== 0) ||
+    (explicit && (!count(writes) || !pricedWrites)) ||
+    (!explicit && writeTokens !== 0) ||
     (reasoning !== undefined && (!count(reasoning) || reasoning > usage.output_tokens))
   )
     return unknownUsage;
   const result = normalizedUsageSchema.safeParse({
     status: 'known',
-    uncachedInputTokens: usage.input_tokens - cached,
+    uncachedInputTokens: usage.input_tokens - cached - writeTokens,
     cacheReadInputTokens: cached,
-    cacheWriteInputTokens: [],
+    cacheWriteInputTokens: writeTokens ? [{ writeClass: 'openai-30m', tokens: writeTokens }] : [],
     outputTokens: usage.output_tokens,
     separatelyBilledReasoningTokens: 0,
     reasoningTokens: reasoning ?? null,
@@ -138,7 +150,7 @@ export class OpenAiProvider implements AiProvider {
       streaming: true,
       structuredOutput: profile.structuredOutput,
       schemaVersions: Object.freeze([AI_VERSIONS.schema]),
-      promptCaching: false,
+      promptCaching: !!profile.promptCaching && profile.promptCaching !== 'disabled',
       contextWindowTokens: profile.contextWindowTokens,
       maximumOutputTokens: profile.maximumOutputTokens,
     });
@@ -169,7 +181,8 @@ export class OpenAiProvider implements AiProvider {
     const capabilities = this.capabilities(request.model);
     if (
       request.maximumOutputTokens > capabilities.maximumOutputTokens ||
-      request.promptCache !== 'disabled' ||
+      (request.promptCache !== 'disabled' &&
+        (!capabilities.promptCaching || !request.cachePartition)) ||
       (request.structuredOutput &&
         (!capabilities.structuredOutput || request.structuredOutput.version !== AI_VERSIONS.schema))
     )
@@ -180,10 +193,57 @@ export class OpenAiProvider implements AiProvider {
     // Node timers cannot represent a larger delay; reject instead of overflowing it.
     if (remaining > MAX_TIMER_DELAY_MS) throw this.failure('invalid-request', false);
 
+    const profile = this.profiles.get(request.model)!;
+    const optimized = request.promptCache === 'stable-prefix';
+    const explicit = optimized && profile.promptCaching === 'openai-explicit-30m';
+    if (
+      explicit &&
+      !profile.prices.cacheWrites.some(
+        (entry) => entry.writeClass === 'openai-30m' && entry.microUsdPerMillion !== '0',
+      )
+    )
+      throw this.failure('capability-unsupported', false);
+    // Hash only static authority/schema plus an opaque actor/target partition.
+    // Never place history, prompts, reviewed graph or evidence in routing metadata.
+    const cacheKey = optimized
+      ? createHash('sha256')
+          .update(
+            JSON.stringify({
+              partition: request.cachePartition,
+              model: request.model,
+              instructions: request.instructions,
+              schema: request.structuredOutput,
+              adapter: AI_VERSIONS.adapter,
+              policy: profile.promptCaching,
+            }),
+          )
+          .digest('hex')
+      : undefined;
     const body: ResponseCreateParamsStreaming = {
       model: request.model,
-      instructions: request.instructions,
-      input: request.messages.map(({ role, text }) => ({ role, content: text })),
+      ...(explicit ? {} : { instructions: request.instructions }),
+      input: [
+        ...(explicit
+          ? [
+              {
+                role: 'developer' as const,
+                content: [
+                  {
+                    type: 'input_text' as const,
+                    text: request.instructions,
+                    prompt_cache_breakpoint: { mode: 'explicit' as const },
+                  },
+                ],
+              },
+            ]
+          : []),
+        ...request.messages.map(({ role, text }) => ({ role, content: text })),
+      ],
+      ...(cacheKey ? { prompt_cache_key: cacheKey } : {}),
+      ...(explicit ? { prompt_cache_options: { mode: 'explicit', ttl: '30m' } } : {}),
+      ...(optimized && profile.promptCaching === 'openai-in-memory'
+        ? { prompt_cache_retention: 'in_memory' }
+        : {}),
       stream: true,
       store: false,
       background: false,
@@ -255,7 +315,7 @@ export class OpenAiProvider implements AiProvider {
           event.type === 'response.incomplete' ||
           event.type === 'response.failed'
         ) {
-          usage = normalizeOpenAiUsage(event.response.usage);
+          usage = normalizeOpenAiUsage(event.response.usage, profile);
           if (event.type === 'response.failed')
             throw this.failure(mapCode(event.response.error?.code), true, usage, requestId);
           const expected = event.type === 'response.completed' ? 'completed' : 'incomplete';

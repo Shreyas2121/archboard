@@ -7,6 +7,50 @@ import {
 const DEFAULT_GLOBAL_CONCURRENCY = 2;
 
 describe('server-owned AI operator configuration', () => {
+  it('defaults per-model prompt caching off and fingerprints explicit capability/retention with required write pricing', () => {
+    const initial = loadAiConfig(FIXTURE_AI_ENVIRONMENT);
+    if (!initial.enabled) throw new Error('Enabled fixture required');
+    expect(initial.policy.profiles[0]!.promptCaching).toBe('disabled');
+    const profile = {
+      ...FIXTURE_MODEL_PROFILE,
+      promptCaching: 'openai-explicit-30m',
+      prices: {
+        ...FIXTURE_MODEL_PROFILE.prices,
+        cacheWrites: [{ writeClass: 'openai-30m', microUsdPerMillion: '2' }],
+      },
+    };
+    const explicit = loadAiConfig({
+      ...FIXTURE_AI_ENVIRONMENT,
+      AI_MODEL_PROFILES: JSON.stringify([profile]),
+    });
+    if (!explicit.enabled) throw new Error('Enabled fixture required');
+    expect(explicit.policy.profiles[0]!.promptCaching).toBe('openai-explicit-30m');
+    expect(explicit.policy.fingerprint).not.toBe(initial.policy.fingerprint);
+    for (const invalid of [
+      { ...profile, promptCaching: '24h' },
+      { ...profile, promptCaching: 'openai-extended' },
+      { ...profile, promptCaching: { mode: 'implicit', ttl: '30m' } },
+      { ...profile, prices: FIXTURE_MODEL_PROFILE.prices },
+      {
+        ...profile,
+        prices: {
+          ...profile.prices,
+          cacheWrites: [{ writeClass: 'openai-30m', microUsdPerMillion: '0' }],
+        },
+      },
+    ])
+      expect(() =>
+        loadAiConfig({ ...FIXTURE_AI_ENVIRONMENT, AI_MODEL_PROFILES: JSON.stringify([invalid]) }),
+      ).toThrow('AI_MODEL_PROFILES');
+    const legacy = loadAiConfig({
+      ...FIXTURE_AI_ENVIRONMENT,
+      AI_MODEL_PROFILES: JSON.stringify([
+        { ...FIXTURE_MODEL_PROFILE, promptCaching: 'openai-in-memory' },
+      ]),
+    });
+    if (!legacy.enabled) throw new Error('Enabled fixture required');
+    expect(legacy.policy.profiles[0]!.promptCaching).toBe('openai-in-memory');
+  });
   it('defaults off and permits ordinary API configuration without provider credentials', () => {
     expect(loadAiConfig({})).toEqual({ enabled: false });
     expect(

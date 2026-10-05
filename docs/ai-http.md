@@ -30,7 +30,7 @@ step IDs and derives bounded viewport rectangles and order locally. Only a separ
 review and explicit Apply writes steps; generation and private highlights never
 start presenter mode. Mode, reviewed steps, geometry and private history participate
 in exact actor-private result identity. Public schema version remains 1; the server
-prompt/output schema versions are `ai-prompt-v4` / `ai-schema-v4`.
+prompt/output schema versions are `ai-prompt-v5` / `ai-schema-v5`.
 
 Only the canonical `POST /api/v1/ai/runs` JSON route selects an 8 MiB parser. It
 checks raw decoded bytes, valid UTF-8, JSON depth and forbidden prototype keys before

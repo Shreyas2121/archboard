@@ -5,7 +5,9 @@ import {
   type NormalizedProviderRequest,
   type ProviderEvent,
 } from '../../../application/provider.js';
-import { AI_VERSIONS } from '../../../application/operator-policy.js';
+import { AI_VERSIONS, type AiModelProfile } from '../../../application/operator-policy.js';
+import { priceAiUsage, estimateAiReservation } from '../../../application/pricing.js';
+import { snapshotAiConfiguration } from '../../../application/persistence.js';
 import { fixtureAiPolicy } from '../../testing/fixture-config.js';
 import {
   providerContractSuite,
@@ -31,6 +33,10 @@ const CANCEL_DELAY_MS = 20;
 const STREAM_DEADLINE_MS = 40;
 const RETRY_DELAY_MS = 2000;
 const LARGE_TEXT_REPEATS = 2100;
+const PARTITION_CHARACTERS = 64;
+const ORDINARY_INPUT_TOKENS = 50;
+const READ_INPUT_TOKENS = 20;
+const MAXIMUM_ATTEMPTS = 3n;
 const key = 'fixture-not-a-real-key-000000000000';
 const FIXTURE_MODEL_PROFILE = fixtureAiPolicy().profiles[0]!;
 const nativeUsage = {
@@ -99,13 +105,13 @@ function sse(events: unknown[]) {
     headers: { 'content-type': 'text/event-stream', 'x-request-id': 'req_fixture' },
   });
 }
-function fixture(events: unknown[]) {
+function fixture(events: unknown[], profile: AiModelProfile = FIXTURE_MODEL_PROFILE) {
   const calls: { url: string; init: RequestInit }[] = [];
   const fetch: typeof globalThis.fetch = async (url, init) => {
     calls.push({ url: String(url), init: init! });
     return sse(events);
   };
-  return { adapter: new OpenAiProvider(key, [FIXTURE_MODEL_PROFILE], fetch), calls };
+  return { adapter: new OpenAiProvider(key, [profile], fetch), calls };
 }
 async function collect(
   adapter: OpenAiProvider,
@@ -131,6 +137,154 @@ providerContractSuite(
 );
 
 describe('OpenAI Responses request and usage', () => {
+  const explicitProfile: AiModelProfile = {
+    ...FIXTURE_MODEL_PROFILE,
+    promptCaching: 'openai-explicit-30m',
+    prices: {
+      ...FIXTURE_MODEL_PROFILE.prices,
+      uncachedInputMicroUsdPerMillion: '1000000',
+      cacheReadMicroUsdPerMillion: '100000',
+      cacheWrites: [{ writeClass: 'openai-30m', microUsdPerMillion: '1250000' }],
+      outputMicroUsdPerMillion: '2000000',
+    },
+  };
+  const optimized = () => ({
+    ...request(),
+    promptCache: 'stable-prefix' as const,
+    cachePartition: 'a'.repeat(PARTITION_CHARACTERS),
+  });
+  it('places exactly one static developer breakpoint before all private data and binds routing to schema/model/partition', async () => {
+    const f = fixture([terminal()], explicitProfile);
+    const input = optimized();
+    await collect(f.adapter, input);
+    await collect(f.adapter, {
+      ...input,
+      messages: [{ role: 'user', text: 'different private graph/history/evidence' }],
+    });
+    const bodies = f.calls.map((call) => JSON.parse(call.init.body as string));
+    expect(bodies[0].prompt_cache_options).toEqual({ mode: 'explicit', ttl: '30m' });
+    expect(bodies[0].instructions).toBeUndefined();
+    expect(bodies[0].input[0]).toEqual({
+      role: 'developer',
+      content: [
+        {
+          type: 'input_text',
+          text: input.instructions,
+          prompt_cache_breakpoint: { mode: 'explicit' },
+        },
+      ],
+    });
+    expect(bodies[0].input[1]).toEqual({ role: 'user', content: input.messages[0]!.text });
+    expect(bodies[1].input[0]).toEqual(bodies[0].input[0]);
+    expect(bodies[1].prompt_cache_key).toBe(bodies[0].prompt_cache_key);
+    expect(bodies[0].prompt_cache_key).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(bodies[0].prompt_cache_options)).not.toContain('prewarm');
+    expect(bodies[0].prompt_cache_retention).toBeUndefined();
+    for (const changed of [
+      { ...input, instructions: input.instructions + ' revised' },
+      { ...input, cachePartition: 'b'.repeat(PARTITION_CHARACTERS) },
+      { ...input, structuredOutput: { ...input.structuredOutput!, name: 'new_schema' } },
+      { ...input, structuredOutput: { ...input.structuredOutput!, schema: { type: 'object' } } },
+    ]) {
+      await collect(f.adapter, changed);
+      expect(JSON.parse(f.calls.at(-1)!.init.body as string).prompt_cache_key).not.toBe(
+        bodies[0].prompt_cache_key,
+      );
+    }
+    const other = fixture([terminal()], { ...explicitProfile, model: 'other-fixture-model' });
+    await collect(other.adapter, { ...input, model: 'other-fixture-model' });
+    expect(JSON.parse(other.calls[0]!.init.body as string).prompt_cache_key).not.toBe(
+      bodies[0].prompt_cache_key,
+    );
+  });
+  it('omits optimization controls when disabled and emits only in-memory controls for a legacy profile', async () => {
+    const f = fixture([terminal()], {
+      ...FIXTURE_MODEL_PROFILE,
+      promptCaching: 'openai-in-memory',
+    });
+    await collect(f.adapter, optimized());
+    const body = JSON.parse(f.calls[0]!.init.body as string);
+    expect(body.prompt_cache_retention).toBe('in_memory');
+    expect(body.prompt_cache_options).toBeUndefined();
+    expect(body.input).toEqual([{ role: 'user', content: request().messages[0]!.text }]);
+    await collect(f.adapter);
+    const disabled = JSON.parse(f.calls[1]!.init.body as string);
+    for (const field of ['prompt_cache_key', 'prompt_cache_retention', 'prompt_cache_options'])
+      expect(disabled[field]).toBeUndefined();
+    expect(disabled.instructions).toBe(request().instructions);
+  });
+  it('conserves read/write/ordinary input, prices write premiums and reserves a full miss for every attempt', async () => {
+    const mixed = {
+      ...nativeUsage,
+      input_tokens_details: { cached_tokens: 20, cache_write_tokens: 30 },
+    };
+    const f = fixture([terminal('completed', { usage: mixed })], explicitProfile);
+    const result = (await collect(f.adapter, optimized())).at(-1)!;
+    if (result.type !== 'completed' || result.usage.status !== 'known')
+      throw new Error('Known fixture usage required');
+    expect(result.usage.uncachedInputTokens).toBe(ORDINARY_INPUT_TOKENS);
+    expect(result.usage.cacheReadInputTokens).toBe(READ_INPUT_TOKENS);
+    expect(result.usage.cacheWriteInputTokens).toEqual([{ writeClass: 'openai-30m', tokens: 30 }]);
+    expect(
+      result.usage.uncachedInputTokens +
+        result.usage.cacheReadInputTokens +
+        result.usage.cacheWriteInputTokens[0]!.tokens,
+    ).toBe(mixed.input_tokens);
+    const policy = fixtureAiPolicy();
+    const snapshot = snapshotAiConfiguration({
+      provider: 'openai',
+      profile: explicitProfile,
+      policy,
+    });
+    expect(priceAiUsage(snapshot, result.usage)).toBe('150');
+    const maximum = estimateAiReservation(snapshot, { repairs: 1, rejectionRetries: 1 });
+    expect(BigInt(maximum.maximumMicroUsd)).toBeGreaterThanOrEqual(
+      MAXIMUM_ATTEMPTS * BigInt(priceAiUsage(snapshot, result.usage)),
+    );
+    const allWrites = normalizeOpenAiUsage(
+      { ...nativeUsage, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 100 } },
+      explicitProfile,
+    );
+    expect(priceAiUsage(snapshot, allWrites)).toBe('185');
+    expect(
+      priceAiUsage(
+        snapshot,
+        normalizeOpenAiUsage(
+          { ...nativeUsage, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 } },
+          explicitProfile,
+        ),
+      ),
+    ).toBe('160');
+  });
+  it.each([
+    { cached_tokens: 20 },
+    { cached_tokens: 20, cache_write_tokens: -1 },
+    { cached_tokens: 80, cache_write_tokens: 30 },
+    { cached_tokens: 20, cache_write_tokens: 0.5 },
+  ])('keeps incomplete or inconsistent explicit usage unknown', (details) => {
+    expect(
+      normalizeOpenAiUsage(
+        { ...nativeUsage, input_tokens_details: details } as ResponseUsage,
+        explicitProfile,
+      ),
+    ).toEqual({ status: 'unknown' });
+  });
+  it('rejects missing private partitions and unpriced explicit writes before dispatch', async () => {
+    for (const [profile, input] of [
+      [explicitProfile, { ...request(), promptCache: 'stable-prefix' as const }],
+      [{ ...explicitProfile, prices: FIXTURE_MODEL_PROFILE.prices }, optimized()],
+    ] as const) {
+      const f = fixture([terminal()], profile);
+      await expect(collect(f.adapter, input)).rejects.toBeInstanceOf(AiProviderError);
+      expect(f.calls).toHaveLength(0);
+    }
+    expect(
+      normalizeOpenAiUsage(nativeUsage, {
+        ...explicitProfile,
+        prices: FIXTURE_MODEL_PROFILE.prices,
+      }),
+    ).toEqual({ status: 'unknown' });
+  });
   it('sends only bounded server-owned Responses fields and never retries', async () => {
     const { adapter, calls } = fixture([delta(), terminal()]);
     const events = await collect(adapter);
@@ -182,6 +336,7 @@ describe('OpenAI Responses request and usage', () => {
     { ...nativeUsage, input_tokens_details: undefined },
     { ...nativeUsage, input_tokens_details: { cached_tokens: 101 } },
     { ...nativeUsage, input_tokens_details: { cached_tokens: 20, cache_write_tokens: 1 } },
+    { ...nativeUsage, input_tokens_details: { cached_tokens: 20, cache_write_tokens: null } },
     { ...nativeUsage, output_tokens: -1 },
     { ...nativeUsage, output_tokens_details: { reasoning_tokens: 31 } },
     { ...nativeUsage, total_tokens: 999 },

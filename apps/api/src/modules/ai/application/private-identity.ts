@@ -65,7 +65,19 @@ export class AiPrivateIdentity {
       model: snapshot.model,
       maximumOutputTokens: snapshot.maximumOutputTokens,
       maximumResponseBytes: config.policy.cache.payloadBytes,
-      promptCache: config.policy.cache.promptCaching,
+      promptCache:
+        config.profile.promptCaching && config.profile.promptCaching !== 'disabled'
+          ? ('stable-prefix' as const)
+          : ('disabled' as const),
+      ...(config.profile.promptCaching && config.profile.promptCaching !== 'disabled'
+        ? {
+            cachePartition: this.digest('archboard-ai-provider-partition-v1', {
+              deployment: config.policy.deploymentNamespace,
+              actor,
+              target: reviewed.target,
+            }),
+          }
+        : {}),
     };
     const scope = {
       deployment: config.policy.deploymentNamespace,

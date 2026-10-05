@@ -25,6 +25,7 @@ const RETRY_WAIT_MS = 300;
 const DRAIN_MS = 100;
 const SETTLEMENT_WAIT_MS = 20;
 const SMALL_OUTPUT_BYTES = 4;
+const CACHE_FRAMING_INPUT_CEILING = 200;
 const usage = {
   status: 'known' as const,
   uncachedInputTokens: 1,
@@ -79,6 +80,25 @@ async function finish(runs: AiRunCoordinator, id: string, store: InMemoryAiPersi
   expect(store.state.settlements.has(id)).toBe(true);
   await runs.drain();
 }
+it('includes conservative cache-prefix framing in input admission before intent or dispatch', async () => {
+  const stream = jest.fn<AiProvider['stream']>(async function* () {
+    yield completed;
+  });
+  const f = setup(stream);
+  const intent = {
+    ...f.intent,
+    snapshot: { ...f.intent.snapshot, maximumInputTokens: CACHE_FRAMING_INPUT_CEILING },
+  };
+  await expect(
+    f.runs.start(intent, f.adapter, {
+      ...f.request,
+      promptCache: 'stable-prefix',
+      cachePartition: TEST_KEY,
+    }),
+  ).rejects.toMatchObject({ code: 'AI_INPUT_TOO_LARGE' });
+  expect(stream).not.toHaveBeenCalled();
+  expect(f.store.state.runs.size).toBe(0);
+});
 it('commits before dispatch; replay, different-key dedupe and reconnect make one call', async () => {
   let calls = 0;
   let release!: () => void;

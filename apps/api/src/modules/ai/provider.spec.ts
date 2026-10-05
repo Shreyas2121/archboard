@@ -177,6 +177,23 @@ describe('neutral provider port and production registry', () => {
     );
     expect(fixture.calls).toBe(0);
   });
+  it('requires the selected adapter cache capability when a model profile opts in', () => {
+    const policy = fixtureAiPolicy({
+      AI_MODEL_PROFILES: JSON.stringify([
+        { ...FIXTURE_MODEL_PROFILE, promptCaching: 'openai-in-memory' },
+      ]),
+    });
+    const unsupported = makeFixture();
+    expect(() => new AiProviderRegistry('test', policy, [unsupported]).resolve()).toThrow(
+      AiProviderError,
+    );
+    expect(unsupported.calls).toBe(0);
+    const supported = makeFixture([completed], { ...capabilities, promptCaching: true });
+    expect(
+      new AiProviderRegistry('test', policy, [supported]).resolve().configuration.profile
+        .promptCaching,
+    ).toBe('openai-in-memory');
+  });
   it('withholds native capability exceptions without falling back or dispatching', () => {
     const adapter: AiProvider = {
       id: 'openai',

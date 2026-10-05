@@ -5,6 +5,19 @@ existing AI intent/coordinator ports. No public AI endpoint is enabled here.
 Database, browser and real provider acceptance remain OPEN under the
 [verification policy](verification-policy.md).
 
+AI-C16 adds optional provider prompt-cache optimization under the selected model's
+server-only `promptCaching` profile. This is separate from exact private result
+reuse: disabling optimization does not bypass identity/authorization or trigger
+regeneration on a receipt replay. Configuration/generation changes invalidate
+application reuse conservatively while receipts retain their original identity.
+Provider routing uses opaque deployment/actor/target partitions and static
+model/instruction/schema versions; private prompts and history are never routing
+metadata. Supported explicit mode caches only the static prefix before reviewed
+user data. Legacy implicit caching has provider-managed boundaries. See
+[operator settings](ai-operator-configuration.md) for capabilities, retention,
+write pricing and the distinction between disabling optimization and native
+automatic provider caching. No fixture result establishes live cache savings.
+
 ## Identity and authorization
 
 `AiRunApplication` is the server-owned creation entry point. It validates the

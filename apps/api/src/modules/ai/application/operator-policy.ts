@@ -1,10 +1,10 @@
 import type { AiProviderId } from './provider.js';
 
 export const AI_VERSIONS = Object.freeze({
-  prompt: 'ai-prompt-v4',
-  schema: 'ai-schema-v4',
-  adapter: 'ai-adapter-v1',
-  policy: 'ai-policy-v1',
+  prompt: 'ai-prompt-v5',
+  schema: 'ai-schema-v5',
+  adapter: 'ai-adapter-v2',
+  policy: 'ai-policy-v2',
 });
 export interface AiModelProfile {
   readonly quality: 'standard' | 'higher';
@@ -15,6 +15,8 @@ export interface AiModelProfile {
   readonly maximumInputTokens: number;
   readonly maximumOutputTokens: number;
   readonly structuredOutput: boolean;
+  /** Operator assertion for this provider/model; omitted profiles remain disabled. */
+  readonly promptCaching?: 'disabled' | 'openai-in-memory' | 'openai-explicit-30m';
   readonly prices: {
     readonly uncachedInputMicroUsdPerMillion: string;
     readonly cacheReadMicroUsdPerMillion: string;
@@ -65,7 +67,6 @@ export interface AiPolicy {
     readonly payloadBytes: number;
     readonly receiptTtlMs: number;
     readonly readsWhenDisabled: false;
-    readonly promptCaching: 'disabled';
   };
 }
 export interface AiResolvedConfiguration {

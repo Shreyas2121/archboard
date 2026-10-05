@@ -23,7 +23,8 @@ AI-C12 delivers isolated review, additive structural Apply, stable scoped recove
 AI-C13 delivers reviewed grounded explanations, bounded private follow-up history and local reference highlights.
 AI-C14 delivers reviewed scoped edits, complete candidate preflight, field preconditions and scoped replay barriers.
 AI-C15 delivers reviewed append/replacement presentation proposals, derived viewports and private walkthrough highlights.
-AI-C16–AI-C19 are **NOT STARTED**;
+AI-C16 delivers optional per-model provider cache controls, stable private-data boundaries and disjoint usage accounting.
+AI-C17–AI-C19 are **NOT STARTED**;
 AI-X01 is **NOT STARTED / separately selected optional work**. AI implementation,
 browser/database/live-provider acceptance, and the original Version 1 production
 release gate remain **OPEN**. The [Phase 8 closure](../../phase-8-closure.md) does
@@ -46,12 +47,13 @@ not establish the original M00–M08 implementation-completion trigger.
 | AI-C12 | IMPLEMENTED           | `621543880a83a28c5f858cb0c1528a6c336be24a`; parent `889bc95c4ac7cf87fc37af5ce182b8c60e3f176d` | [AI-C12](AI-C12.md): isolated review, additive Apply, immutable ID recovery, truthful ACK state and authorized new-board import              |
 | AI-C13 | IMPLEMENTED           | `89a8ed5ecba8741866e21bccc461637939c960a0`; parent `621543880a83a28c5f858cb0c1528a6c336be24a` | [AI-C13](AI-C13.md): grounded selected-context guidance, bounded private history, exact reuse and private scoped highlights                  |
 | AI-C14 | IMPLEMENTED           | `2908c26ffe07ca6aed1c95e875ef9af8033f0ba4`; parent `89a8ed5ecba8741866e21bccc461637939c960a0` | [AI-C14](AI-C14.md): reviewed scoped diffs, current field preconditions, candidate preflight, normal Undo and replay barriers                |
-| AI-C15 | IMPLEMENTED           | Introducing commit of AI-C15 evidence; parent `2908c26ffe07ca6aed1c95e875ef9af8033f0ba4`      | [AI-C15](AI-C15.md): reviewed ordered walkthroughs, explicit append/replacement, validated viewports, normal commands and private highlights |
+| AI-C15 | IMPLEMENTED           | `7cd11865dd654ad3210b745ae7f79353aed1d948`; parent `2908c26ffe07ca6aed1c95e875ef9af8033f0ba4` | [AI-C15](AI-C15.md): reviewed ordered walkthroughs, explicit append/replacement, validated viewports, normal commands and private highlights |
+| AI-C16 | IMPLEMENTED           | Introducing commit of AI-C16 evidence; parent `7cd11865dd654ad3210b745ae7f79353aed1d948`      | [AI-C16](AI-C16.md): per-model cache controls, stable static prefixes, private partitions, usage conservation and write-premium accounting   |
 
 Resolve the introducing commit after it lands:
 
 ```powershell
-git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C15.md
+git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C16.md
 ```
 
 Map that actual hash in the next task's index update; do not amend this evidence to
@@ -87,7 +89,7 @@ aggregates that launch deferred children.
 
 ## Next task
 
-Select [AI-C16](../../../guide.md#ai-c16--provider-prompt-cache-optimization), depending on the actual AI-C15 commit. Add optional capability-aware provider prompt-cache controls for stable instructions/schema, keeping sensitive context out of reusable cross-user prefixes. Preserve reviewed presentation steps, field-aware scoped edits, private guidance/history/highlights, additive Apply, stable scoped ID/import recovery, account/editability/archive/expiry checks, offline persistence and committed server ACK semantics. Preserve private reviewed creation intent, current authority, committed dispatch claims, conservative unknown liabilities, the [HTTP contract](../../ai-http.md) and the [cache contract](../../ai-cache.md). Do not pad or prewarm prompts, use extended retention or add a paid background cache warmer by default.
+Select [AI-C17](../../../guide.md#ai-c17--cleanup-metrics-kill-switch-and-shutdown), depending on the actual AI-C16 commit. Add bounded retention cleanup, safe operational metrics, kill switch and bounded shutdown/recovery. Preserve accounting and unknown liabilities independently of private payload expiry, optional per-model cache controls and conservative write pricing, reviewed presentations/scoped edits, private guidance/history/highlights, stable scoped recovery, account/editability/archive/expiry guards, offline persistence and committed ACK semantics. Preserve private reviewed creation intent, current authority, committed dispatch claims, the [HTTP contract](../../ai-http.md) and the [cache contract](../../ai-cache.md). Do not log private content or add paid background probes/warmers.
 Database checks remain deferred until the user's Version 1 implementation trigger.
 Preserve the neutral provider port and
 [operator configuration](../../ai-operator-configuration.md).

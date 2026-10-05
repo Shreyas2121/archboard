@@ -103,6 +103,11 @@ export const normalizedProviderRequestSchema = aiByteLimit(
     maximumResponseBytes: safeCount.refine((count) => count > 0 && count <= MAX_AI_RESULT_BYTES),
     deadlineAtUnixMs: safeCount.refine((count) => count > 0),
     promptCache: z.enum(['disabled', 'stable-prefix']),
+    // Opaque server-generated actor/target partition; never a native provider field.
+    cachePartition: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   }),
   MAX_AI_REQUEST_BYTES,
 );
