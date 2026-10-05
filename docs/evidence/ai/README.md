@@ -26,9 +26,9 @@ AI-C15 delivers reviewed append/replacement presentation proposals, derived view
 AI-C16 delivers optional per-model provider cache controls, stable private-data boundaries and disjoint usage accounting.
 AI-C17 delivers bounded cleanup/recovery, safe aggregate diagnostics, marker-based spending disable, circuit breakers and bounded shutdown.
 AI-C18 delivers focused boundary regressions, expired-lease discovery, AI credential scans and recoverable acceptance procedures.
-AI-C19 is **NOT STARTED**;
-AI-X01 is **NOT STARTED / separately selected optional work**. AI implementation,
-browser/database/live-provider acceptance, and the original Version 1 production
+AI-C19 delivers operator setup/rotation, usage/templates and prepared recruiter handoff.
+AI-C00–AI-C19 implementation is delivered; AI-X01 is **NOT STARTED / separately selected optional work**.
+Browser/database/live-provider acceptance, and the original Version 1 production
 release gate remain **OPEN**. The [Phase 8 closure](../../phase-8-closure.md) does
 not establish the original M00–M08 implementation-completion trigger.
 
@@ -52,15 +52,16 @@ not establish the original M00–M08 implementation-completion trigger.
 | AI-C15 | IMPLEMENTED           | `7cd11865dd654ad3210b745ae7f79353aed1d948`; parent `2908c26ffe07ca6aed1c95e875ef9af8033f0ba4` | [AI-C15](AI-C15.md): reviewed ordered walkthroughs, explicit append/replacement, validated viewports, normal commands and private highlights     |
 | AI-C16 | IMPLEMENTED           | `ad05052b4f4b90f7251e9311b0271f652663d49a`; parent `7cd11865dd654ad3210b745ae7f79353aed1d948` | [AI-C16](AI-C16.md): per-model cache controls, stable static prefixes, private partitions, usage conservation and write-premium accounting       |
 | AI-C17 | IMPLEMENTED           | `203dc074d3acb7a3a33965537f7845a0bb4a747e`; parent `ad05052b4f4b90f7251e9311b0271f652663d49a` | [AI-C17](AI-C17.md): bounded retention/recovery, redacted metrics, persistent marker switch, circuit breakers and shutdown/rotation runbook      |
-| AI-C18 | IMPLEMENTED           | Introducing commit of AI-C18 evidence; parent `203dc074d3acb7a3a33965537f7845a0bb4a747e`      | [AI-C18](AI-C18.md): public orchestration races, price partitions, lease recovery, lost Apply response, AI secret scans and acceptance inventory |
+| AI-C18 | IMPLEMENTED           | `438c9b2d2796035c068c1ba7fba9bb768230faae`; parent `203dc074d3acb7a3a33965537f7845a0bb4a747e` | [AI-C18](AI-C18.md): public orchestration races, price partitions, lease recovery, lost Apply response, AI secret scans and acceptance inventory |
+| AI-C19 | DOCUMENTED            | Introducing commit of AI-C19 evidence; parent `438c9b2d2796035c068c1ba7fba9bb768230faae`      | [AI-C19](AI-C19.md): operator setup/rotation, reviewed context/profile templates, usage and prepared recruiter handoff                           |
 
 Resolve the introducing commit after it lands:
 
 ```powershell
-git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C18.md
+git log --diff-filter=A -1 --format=%H -- docs/evidence/ai/AI-C19.md
 ```
 
-Map that actual hash in the next task's index update; do not amend this evidence to
+Map that actual hash in a later explicitly selected task's index update; do not amend this evidence to
 embed its own commit hash. Later fixes receive new commits.
 
 ## Required architecture
@@ -91,11 +92,33 @@ Focused fixture, formatting, build, or static checks cannot close those acceptan
 gates. Follow the guide's per-task checks and evidence requirements; do not run
 aggregates that launch deferred children.
 
-## Next task
+## Final implementation handoff
 
-Select [AI-C19](../../../guide.md#ai-c19--operator-and-product-handoff), depending on the actual AI-C18 commit. Complete operator/product handoff and the final delivered-commit inventory with all OPEN gates. Use the [verification inventory](../../ai-verification.md) without aggregates that hide deferred children. Preserve the [operations contract](../../ai-operations.md), accounting and unknown liabilities independently of private payload expiry, optional per-model cache controls and conservative write pricing, reviewed presentations/scoped edits, private guidance/history/highlights, stable scoped recovery, account/editability/archive/expiry guards, offline persistence and committed ACK semantics. Preserve private reviewed creation intent, current authority, committed dispatch claims, the [HTTP contract](../../ai-http.md) and the [cache contract](../../ai-cache.md). Do not log private content or add paid background probes/warmers.
-Database checks remain deferred until the user's Version 1 implementation trigger.
-Preserve the neutral provider port and
-[operator configuration](../../ai-operator-configuration.md).
-Money/provider ceilings have finite defaults and optional validated overrides under
-the user's AI-C02 update. Fixture and config proof do not close runtime acceptance.
+The table above maps every delivered AI-C00–AI-C18 commit and parent from actual
+Git history. Resolve AI-C19's introducing commit with the command above; the final
+task intentionally cannot contain its own hash. Historical task evidence is unchanged.
+Entry points: [operator setup](../../ai-operator-configuration.md),
+[product usage](../../using-ai.md), [operations](../../ai-operations.md),
+[recruiter walkthrough](../../portfolio-walkthrough.md#prepared-ai-recruiter-walkthrough)
+and [verification inventory](../../ai-verification.md).
+
+Current regression baseline is AI-C18: 335 API/configuration, 47 contract,
+22 document-model, 95 frontend Node and 6 security tests (505 total), with build,
+types, lint and static secret/cache/worker/boundary checks passing. These are fixture
+and static results, not database, rendered browser, real process or provider proof.
+AI-C19 checks documentation/examples only and does not rerun those suites.
+
+| Gate                                                                       | Status / precise resume condition                                                                                                                                    |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AI PostgreSQL/HTTP/auth/session/SSE, migration and actual process recovery | OPEN; **UNRUN (deferred by user — until Version 1 implementation is complete)**. Resume after all original M00–M08 implementation, or explicit later user exception. |
+| AI browser/offline persistence/committed ACK/accessibility/UI              | OPEN; **UNRUN (deferred by user)**. Resume only on explicit later browser-verification request.                                                                      |
+| Live OpenAI compatibility/quality/cache/retention/latency/cost             | OPEN; **UNRUN (requires separately authorized operator budget and reviewed inputs)**. Require finite budget, reviewed inputs and operator model/pricing/data policy. |
+| Original Version 1 phase/release gate                                      | OPEN; unchanged plan requirements and historical gaps, including deferred Phase 8 backup/production proof. AI completion does not establish the M00–M08 trigger.     |
+
+No remaining required AI-C task is selected. AI-X01 needs a separate explicit
+selection; it is not implied by completing the handoff. Other providers and actual
+provider switching remain unimplemented. Do not execute deferred checks, deploy,
+push, migrate or spend merely because documentation includes future procedures.
+Preserve reviewed private input, original provider/configuration snapshots,
+durable unknown liability, exact authorized reuse, normal graph commands and
+committed server ACK semantics when continuing work.

@@ -1,0 +1,20 @@
+[
+  {
+    "quality": "standard",
+    "model": "REPLACE_WITH_REVIEWED_MODEL",
+    "pricingVersion": "replace-pricing-version",
+    "tokenCountingVersion": "replace-counting-version",
+    "contextWindowTokens": 16000,
+    "maximumInputTokens": 6000,
+    "maximumOutputTokens": 2000,
+    "structuredOutput": true,
+    "promptCaching": "disabled",
+    "prices": {
+      "uncachedInputMicroUsdPerMillion": "1000000",
+      "cacheReadMicroUsdPerMillion": "1000000",
+      "cacheWrites": [],
+      "outputMicroUsdPerMillion": "1000000",
+      "separateReasoningMicroUsdPerMillion": null
+    }
+  }
+]

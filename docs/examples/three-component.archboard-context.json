@@ -1,0 +1,59 @@
+{
+  "kind": "archboard.project-context",
+  "schemaVersion": 1,
+  "project": {
+    "name": "Synthetic task tracker",
+    "description": "A supplied description of a three-component task tracker, not repository analysis.",
+    "technologies": ["React", "NestJS", "PostgreSQL"]
+  },
+  "components": [
+    {
+      "key": "web",
+      "name": "Web client",
+      "category": "client",
+      "technology": "React",
+      "description": "Displays tasks and submits user changes to the API.",
+      "evidenceKeys": []
+    },
+    {
+      "key": "api",
+      "name": "Task API",
+      "category": "service",
+      "technology": "NestJS",
+      "description": "Validates requests and reads or writes tasks.",
+      "evidenceKeys": []
+    },
+    {
+      "key": "db",
+      "name": "Task database",
+      "category": "database",
+      "technology": "PostgreSQL",
+      "description": "Stores task records.",
+      "evidenceKeys": []
+    }
+  ],
+  "connections": [
+    {
+      "source": "web",
+      "target": "api",
+      "label": "Task requests",
+      "protocol": "HTTPS",
+      "evidenceKeys": []
+    },
+    {
+      "source": "api",
+      "target": "db",
+      "label": "Read/write tasks",
+      "protocol": "SQL",
+      "evidenceKeys": []
+    }
+  ],
+  "groups": [],
+  "evidence": [],
+  "constraints": [
+    "Use only the three supplied components. Do not add queues, caches or authentication services."
+  ],
+  "unknowns": [
+    "Authentication, deployment topology, scale and latency requirements were not supplied."
+  ]
+}

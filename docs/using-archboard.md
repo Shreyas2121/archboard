@@ -91,6 +91,16 @@ An older restore can roll back receipts, sessions and permissions while clients
 retain newer pending bytes. Preserve exports and review uncertainty before reconnect;
 local bytes do not become server-saved because they survive in the browser.
 
+## Optional AI assistance
+
+Authenticated owner/editor boards can use operator-enabled OpenAI assistance.
+See [Using AI](using-ai.md) for prompt/form/context JSON, private guidance,
+reviewed additive diagrams, scoped edits and recruiter presentation proposals.
+Generation sends only explicitly reviewed data and never changes the board by
+itself. Apply requires a separate review; result expiry does not delete applied
+graph content. `/demo` has no authenticated AI and offline generation is disabled.
+Database/browser/live-model acceptance remains OPEN in [the AI evidence](evidence/ai/README.md).
+
 ## Keyboard
 
 Tab/Shift+Tab traverse controls; Enter/Space activate them. Outside text fields and

@@ -39,6 +39,23 @@ board after signing in online. Export your current diagram before resetting the 
 Vite reads env files from the repository root. Restart it after changing origins.
 The development server does not establish production service-worker/offline proof.
 
+## Optional AI setup
+
+The database-free demo does not supply authenticated AI. For owner/editor server
+boards, follow [AI operator configuration](ai-operator-configuration.md#configure-a-deployment-without-making-a-paid-request)
+after preparing authenticated application configuration. AI defaults to disabled;
+all credentials, model selection, prices and budgets belong to the API operator.
+Use the [profile template](examples/ai-model-profile.template.json) only after
+replacing its model/rates with reviewed values. It is not a deployable pricing
+recommendation. Keep `AI_CACHE_TTL_MS` at or below 900,000 milliseconds for durable
+runs, and use the spending marker during preparation/rotation.
+
+[Using AI](using-ai.md) provides input examples and proposal/recovery flows;
+[operations](ai-operations.md) covers disabling, key rotation and uncertain spending.
+This documentation authorizes no database/migration check, deployment or paid call.
+AI-C19 completion does not resume the original M00–M08 database trigger or browser
+pause; follow [the precise acceptance conditions](ai-verification.md).
+
 ## Authenticated local development
 
 Use a deliberately selected development PostgreSQL database. For local PostgreSQL,

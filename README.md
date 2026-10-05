@@ -16,6 +16,8 @@ regularly to a private project folder: browser storage can be cleared or evicted
 - Portable JSON and controlled SVG/PNG exports.
 - Server boards with owner/editor/viewer access, discussion and invitations.
 - Account-scoped local persistence and a durable offline update outbox.
+- Operator-enabled OpenAI assistance with reviewed inputs, private guidance and
+  explicit diagram/scoped-edit/presentation Apply.
 
 These are implemented capabilities. Integrated browser/database verification remains
 partly deferred. No hosted demo, performance guarantee or production-ready release
@@ -33,6 +35,9 @@ pnpm install --frozen-lockfile
 GitHub OAuth, explicit migrations and optional production configuration.
 [Using Archboard](docs/using-archboard.md) explains saving, recovery, exports,
 checkpoints, templates and keyboard controls.
+[Using AI](docs/using-ai.md) and [operator configuration](docs/ai-operator-configuration.md)
+cover the optional cloud workflow. Only OpenAI is implemented; local repository
+scanning and other production adapters are outside the delivered scope.
 
 The [portfolio walkthrough](docs/portfolio-walkthrough.md) provides a five-minute
 script and engineering notes. Add real screenshots or recordings after exercising
@@ -95,7 +100,7 @@ including commands labelled `non-browser`, before running them.
 Phase 8 is closed for the user's personal/portfolio scope, with P8-01–P8-07,
 P8-09 and a scoped P8-13 handoff delivered. P8-08 and P8-10–P8-12, plus full
 production release reconciliation, remain deferred. The original Version 1 gate
-stays OPEN. [The closure amendment](docs/phase-8-closure.md), [Phase 8](phase8.md),
-[its guide](guide7.md) and the [evidence index](docs/evidence/phase8/README.md)
+stays OPEN. [The closure amendment](docs/phase-8-closure.md), [original plan](plan.md)
+and the [evidence index](docs/evidence/phase8/README.md)
 retain the original release plan. Historical [Phase 7](docs/phase-7-presentation-portability.md)
 and earlier audits describe their recorded builds, not current acceptance.

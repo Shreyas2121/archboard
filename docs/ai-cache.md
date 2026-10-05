@@ -1,7 +1,9 @@
 # Exact private AI result cache
 
 AI-C08 adds exact semantic result reuse and bounded encrypted retention to the
-existing AI intent/coordinator ports. No public AI endpoint is enabled here.
+existing AI intent/coordinator ports. AI-C09 exposes authenticated run/event routes
+through those same ports; no provider credential or shared result-cache endpoint
+is public.
 Database, browser and real provider acceptance remain OPEN under the
 [verification policy](verification-policy.md).
 
