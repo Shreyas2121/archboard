@@ -16,6 +16,7 @@ const MAX_INTENTS = 64;
 const MAX_IMPORT_INTENT_CHARACTERS = 524_288;
 const MAX_JOURNAL_CHARACTERS = 1_048_576;
 const intentSchema = z.strictObject({
+  kind: z.literal('scoped-edit').optional(),
   ids: z.record(z.string(), applicationIdSchema),
   state: z.enum(['prepared', 'applied']),
   newBoardId: applicationIdSchema.optional(),
@@ -69,7 +70,11 @@ export class AiApplyJournal {
   public list(): Readonly<Record<string, AiApplyIntent>> {
     return this.read();
   }
-  public prepare(runId: string, ids: Readonly<Record<string, string>>): AiApplyIntent {
+  public prepare(
+    runId: string,
+    ids: Readonly<Record<string, string>>,
+    kind?: 'scoped-edit',
+  ): AiApplyIntent {
     applicationIdSchema.parse(runId);
     const records = this.read();
     const existing = records[runId];
@@ -85,7 +90,7 @@ export class AiApplyJournal {
     }
     if (Object.keys(records).length >= MAX_INTENTS)
       throw new Error('This board’s Apply recovery journal is full. No diagram was applied.');
-    const intent = intentSchema.parse({ ids, state: 'prepared' });
+    const intent = intentSchema.parse({ ids, state: 'prepared', ...(kind ? { kind } : {}) });
     if (new Set(Object.values(intent.ids)).size !== Object.keys(intent.ids).length)
       throw new Error('Apply IDs must be unique.');
     records[runId] = intent;

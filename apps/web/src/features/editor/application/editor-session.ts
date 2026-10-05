@@ -60,6 +60,7 @@ import {
 
 import { registerUpdateSession, unregisterUpdateSession } from './update-sessions';
 import { aiCreatedIdsState, applyAiGraphBatch } from '../ai/ai-apply-intent';
+import { applyAiEditBatch, type AiEditDraft } from '../ai/ai-scoped-edits';
 
 export const DEMO_BOARD_ID = '6f5eb829-0b42-4e62-8a8a-3db5176adf67';
 
@@ -467,6 +468,14 @@ export class EditorSession {
 
   public applyAiDiagram(graph: GraphProjection): void {
     this.executeMutation((document) => applyAiGraphBatch(document, graph));
+  }
+  public applyAiEdits(draft: AiEditDraft, beforeMutation: () => void): void {
+    this.finishTextHistory();
+    try {
+      this.executeMutation((document) => applyAiEditBatch(document, draft, beforeMutation));
+    } finally {
+      this.finishTextHistory();
+    }
   }
 
   public whenLocalWritesIdle(): Promise<void> {

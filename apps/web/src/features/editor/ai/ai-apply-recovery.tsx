@@ -27,6 +27,15 @@ export function AiApplyRecovery({
     return (
       <section className="grid gap-3" aria-label="Previous AI Apply intents">
         {Object.entries(records).map(([runId, record]) => {
+          if (record.kind === 'scoped-edit')
+            return (
+              <p key={runId} className="break-all text-xs">
+                Scoped edit: {runId}.{' '}
+                {record.state === 'applied'
+                  ? 'Applied locally; this record does not prove server acknowledgment.'
+                  : 'An Apply attempt was recorded. Inspect current fields and persistence status; replay is blocked because its outcome may be uncertain.'}
+              </p>
+            );
           const locallyApplied =
             record.state === 'applied' || session.inspectAiCreatedIds(record.ids) === 'present';
           const body = record.import?.json

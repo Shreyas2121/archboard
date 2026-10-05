@@ -14,6 +14,7 @@ import {
 } from '@/features/editor/state';
 import { useAiReviewSession } from './use-ai-review-session';
 import { AI_JSON_INDENT, aiValidationMessage } from './ai-review-model';
+import { AiScopedEditReview } from './ai-scoped-edit-review';
 import {
   GUIDANCE_STARTERS,
   reviewAiGuidance,
@@ -58,7 +59,12 @@ export function AiGuidancePanel({
   try {
     if (review && result) {
       const validated = aiResultForRequestSchema(review).parse(result);
-      if (validated.kind === 'guidance' || validated.kind === 'clarification') guidance = validated;
+      if (
+        validated.kind === 'guidance' ||
+        validated.kind === 'clarification' ||
+        validated.kind === 'edits'
+      )
+        guidance = validated;
     }
   } catch {
     /* Invalid referenced entities are not shown or highlighted. */
@@ -97,13 +103,13 @@ export function AiGuidancePanel({
         include their endpoints; connections between selected cards are included. Boundaries,
         presentation steps and other cards are excluded. All fields of included cards, including
         code or note text, appear in the review. AI uses these descriptions and your private
-        history; it cannot inspect files, fetch links or prove security. Nothing here changes the
-        board or moves collaborators’ views.
+        history; it cannot inspect files, fetch links or prove security. Guidance stays private.
+        Scoped edits change the board only after a separate diff review and explicit Apply.
       </p>
       <Tabs
         value={task}
         onValueChange={(value) => {
-          if (value === 'explain-selection' || value === 'trace-flow') {
+          if (value === 'explain-selection' || value === 'trace-flow' || value === 'scoped-edit') {
             setTask(value);
             setPrompt(GUIDANCE_STARTERS[value]);
           }
@@ -115,6 +121,9 @@ export function AiGuidancePanel({
           </TabsTrigger>
           <TabsTrigger value="trace-flow" disabled={!workflow.editable() || !!state.run}>
             Trace request flow
+          </TabsTrigger>
+          <TabsTrigger value="scoped-edit" disabled={!workflow.editable() || !!state.run}>
+            Propose scoped edits
           </TabsTrigger>
         </TabsList>
       </Tabs>
@@ -219,7 +228,9 @@ export function AiGuidancePanel({
               })
             }
           >
-            Request guidance from this review
+            {task === 'scoped-edit'
+              ? 'Request edit proposal from this review'
+              : 'Request guidance from this review'}
           </Button>
         </section>
       )}
@@ -282,7 +293,7 @@ export function AiGuidancePanel({
           aria-label="Guidance and grounded claims"
         >
           <p className="whitespace-pre-wrap text-sm">{guidance.explanation}</p>
-          {guidance.kind === 'guidance' && (
+          {guidance.kind !== 'clarification' && (
             <>
               {guidance.claims.map((claim, index) => (
                 <p key={index} className="whitespace-pre-wrap text-xs">
@@ -300,50 +311,72 @@ export function AiGuidancePanel({
                   Assumption: {text}
                 </p>
               ))}
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!current}
-                onClick={() => {
-                  try {
-                    const graph = session.getSnapshot().projection;
-                    if (!graph || !review || !workflow.currentScope()) return;
-                    if (
-                      reviewedSelection.current !== selectionKey() ||
-                      !aiGuidanceMatchesContext(
-                        review,
-                        graph,
-                        readEditorSelection(),
-                        history,
-                        prompt,
-                        task,
-                      ) ||
-                      state.run?.content.status !== 'available' ||
-                      Date.parse(state.run.content.expiresAt) <= Date.now()
-                    )
-                      throw new Error(
-                        'Guidance expired or selection changed. Review current context again.',
-                      );
-                    const highlights = currentAiGuidanceHighlights(review, guidance, graph);
-                    actions.setPrivateAiHighlights({
-                      scope: boardStorageNamespaceKey(session.getStorageNamespace()),
-                      revision: session.getSnapshot().revision,
-                      ...highlights,
-                    });
-                  } catch (error) {
-                    setProblem(aiValidationMessage(error));
-                  }
-                }}
-              >
-                Highlight references only in my view
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => actions.setPrivateAiHighlights(null)}
-              >
-                Clear private highlights
-              </Button>
+              {guidance.kind === 'guidance' && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={!current}
+                    onClick={() => {
+                      try {
+                        const graph = session.getSnapshot().projection;
+                        if (!graph || !review || !workflow.currentScope()) return;
+                        if (
+                          reviewedSelection.current !== selectionKey() ||
+                          !aiGuidanceMatchesContext(
+                            review,
+                            graph,
+                            readEditorSelection(),
+                            history,
+                            prompt,
+                            task,
+                          ) ||
+                          state.run?.content.status !== 'available' ||
+                          Date.parse(state.run.content.expiresAt) <= Date.now()
+                        )
+                          throw new Error(
+                            'Guidance expired or selection changed. Review current context again.',
+                          );
+                        const highlights = currentAiGuidanceHighlights(review, guidance, graph);
+                        actions.setPrivateAiHighlights({
+                          scope: boardStorageNamespaceKey(session.getStorageNamespace()),
+                          revision: session.getSnapshot().revision,
+                          ...highlights,
+                        });
+                      } catch (error) {
+                        setProblem(aiValidationMessage(error));
+                      }
+                    }}
+                  >
+                    Highlight references only in my view
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => actions.setPrivateAiHighlights(null)}
+                  >
+                    Clear private highlights
+                  </Button>
+                </>
+              )}
+              {guidance.kind === 'edits' && review && state.run && (
+                <AiScopedEditReview
+                  key={state.run.id}
+                  session={session}
+                  request={review}
+                  proposal={guidance}
+                  runId={state.run.id}
+                  allowed={() => {
+                    const run = workflow.snapshot().run;
+                    return (
+                      workflow.currentScope() &&
+                      run?.id === state.run?.id &&
+                      run?.content.status === 'available' &&
+                      Date.parse(run.content.expiresAt) > Date.now()
+                    );
+                  }}
+                />
+              )}
             </>
           )}
           {guidance.questions.map((text, index) => (
@@ -358,7 +391,7 @@ export function AiGuidancePanel({
           <Button
             type="button"
             variant="outline"
-            disabled={!canReset || !current}
+            disabled={!canReset || (!current && guidance.kind !== 'edits')}
             onClick={() => {
               try {
                 if (!review) return;

@@ -9,9 +9,11 @@ import {
 } from '@archboard/contracts';
 import type { SelectionReference } from '@/features/editor/state';
 
-export type AiGuidanceTask = 'explain-selection' | 'trace-flow';
+export type AiGuidanceTask = 'explain-selection' | 'trace-flow' | 'scoped-edit';
 export type AiGuidanceHistory = AiCreateRun['history'];
 export const GUIDANCE_STARTERS: Readonly<Record<AiGuidanceTask, string>> = {
+  'scoped-edit':
+    'Propose narrowly scoped improvements to the reviewed selection. Explain changes and use exact current field preconditions. Do not delete, reconnect, change kinds or replace the board.',
   'explain-selection':
     'Explain the selected components, stated responsibilities and tradeoffs. Identify missing facts and ask up to three focused questions.',
   'trace-flow':
@@ -87,7 +89,11 @@ export function retainAiGuidanceExchange(
   result: AiResult,
 ): AiGuidanceHistory {
   const validated = aiResultForRequestSchema(request).parse(result);
-  if (validated.kind !== 'guidance' && validated.kind !== 'clarification')
+  if (
+    validated.kind !== 'guidance' &&
+    validated.kind !== 'clarification' &&
+    validated.kind !== 'edits'
+  )
     throw new Error('A guidance result is required.');
   // Reject the complete exchange if it will not fit; never silently summarize or truncate facts.
   return aiCreateRunSchema.parse({

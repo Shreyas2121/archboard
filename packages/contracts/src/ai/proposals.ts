@@ -175,12 +175,31 @@ export const aiOperationSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
-export const aiEditProposalSchema = z.strictObject({
-  kind: z.literal('edits'),
-  schemaVersion: z.literal(AI_SCHEMA_VERSION),
-  operations: z.array(aiOperationSchema).min(1).max(limits.MAX_AI_OPERATIONS),
-  ...commentaryShape,
-});
+export const aiEditProposalSchema = z
+  .strictObject({
+    kind: z.literal('edits'),
+    schemaVersion: z.literal(AI_SCHEMA_VERSION),
+    operations: z.array(aiOperationSchema).min(1).max(limits.MAX_AI_OPERATIONS),
+    ...commentaryShape,
+  })
+  .superRefine((value, context) => {
+    const writes = new Set<string>();
+    value.operations.forEach((operation, index) => {
+      const field =
+        'nodeId' in operation
+          ? `${operation.nodeId}:${operation.type === 'rename-node' ? 'title' : 'content'}`
+          : 'edgeId' in operation
+            ? `${operation.edgeId}:label/protocol`
+            : null;
+      if (field && writes.has(field))
+        context.addIssue({
+          code: 'custom',
+          path: ['operations', index],
+          message: 'Each reviewed field may be written only once.',
+        });
+      if (field) writes.add(field);
+    });
+  });
 export const aiPresentationProposalSchema = z
   .strictObject({
     kind: z.literal('presentation'),

@@ -331,3 +331,41 @@ it('bounds the full guidance request including history and schema before durable
   expect(f.store.state.reservations.size).toBe(0);
   await f.runs.drain();
 });
+it('caches valid scoped edits only against exact reviewed fields and rejects forged preconditions', async () => {
+  const request: AiCreateRun = { ...guidanceBody, task: 'scoped-edit' };
+  const output: AiResult = {
+    kind: 'edits',
+    schemaVersion: 1,
+    explanation: 'Proposed rename',
+    claims: [],
+    assumptions: [],
+    questions: [],
+    operations: [
+      { type: 'rename-node', nodeId: guidanceNodeId, expectedTitle: 'API', title: 'API gateway' },
+    ],
+  };
+  const f = setup({}, output);
+  const first = await f.application.create(TEST_ACTOR, randomUUID(), request);
+  await ready(f, first.run.id);
+  expect((await f.application.create(TEST_ACTOR, randomUUID(), request)).result).toEqual(output);
+  expect(f.calls()).toBe(1);
+  const changed = {
+    ...request,
+    boardContext: {
+      ...request.boardContext!,
+      graph: {
+        ...request.boardContext!.graph,
+        nodes: request.boardContext!.graph.nodes.map((node) => ({
+          ...node,
+          title: 'Collaborator title',
+        })),
+      },
+    },
+  };
+  const invalid = await f.application.create(TEST_ACTOR, randomUUID(), changed);
+  await ready(f, invalid.run.id);
+  expect(f.store.state.runs.get(invalid.run.id)?.phase).toBe('failed');
+  expect(f.store.state.cache.size).toBe(1);
+  expect(f.calls()).toBe(THREE);
+  await f.runs.drain();
+});

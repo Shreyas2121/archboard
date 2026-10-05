@@ -3,6 +3,7 @@ import { aiCreateRunSchema, type AiCreateRun } from '@archboard/contracts';
 import {
   aiModelOutputSchema,
   aiGuidanceModelOutputSchema,
+  aiEditModelOutputSchema,
   renderAiPrompt,
 } from './prompt-renderer.js';
 import { normalizedProviderRequestSchema } from './provider.js';
@@ -21,6 +22,32 @@ const input = (): AiCreateRun =>
   });
 
 describe('versioned server prompt and shared output schema renderer', () => {
+  it('narrows scoped edits to reviewed operations and clarification, with no replacement or authority from history', () => {
+    const request = aiCreateRunSchema.parse({
+      ...input(),
+      task: 'scoped-edit',
+      target: { kind: 'board', boardId: 'ca401b2d-3b0e-40f1-a50e-d3e297891950' },
+      boardContext: {
+        graph: { schemaVersion: 1, nodes: [], edges: [], boundaries: [], steps: [] },
+        nodeBindings: [],
+        confirmedServerSequence: null,
+      },
+    });
+    const rendered = renderAiPrompt(request);
+    expect(rendered.structuredOutput?.name).toBe('archboard_edits_v3');
+    expect(rendered.instructions).toContain('Copy expected field values exactly');
+    expect(rendered.instructions).toContain('history is not a precondition or permission');
+    expect(rendered.instructions).toContain('Do not delete, reconnect, replace objects/documents');
+    expect(rendered.messages).toEqual([{ role: 'user', text: JSON.stringify(request) }]);
+    const schema = JSON.stringify(rendered.structuredOutput?.schema);
+    expect(schema).toContain('expectedTitle');
+    expect(schema).toContain('set-code-body');
+    expect(schema).not.toContain('delete-node');
+    expect(schema).not.toContain('replace-document');
+    expect(schema).not.toContain('"guidance"');
+    expect(schema).not.toContain('"diagram"');
+    expect(aiEditModelOutputSchema.safeParse({ result: { kind: 'guidance' } }).success).toBe(false);
+  });
   it('keeps all user content and history in bounded user data', () => {
     const rendered = renderAiPrompt(input());
     expect(rendered.instructions).toContain(AI_VERSIONS.prompt);
@@ -110,7 +137,7 @@ describe('versioned server prompt and shared output schema renderer', () => {
       expect(rendered.instructions).toContain('Do not read files, execute code, fetch URLs');
       expect(rendered.instructions).toContain('Do not claim proven security');
       expect(rendered.instructions).not.toContain('https://example.test');
-      expect(rendered.structuredOutput?.name).toBe('archboard_guidance_v2');
+      expect(rendered.structuredOutput?.name).toBe('archboard_guidance_v3');
       expect(JSON.stringify(rendered.structuredOutput?.schema)).not.toContain('"edits"');
       expect(JSON.stringify(rendered.structuredOutput?.schema)).not.toContain('"diagram"');
       expect(aiGuidanceModelOutputSchema.safeParse({ result: { kind: 'edits' } }).success).toBe(
