@@ -9,9 +9,12 @@ import {
 } from '@archboard/contracts';
 import type { SelectionReference } from '@/features/editor/state';
 
-export type AiGuidanceTask = 'explain-selection' | 'trace-flow' | 'scoped-edit';
+export type AiGuidanceTask = 'explain-selection' | 'trace-flow' | 'scoped-edit' | 'presentation';
+export type AiPresentationMode = 'append' | 'replace-reviewed';
 export type AiGuidanceHistory = AiCreateRun['history'];
 export const GUIDANCE_STARTERS: Readonly<Record<AiGuidanceTask, string>> = {
+  presentation:
+    'Propose a three-minute recruiter walkthrough of the reviewed architecture: named ordered steps, clear talking points, declared request flow and tradeoffs. Distinguish provided descriptions from proposed assumptions and ask focused questions for missing facts.',
   'scoped-edit':
     'Propose narrowly scoped improvements to the reviewed selection. Explain changes and use exact current field preconditions. Do not delete, reconnect, change kinds or replace the board.',
   'explain-selection':
@@ -73,14 +76,39 @@ export function reviewAiGuidance(
   graph: GraphProjection,
   selection: readonly SelectionReference[],
   history: AiGuidanceHistory,
+  presentationMode: AiPresentationMode = 'append',
 ): AiCreateRun {
   return aiCreateRunSchema.parse({
     schemaVersion: 1,
     task,
     target: { kind: 'board', boardId },
     prompt,
-    boardContext: selectedAiBoardContext(graph, selection),
+    boardContext:
+      task === 'presentation'
+        ? selectedAiPresentationContext(graph, selection, presentationMode)
+        : selectedAiBoardContext(graph, selection),
+    ...(task === 'presentation' ? { presentationMode } : {}),
     history,
+  });
+}
+/** Replacement review explicitly includes every current step and its referenced live objects. */
+export function selectedAiPresentationContext(
+  graph: GraphProjection,
+  selection: readonly SelectionReference[],
+  mode: AiPresentationMode,
+) {
+  if (mode === 'append') return selectedAiBoardContext(graph, selection);
+  const included: SelectionReference[] = [...selection];
+  for (const step of graph.steps) {
+    included.push(
+      ...step.nodeIds.map((id) => ({ kind: 'node' as const, id })),
+      ...step.edgeIds.map((id) => ({ kind: 'edge' as const, id })),
+    );
+  }
+  const selected = selectedAiBoardContext(graph, included);
+  return aiBoardContextSchema.parse({
+    ...selected,
+    graph: { ...selected.graph, steps: graph.steps },
   });
 }
 
@@ -92,7 +120,8 @@ export function retainAiGuidanceExchange(
   if (
     validated.kind !== 'guidance' &&
     validated.kind !== 'clarification' &&
-    validated.kind !== 'edits'
+    validated.kind !== 'edits' &&
+    validated.kind !== 'presentation'
   )
     throw new Error('A guidance result is required.');
   // Reject the complete exchange if it will not fit; never silently summarize or truncate facts.
@@ -113,14 +142,20 @@ export function aiGuidanceMatchesContext(
   history: AiGuidanceHistory,
   prompt: string,
   task: AiGuidanceTask,
+  presentationMode: AiPresentationMode = 'append',
 ) {
   try {
     return (
       request.task === task &&
+      (task !== 'presentation' || (request.presentationMode ?? 'append') === presentationMode) &&
       request.prompt === prompt &&
       JSON.stringify(request.history) === JSON.stringify(history) &&
       JSON.stringify(request.boardContext) ===
-        JSON.stringify(selectedAiBoardContext(graph, selection))
+        JSON.stringify(
+          task === 'presentation'
+            ? selectedAiPresentationContext(graph, selection, presentationMode)
+            : selectedAiBoardContext(graph, selection),
+        )
     );
   } catch {
     return false;

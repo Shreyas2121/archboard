@@ -199,7 +199,7 @@ export class AiReviewSession {
     try {
       const body = aiCreateRunSchema.parse(input);
       if (
-        !['explain-selection', 'trace-flow', 'scoped-edit'].includes(body.task) ||
+        !['explain-selection', 'trace-flow', 'scoped-edit', 'presentation'].includes(body.task) ||
         body.target.kind !== 'board' ||
         body.target.boardId !== this.boardId
       )

@@ -21,6 +21,17 @@ exclude actors, board-derived hashes, provider details, prices, usage, dispatch
 fences, and encrypted payload metadata. Creation reports cache/dedupe source when
 applicable; status inspection reports the original generation's lifecycle.
 
+Presentation requests may include `presentationMode: 'append' | 'replace-reviewed'`;
+omitting it defaults to append. This field is rejected for other tasks. A presentation
+result must match that reviewed mode. Append requires empty `expectedStepIds`;
+replacement must name every step included in the explicitly reviewed context.
+Proposed references must belong to that context. The application allocates fresh
+step IDs and derives bounded viewport rectangles and order locally. Only a separate
+review and explicit Apply writes steps; generation and private highlights never
+start presenter mode. Mode, reviewed steps, geometry and private history participate
+in exact actor-private result identity. Public schema version remains 1; the server
+prompt/output schema versions are `ai-prompt-v4` / `ai-schema-v4`.
+
 Only the canonical `POST /api/v1/ai/runs` JSON route selects an 8 MiB parser. It
 checks raw decoded bytes, valid UTF-8, JSON depth and forbidden prototype keys before
 strict shared-schema validation. This accommodates escaping and request overhead

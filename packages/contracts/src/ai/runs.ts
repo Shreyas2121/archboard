@@ -81,12 +81,19 @@ export const aiCreateRunSchema = aiByteLimit(
         .refine((text) => text.trim().length > 0),
       context: projectContextV1Schema.optional(),
       boardContext: aiBoardContextSchema.optional(),
+      presentationMode: z.enum(['append', 'replace-reviewed']).optional(),
       history: z
         .array(z.strictObject({ role: z.enum(['user', 'assistant']), text: aiNonblankTextSchema }))
         .max(limits.MAX_AI_HISTORY_MESSAGES)
         .default([]),
     })
     .superRefine((value, context) => {
+      if (value.presentationMode !== undefined && value.task !== 'presentation')
+        context.addIssue({
+          code: 'custom',
+          path: ['presentationMode'],
+          message: 'Presentation mode is only valid for presentation requests.',
+        });
       if (value.target.kind === 'new-board' && value.boardContext)
         context.addIssue({
           code: 'custom',
@@ -314,6 +321,18 @@ export function aiResultForRequestSchema(request: AiCreateRun) {
       aiReferences(result.highlightEdgeIds, edges, ['highlightEdgeIds'], context);
     }
     if (result.kind === 'presentation') {
+      if (result.mode !== (request.presentationMode ?? 'append'))
+        context.addIssue({
+          code: 'custom',
+          path: ['mode'],
+          message: 'Presentation mode must match explicit reviewed intent.',
+        });
+      if (result.mode === 'append' && result.expectedStepIds.length)
+        context.addIssue({
+          code: 'custom',
+          path: ['expectedStepIds'],
+          message: 'Appending cannot replace reviewed steps.',
+        });
       aiReferences(
         result.expectedStepIds,
         new Set(graph?.steps.map((step) => step.id) ?? []),

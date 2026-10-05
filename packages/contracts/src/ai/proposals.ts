@@ -222,6 +222,15 @@ export const aiPresentationProposalSchema = z
   })
   .superRefine((value, context) => {
     aiUniqueKeys(value.steps, ['steps'], context);
+    value.steps.forEach((step, index) => {
+      for (const field of ['nodeIds', 'edgeIds'] as const)
+        if (new Set(step[field]).size !== step[field].length)
+          context.addIssue({
+            code: 'custom',
+            path: ['steps', index, field],
+            message: 'Presentation references must be unique.',
+          });
+    });
     if (new Set(value.expectedStepIds).size !== value.expectedStepIds.length)
       context.addIssue({
         code: 'custom',

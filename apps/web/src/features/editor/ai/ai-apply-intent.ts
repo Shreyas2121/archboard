@@ -16,7 +16,7 @@ const MAX_INTENTS = 64;
 const MAX_IMPORT_INTENT_CHARACTERS = 524_288;
 const MAX_JOURNAL_CHARACTERS = 1_048_576;
 const intentSchema = z.strictObject({
-  kind: z.literal('scoped-edit').optional(),
+  kind: z.enum(['scoped-edit', 'presentation']).optional(),
   ids: z.record(z.string(), applicationIdSchema),
   state: z.enum(['prepared', 'applied']),
   newBoardId: applicationIdSchema.optional(),
@@ -73,7 +73,7 @@ export class AiApplyJournal {
   public prepare(
     runId: string,
     ids: Readonly<Record<string, string>>,
-    kind?: 'scoped-edit',
+    kind?: 'scoped-edit' | 'presentation',
   ): AiApplyIntent {
     applicationIdSchema.parse(runId);
     const records = this.read();

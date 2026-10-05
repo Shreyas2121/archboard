@@ -61,6 +61,7 @@ import {
 import { registerUpdateSession, unregisterUpdateSession } from './update-sessions';
 import { aiCreatedIdsState, applyAiGraphBatch } from '../ai/ai-apply-intent';
 import { applyAiEditBatch, type AiEditDraft } from '../ai/ai-scoped-edits';
+import { applyAiPresentationBatch, type AiPresentationDraft } from '../ai/ai-presentation';
 
 export const DEMO_BOARD_ID = '6f5eb829-0b42-4e62-8a8a-3db5176adf67';
 
@@ -468,6 +469,10 @@ export class EditorSession {
 
   public applyAiDiagram(graph: GraphProjection): void {
     this.executeMutation((document) => applyAiGraphBatch(document, graph));
+  }
+  public applyAiPresentation(draft: AiPresentationDraft, beforeMutation: () => void): void {
+    this.finishTextHistory();
+    this.executeMutation((document) => applyAiPresentationBatch(document, draft, beforeMutation));
   }
   public applyAiEdits(draft: AiEditDraft, beforeMutation: () => void): void {
     this.finishTextHistory();

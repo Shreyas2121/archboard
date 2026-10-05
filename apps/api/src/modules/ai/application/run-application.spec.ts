@@ -331,6 +331,55 @@ it('bounds the full guidance request including history and schema before durable
   expect(f.store.state.reservations.size).toBe(0);
   await f.runs.drain();
 });
+it('reuses presentations only for exact reviewed context and mode, rejecting wrong-mode or invented references', async () => {
+  const request: AiCreateRun = {
+    ...guidanceBody,
+    task: 'presentation',
+    presentationMode: 'append',
+  };
+  const output: AiResult = {
+    kind: 'presentation',
+    schemaVersion: 1,
+    mode: 'append',
+    expectedStepIds: [],
+    steps: [
+      {
+        key: 'api',
+        title: 'Declared API',
+        notes: 'Discuss unknown runtime behavior',
+        nodeIds: [guidanceNodeId],
+        edgeIds: [],
+      },
+    ],
+    explanation: 'Proposed walkthrough',
+    claims: [],
+    assumptions: [],
+    questions: [],
+  };
+  const f = setup({}, output);
+  const first = await f.application.create(TEST_ACTOR, randomUUID(), request);
+  await ready(f, first.run.id);
+  expect((await f.application.create(TEST_ACTOR, randomUUID(), request)).result).toEqual(output);
+  expect(f.calls()).toBe(1);
+  const wrongMode = await f.application.create(TEST_ACTOR, randomUUID(), {
+    ...request,
+    presentationMode: 'replace-reviewed',
+  });
+  await ready(f, wrongMode.run.id);
+  expect(f.store.state.runs.get(wrongMode.run.id)?.phase).toBe('failed');
+  expect(f.store.state.cache.size).toBe(1);
+  expect(f.calls()).toBe(THREE);
+  await f.runs.drain();
+  const invalid = setup(
+    {},
+    { ...output, steps: [{ ...output.steps[0]!, nodeIds: [randomUUID()] }] },
+  );
+  const rejected = await invalid.application.create(TEST_ACTOR, randomUUID(), request);
+  await ready(invalid, rejected.run.id);
+  expect(invalid.store.state.runs.get(rejected.run.id)?.phase).toBe('failed');
+  expect(invalid.store.state.cache.size).toBe(0);
+  await invalid.runs.drain();
+});
 it('caches valid scoped edits only against exact reviewed fields and rejects forged preconditions', async () => {
   const request: AiCreateRun = { ...guidanceBody, task: 'scoped-edit' };
   const output: AiResult = {

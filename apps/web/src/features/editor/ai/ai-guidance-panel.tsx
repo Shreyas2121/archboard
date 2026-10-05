@@ -15,6 +15,7 @@ import {
 import { useAiReviewSession } from './use-ai-review-session';
 import { AI_JSON_INDENT, aiValidationMessage } from './ai-review-model';
 import { AiScopedEditReview } from './ai-scoped-edit-review';
+import { AiPresentationReview } from './ai-presentation-review';
 import {
   GUIDANCE_STARTERS,
   reviewAiGuidance,
@@ -23,6 +24,7 @@ import {
   currentAiGuidanceHighlights,
   type AiGuidanceHistory,
   type AiGuidanceTask,
+  type AiPresentationMode,
 } from './ai-guidance-model';
 
 export function AiGuidancePanel({
@@ -40,6 +42,7 @@ export function AiGuidancePanel({
   const [prompt, setPrompt] = useState(GUIDANCE_STARTERS['explain-selection']);
   const [history, setHistory] = useState<AiGuidanceHistory>([]);
   const [problem, setProblem] = useState('');
+  const [presentationMode, setPresentationMode] = useState<AiPresentationMode>('append');
   const reviewedSelection = useRef('');
   const selectionKey = () =>
     JSON.stringify(
@@ -53,7 +56,15 @@ export function AiGuidancePanel({
     reviewedSelection.current ===
       JSON.stringify(selection.map((item) => `${item.kind}:${item.id}`).sort()) &&
     !!snapshot.projection &&
-    aiGuidanceMatchesContext(review, snapshot.projection, selection, history, prompt, task);
+    aiGuidanceMatchesContext(
+      review,
+      snapshot.projection,
+      selection,
+      history,
+      prompt,
+      task,
+      presentationMode,
+    );
   const result = state.run?.content.status === 'available' ? state.run.content.result : null;
   let guidance = null;
   try {
@@ -62,7 +73,8 @@ export function AiGuidancePanel({
       if (
         validated.kind === 'guidance' ||
         validated.kind === 'clarification' ||
-        validated.kind === 'edits'
+        validated.kind === 'edits' ||
+        validated.kind === 'presentation'
       )
         guidance = validated;
     }
@@ -81,6 +93,7 @@ export function AiGuidancePanel({
       setHistory([]);
       setPrompt(GUIDANCE_STARTERS['explain-selection']);
       setTask('explain-selection');
+      setPresentationMode('append');
       setProblem('');
     }
   }, [identity]);
@@ -101,15 +114,21 @@ export function AiGuidancePanel({
       <p className="text-xs leading-5 text-muted-foreground">
         Select cards or connections, then review exactly what will be sent. Selected connections
         include their endpoints; connections between selected cards are included. Boundaries,
-        presentation steps and other cards are excluded. All fields of included cards, including
-        code or note text, appear in the review. AI uses these descriptions and your private
-        history; it cannot inspect files, fetch links or prove security. Guidance stays private.
-        Scoped edits change the board only after a separate diff review and explicit Apply.
+        unrelated cards are excluded. Existing presentation steps are included only for reviewed
+        replacement. All fields of included cards, including code or note text, appear in the
+        review. AI uses these descriptions and your private history; it cannot inspect files, fetch
+        links or prove security. Guidance stays private. Scoped edits change the board only after a
+        separate diff review and explicit Apply.
       </p>
       <Tabs
         value={task}
         onValueChange={(value) => {
-          if (value === 'explain-selection' || value === 'trace-flow' || value === 'scoped-edit') {
+          if (
+            value === 'explain-selection' ||
+            value === 'trace-flow' ||
+            value === 'scoped-edit' ||
+            value === 'presentation'
+          ) {
             setTask(value);
             setPrompt(GUIDANCE_STARTERS[value]);
           }
@@ -125,8 +144,36 @@ export function AiGuidancePanel({
           <TabsTrigger value="scoped-edit" disabled={!workflow.editable() || !!state.run}>
             Propose scoped edits
           </TabsTrigger>
+          <TabsTrigger value="presentation" disabled={!workflow.editable() || !!state.run}>
+            Recruiter walkthrough
+          </TabsTrigger>
         </TabsList>
       </Tabs>
+      {task === 'presentation' && (
+        <section className="grid gap-2" aria-label="Presentation proposal mode">
+          <Tabs
+            value={presentationMode}
+            onValueChange={(value) => {
+              if (value === 'append' || value === 'replace-reviewed') setPresentationMode(value);
+            }}
+          >
+            <TabsList className="flex h-auto flex-wrap">
+              <TabsTrigger value="append" disabled={!workflow.editable() || !!state.run}>
+                Append steps
+              </TabsTrigger>
+              <TabsTrigger value="replace-reviewed" disabled={!workflow.editable() || !!state.run}>
+                Replace reviewed steps
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <p className="text-xs">
+            Append sends selected architecture only. Replacement explicitly includes all existing
+            step names, notes, rectangles, references and their referenced cards/connections in the
+            complete review. Deleted references or exceeded review limits block replacement. Nothing
+            is replaced until a separate review and Apply.
+          </p>
+        </section>
+      )}
       <Label htmlFor="ai-guidance-prompt">Question or answers to earlier questions</Label>
       <Textarea
         id="ai-guidance-prompt"
@@ -164,7 +211,15 @@ export function AiGuidancePanel({
             const scope = session.resourceScope;
             if (!graph || !scope) throw new Error('Current board context is unavailable.');
             workflow.reviewGuidance(
-              reviewAiGuidance(scope.boardId, task, prompt, graph, readEditorSelection(), history),
+              reviewAiGuidance(
+                scope.boardId,
+                task,
+                prompt,
+                graph,
+                readEditorSelection(),
+                history,
+                presentationMode,
+              ),
             );
             reviewedSelection.current = selectionKey();
             setProblem('');
@@ -184,6 +239,8 @@ export function AiGuidancePanel({
             {review.boardContext!.graph.nodes.length} cards ·{' '}
             {review.boardContext!.graph.edges.length} connections · {review.history.length} history
             messages
+            {review.task === 'presentation' &&
+              ` · ${review.presentationMode ?? 'append'} · ${review.boardContext!.graph.steps.length} reviewed steps`}
           </p>
           <p className="text-xs">
             Review all text for secrets. This exact selection and history go to the cloud only when
@@ -223,14 +280,17 @@ export function AiGuidancePanel({
                     history,
                     prompt,
                     task,
+                    presentationMode,
                   )
                 );
               })
             }
           >
-            {task === 'scoped-edit'
-              ? 'Request edit proposal from this review'
-              : 'Request guidance from this review'}
+            {task === 'presentation'
+              ? 'Request reviewed walkthrough proposal'
+              : task === 'scoped-edit'
+                ? 'Request edit proposal from this review'
+                : 'Request guidance from this review'}
           </Button>
         </section>
       )}
@@ -377,6 +437,24 @@ export function AiGuidancePanel({
                   }}
                 />
               )}
+              {guidance.kind === 'presentation' && review && state.run && (
+                <AiPresentationReview
+                  key={state.run.id}
+                  session={session}
+                  request={review}
+                  proposal={guidance}
+                  runId={state.run.id}
+                  allowed={() => {
+                    const run = workflow.snapshot().run;
+                    return (
+                      workflow.currentScope() &&
+                      run?.id === state.run?.id &&
+                      run?.content.status === 'available' &&
+                      Date.parse(run.content.expiresAt) > Date.now()
+                    );
+                  }}
+                />
+              )}
             </>
           )}
           {guidance.questions.map((text, index) => (
@@ -391,7 +469,10 @@ export function AiGuidancePanel({
           <Button
             type="button"
             variant="outline"
-            disabled={!canReset || (!current && guidance.kind !== 'edits')}
+            disabled={
+              !canReset ||
+              (!current && guidance.kind !== 'edits' && guidance.kind !== 'presentation')
+            }
             onClick={() => {
               try {
                 if (!review) return;
