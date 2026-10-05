@@ -194,6 +194,21 @@ export class AiReviewSession {
       this.patch({ review: null, problem: aiValidationMessage(error) });
     }
   }
+  public reviewGuidance(input: AiCreateRun) {
+    if (!this.editable() || this.state.run) return;
+    try {
+      const body = aiCreateRunSchema.parse(input);
+      if (
+        !['explain-selection', 'trace-flow'].includes(body.task) ||
+        body.target.kind !== 'board' ||
+        body.target.boardId !== this.boardId
+      )
+        throw new Error('Guidance must target this board’s reviewed selection.');
+      this.patch({ review: body, prompt: body.prompt, phase: 'reviewed', problem: '' });
+    } catch (error) {
+      this.patch({ review: null, problem: aiValidationMessage(error) });
+    }
+  }
   public async file(
     file: { name: string; size: number; arrayBuffer(): Promise<ArrayBuffer> } | undefined,
   ) {
@@ -245,11 +260,11 @@ export class AiReviewSession {
       this.state.availability?.available === true
     );
   }
-  public async generate() {
-    if (!this.canGenerate()) return;
+  public async generate(dispatchAllowed?: () => boolean) {
+    if (!this.canGenerate() || (dispatchAllowed && !dispatchAllowed())) return;
     const body = this.state.review!;
     this.patch({ intent: { key: this.key(), json: JSON.stringify(body), startedAt: this.now() } });
-    await this.submit(false);
+    await this.submit(false, dispatchAllowed);
   }
   public canRecover() {
     const intent = this.state.intent;
@@ -266,7 +281,7 @@ export class AiReviewSession {
   public async recover() {
     if (this.canRecover()) await this.submit(true);
   }
-  private async submit(wasUncertain: boolean) {
+  private async submit(wasUncertain: boolean, dispatchAllowed?: () => boolean) {
     const intent = this.state.intent;
     if (!intent) return;
     const epoch = this.epoch;
@@ -276,6 +291,16 @@ export class AiReviewSession {
     try {
       await this.authenticate(abort.signal);
       if (!this.accepts(epoch) || !this.online() || abort.signal.aborted) return;
+      if (dispatchAllowed && !dispatchAllowed()) {
+        this.patch({
+          intent: null,
+          review: null,
+          phase: 'rejected',
+          problem:
+            'The reviewed selection or history changed before sending. Review current context again.',
+        });
+        return;
+      }
       const run = await this.transport.create(
         intent.key,
         aiCreateRunSchema.parse(JSON.parse(intent.json)),

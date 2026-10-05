@@ -18,12 +18,14 @@ import {
 import '@xyflow/react/dist/style.css';
 
 import { PresenceOverlay } from '@/features/collaboration/presence-overlay';
+import { privateAiHighlightsForScope } from '@/features/editor/state/private-ai-highlights';
 import { EDITOR_CANCEL_GESTURES } from '@/features/editor/history/editor-shortcuts';
 import {
   SELECTION_KINDS,
   type SelectionReference,
   useEditorSelection,
   useEditorUiActions,
+  usePrivateAiHighlights,
 } from '@/features/editor/state';
 import { CardNode } from '@/features/editor/cards';
 import { BoundaryNode, type BoundaryCanvasNode } from '@/features/editor/boundaries';
@@ -50,6 +52,8 @@ const SNAP_GRID: [number, number] = [CANVAS_GRID_SIZE, CANVAS_GRID_SIZE];
 type EditorCanvasNode = CanvasNode | BoundaryCanvasNode;
 
 interface GraphCanvasProps {
+  readonly privateHighlightScope?: string;
+  readonly privateHighlightRevision?: number;
   readonly presenting?: boolean;
   readonly presentationStep?: PresentationStep | null;
   readonly presence?: TransientPresence | null;
@@ -67,6 +71,8 @@ interface GraphCanvasProps {
 // Camera updates in the shell need not rebuild the canvas subtree. Own store
 // subscriptions and changed graph/permission/presentation props still render.
 export const GraphCanvas = memo(function GraphCanvas({
+  privateHighlightScope,
+  privateHighlightRevision,
   presenting = false,
   presentationStep = null,
   presence = null,
@@ -87,6 +93,21 @@ export const GraphCanvas = memo(function GraphCanvas({
   projectionRef.current = projection;
   const canvasProjection = useMemo(() => adapter.current.adapt(projection), [projection]);
   const selection = useEditorSelection();
+  const privateHighlights = usePrivateAiHighlights();
+  const scopedHighlights = privateAiHighlightsForScope(
+    privateHighlights,
+    privateHighlightScope,
+    privateHighlightRevision,
+    presenting,
+  );
+  const privateNodeIds = useMemo(
+    () => new Set(scopedHighlights.nodeIds),
+    [scopedHighlights.nodeIds],
+  );
+  const privateEdgeIds = useMemo(
+    () => new Set(scopedHighlights.edgeIds),
+    [scopedHighlights.edgeIds],
+  );
   const flow = useRef<ReactFlowInstance<EditorCanvasNode, CanvasEdge> | null>(null);
   const localPresence = useRef<PresenceState>({ cursor: null, selectedIds: [], dragPreview: null });
   const publishPresence = useCallback(
@@ -206,9 +227,15 @@ export const GraphCanvas = memo(function GraphCanvas({
         const selected = selectedNodeIds.has(node.id);
         return renderCache.current.get(
           node.id,
-          [node, selected, editable, beginResize, finishCardResize],
+          [node, selected, editable, beginResize, finishCardResize, privateNodeIds.has(node.id)],
           () => ({
             ...node,
+            ...(privateNodeIds.has(node.id)
+              ? {
+                  className: 'rounded-lg ring-2 ring-primary ring-offset-2 ring-offset-background',
+                  ariaLabel: `${node.ariaLabel ?? 'Card'} — private AI reference`,
+                }
+              : {}),
             selected,
             draggable: editable,
             data: {
@@ -228,6 +255,7 @@ export const GraphCanvas = memo(function GraphCanvas({
       finishCardResize,
       selectedBoundaryIds,
       selectedNodeIds,
+      privateNodeIds,
     ],
   );
   const projectedNodes = useMemo(
@@ -264,11 +292,15 @@ export const GraphCanvas = memo(function GraphCanvas({
     () =>
       canvasProjection.edges.map((edge) => {
         const selected = selectedEdgeIds.has(edge.id);
-        return !selected
+        const highlighted = privateEdgeIds.has(edge.id);
+        return !selected && !highlighted
           ? edge
           : {
               ...edge,
               selected,
+              ...(highlighted
+                ? { style: { ...edge.style, stroke: 'var(--primary)', strokeWidth: 3 } }
+                : {}),
               markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--primary)' },
               ...(edge.markerStart === undefined
                 ? {}
@@ -277,7 +309,7 @@ export const GraphCanvas = memo(function GraphCanvas({
                   }),
             };
       }),
-    [canvasProjection.edges, selectedEdgeIds],
+    [canvasProjection.edges, selectedEdgeIds, privateEdgeIds],
   );
 
   const selectObject = useCallback(

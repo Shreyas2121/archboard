@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import {
   aiRunSchema,
+  aiCreateRunSchema,
   MAX_AI_CONTEXT_FILE_BYTES,
   MAX_AI_PROMPT_CHARACTERS,
 } from '@archboard/contracts';
@@ -66,8 +67,9 @@ function setup(authenticate: (signal: AbortSignal) => Promise<void> = async () =
     events: vi.fn<AiTransport['events']>().mockResolvedValue(undefined),
   };
   const key = vi.fn(() => randomUUID());
+  const boardId = randomUUID();
   const session = new AiReviewSession(
-    randomUUID(),
+    boardId,
     transport,
     () => guard.allowed,
     () => guard.online,
@@ -80,7 +82,7 @@ function setup(authenticate: (signal: AbortSignal) => Promise<void> = async () =
     session.review();
     await session.availability();
   };
-  return { session, transport, guard, key, prepared };
+  return { session, transport, guard, key, prepared, boardId };
 }
 const context = () =>
   contextFromForm({
@@ -95,6 +97,45 @@ const file = (text = JSON.stringify(context())) => ({
   arrayBuffer: vi.fn(async () => new TextEncoder().encode(text).buffer),
 });
 describe('AI reviewed inputs and session-only lifecycle', () => {
+  it('requires a same-board guidance review and rechecks selection/history after asynchronous authentication', async () => {
+    let finishAuth!: () => void;
+    const f = setup(
+      () =>
+        new Promise<void>((resolve) => {
+          finishAuth = resolve;
+        }),
+    );
+    const request = aiCreateRunSchema.parse({
+      schemaVersion: 1,
+      task: 'explain-selection',
+      prompt: 'Explain my selection',
+      history: [{ role: 'user', text: 'Private prior question' }],
+      target: { kind: 'board', boardId: f.boardId },
+      boardContext: {
+        graph: { schemaVersion: 1, nodes: [], edges: [], boundaries: [], steps: [] },
+        nodeBindings: [],
+        confirmedServerSequence: null,
+      },
+    });
+    f.session.reviewGuidance({ ...request, target: { kind: 'board', boardId: randomUUID() } });
+    expect(f.session.snapshot().review).toBeNull();
+    f.session.reviewGuidance(request);
+    await f.session.availability();
+    let current = true;
+    const pending = f.session.generate(() => current);
+    current = false;
+    finishAuth();
+    await pending;
+    expect(f.transport.create).not.toHaveBeenCalled();
+    expect(f.session.snapshot().phase).toBe('rejected');
+    expect(f.session.snapshot().problem).toContain('changed');
+    expect(f.session.snapshot().intent).toBeNull();
+    expect(f.session.editable()).toBe(true);
+    f.guard.allowed = false;
+    f.session.clear();
+    expect(f.session.snapshot().review).toBeNull();
+    expect(f.session.snapshot().intent).toBeNull();
+  });
   it('requires review and positive availability; draft edits invalidate the reviewed body', async () => {
     const f = setup();
     f.session.draft({ prompt: 'A design' });

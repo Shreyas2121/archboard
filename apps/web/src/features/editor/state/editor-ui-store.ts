@@ -15,6 +15,12 @@ export interface SelectionReference {
 }
 
 export type EditorDialog = 'help' | 'reset' | null;
+export interface PrivateAiHighlights {
+  readonly scope: string;
+  readonly revision: number;
+  readonly nodeIds: readonly string[];
+  readonly edgeIds: readonly string[];
+}
 
 interface EditorUiActions {
   readonly initializePalette: (open: boolean) => void;
@@ -24,6 +30,7 @@ interface EditorUiActions {
   readonly toggleGridSnap: () => void;
   readonly setSelection: (selection: readonly SelectionReference[]) => void;
   readonly clearSelection: () => void;
+  readonly setPrivateAiHighlights: (highlights: PrivateAiHighlights | null) => void;
   readonly openDialog: (dialog: Exclude<EditorDialog, null>) => void;
   readonly closeDialog: () => void;
 }
@@ -35,6 +42,7 @@ export interface EditorUiState {
   readonly minimapVisible: boolean;
   readonly gridSnapEnabled: boolean;
   readonly selection: readonly SelectionReference[];
+  readonly privateAiHighlights: PrivateAiHighlights | null;
   readonly activeDialog: EditorDialog;
   readonly actions: EditorUiActions;
 }
@@ -47,6 +55,7 @@ export function createEditorUiStore() {
     minimapVisible: false,
     gridSnapEnabled: true,
     selection: [],
+    privateAiHighlights: null,
     activeDialog: null,
     actions: {
       initializePalette: (paletteOpen) =>
@@ -60,6 +69,7 @@ export function createEditorUiStore() {
       toggleGridSnap: () => set((state) => ({ gridSnapEnabled: !state.gridSnapEnabled })),
       setSelection: (selection) => set({ selection: [...selection] }),
       clearSelection: () => set({ selection: [] }),
+      setPrivateAiHighlights: (privateAiHighlights) => set({ privateAiHighlights }),
       openDialog: (activeDialog) => set({ activeDialog }),
       closeDialog: () => set({ activeDialog: null }),
     },
@@ -84,6 +94,9 @@ export const useGridSnapEnabled = (): boolean =>
 
 export const useEditorSelection = (): readonly SelectionReference[] =>
   useStore(editorUiStore, (state) => state.selection);
+export const readEditorSelection = () => editorUiStore.getState().selection;
+export const usePrivateAiHighlights = () =>
+  useStore(editorUiStore, (state) => state.privateAiHighlights);
 
 export const useActiveEditorDialog = (): EditorDialog =>
   useStore(editorUiStore, (state) => state.activeDialog);

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import type { EditorSession } from '@/features/editor/application';
 import { downloadAiContext } from '@/platform/download/ai-context-download';
@@ -14,8 +14,35 @@ import { AiContextReview } from './ai-context-review';
 import { AI_JSON_INDENT, contextFromForm, aiValidationMessage } from './ai-review-model';
 import { AiDiagramPreparation } from './ai-diagram-preparation';
 import { AiApplyRecovery } from './ai-apply-recovery';
+import { AiGuidancePanel } from './ai-guidance-panel';
 
 export function AiPanel({
+  session,
+  readOnly,
+}: {
+  readonly session: EditorSession;
+  readonly readOnly: boolean;
+}) {
+  const [tab, setTab] = useState('generate');
+  return (
+    <Tabs value={tab} onValueChange={setTab}>
+      <TabsList className="mx-4 mt-4" aria-label="AI assistant mode">
+        <TabsTrigger value="generate">Generate diagram</TabsTrigger>
+        <TabsTrigger value="guidance" disabled={readOnly}>
+          Understand selection
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent value="generate" forceMount className="data-[state=inactive]:hidden">
+        <AiGenerationPanel session={session} readOnly={readOnly} />
+      </TabsContent>
+      <TabsContent value="guidance" forceMount className="data-[state=inactive]:hidden">
+        {!readOnly && <AiGuidancePanel session={session} active={tab === 'guidance'} />}
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+function AiGenerationPanel({
   session,
   readOnly,
 }: {

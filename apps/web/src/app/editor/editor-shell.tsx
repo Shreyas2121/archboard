@@ -66,6 +66,7 @@ import { EditorDialogs } from './editor-dialogs';
 import { EditorInspector } from './editor-inspector';
 import { DiscussionPanel } from '@/features/editor/discussion/discussion-panel';
 import { AiPanel } from '@/features/editor/ai/ai-panel';
+import { boardStorageNamespaceKey } from '@archboard/sync-client';
 import { StepsPanel } from '@/features/editor/presentation/steps-panel';
 import { useLocalPresentation } from '@/features/editor/presentation/use-local-presentation';
 import {
@@ -699,6 +700,14 @@ export function EditorShell({
           >
             {projection !== null && (
               <GraphCanvas
+                {...(session?.resourceScope && sessionSnapshot && viewState.editable
+                  ? {
+                      privateHighlightScope: boardStorageNamespaceKey(
+                        session.getStorageNamespace(),
+                      ),
+                      privateHighlightRevision: sessionSnapshot.revision,
+                    }
+                  : {})}
                 presence={playback.presenting ? null : (session?.presence ?? null)}
                 presenting={playback.presenting}
                 presentationStep={playback.step}
