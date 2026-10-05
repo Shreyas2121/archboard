@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { jest } from '@jest/globals';
 import type { AiCreateRun, AiResult } from '@archboard/contracts';
 import { projectContextV1Schema } from '@archboard/contracts';
 import { RuntimeAdmission } from '../../../platform/lifecycle/runtime-admission.js';
@@ -26,6 +27,7 @@ const CONTEXT_TOKENS = 131072;
 const MAX_TURNS = 100;
 const TWO = 2;
 const THREE = 3;
+const DAY_MS = 86_400_000;
 const semanticDiagram: AiResult = {
   kind: 'diagram',
   schemaVersion: 1,
@@ -125,7 +127,11 @@ const guidanceResult: AiResult = {
   highlightNodeIds: [guidanceNodeId],
   highlightEdgeIds: [],
 };
-function setup(overrides: NodeJS.ProcessEnv = {}, output: AiResult = fixtureAiResult) {
+function setup(
+  overrides: NodeJS.ProcessEnv = {},
+  output: AiResult = fixtureAiResult,
+  stream?: AiProvider['stream'],
+) {
   const policy = fixturePersistencePolicy({
     AI_MODEL_PROFILES: JSON.stringify([
       {
@@ -138,12 +144,8 @@ function setup(overrides: NodeJS.ProcessEnv = {}, output: AiResult = fixtureAiRe
   });
   const store = new InMemoryAiPersistence();
   const cipher = new AesGcmAiPayloadCipher(TEST_KEY, TEST_KEY_VERSION);
-  const intents = new AiIntentService(
-    store,
-    cipher,
-    new AiAdmissionService(policy),
-    new AiResultCache(cipher, policy.cache),
-  );
+  const cache = new AiResultCache(cipher, policy.cache);
+  const intents = new AiIntentService(store, cipher, new AiAdmissionService(policy), cache);
   const runtime = new RuntimeAdmission();
   runtime.setOwnership(true);
   runtime.setSchemaCompatible(true);
@@ -160,8 +162,12 @@ function setup(overrides: NodeJS.ProcessEnv = {}, output: AiResult = fixtureAiRe
       contextWindowTokens: CONTEXT_TOKENS,
       maximumOutputTokens: FIXTURE_MODEL_PROFILE.maximumOutputTokens,
     }),
-    stream: async function* () {
+    stream: async function* (request, signal) {
       calls++;
+      if (stream) {
+        yield* stream(request, signal);
+        return;
+      }
       yield {
         type: 'completed',
         text: JSON.stringify({ result: output }),
@@ -183,13 +189,134 @@ function setup(overrides: NodeJS.ProcessEnv = {}, output: AiResult = fixtureAiRe
     new AiProviderRegistry('test', policy, [adapter]),
     runs,
   );
-  return { store, policy, runs, application, calls: () => calls };
+  return { store, policy, runs, application, cache, calls: () => calls };
 }
 async function ready(f: ReturnType<typeof setup>, id: string) {
   for (let turn = 0; turn < MAX_TURNS && !f.store.state.settlements.has(id); turn++)
     await new Promise((resolve) => setImmediate(resolve));
   expect(f.store.state.settlements.has(id)).toBe(true);
 }
+it("coordinates public receipt/dedupe races under one paid slot and never shares another actor's cache", async () => {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = setup(
+    { AI_ACTOR_CONCURRENCY: '1', AI_GLOBAL_CONCURRENCY: '1' },
+    fixtureAiResult,
+    async function* () {
+      await wait;
+      yield {
+        type: 'completed',
+        text: JSON.stringify({ result: fixtureAiResult }),
+        requestId: null,
+        usage: {
+          status: 'known',
+          uncachedInputTokens: 1,
+          cacheReadInputTokens: 0,
+          cacheWriteInputTokens: [],
+          outputTokens: 1,
+          separatelyBilledReasoningTokens: 0,
+          reasoningTokens: null,
+        },
+      };
+    },
+  );
+  try {
+    const key = randomUUID();
+    const first = await f.application.create(TEST_ACTOR, key, body);
+    const contenders = await Promise.all([
+      f.application.create(TEST_ACTOR, key, body),
+      f.application.create(TEST_ACTOR, randomUUID(), body),
+    ]);
+    expect(contenders.map((entry) => entry.source).sort()).toEqual(['deduplicated', 'replayed']);
+    expect(contenders.every((entry) => entry.run.id === first.run.id)).toBe(true);
+    await expect(f.application.create('other-actor', randomUUID(), body)).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+    });
+    expect(f.store.state.reservations.size).toBe(1);
+    release();
+    await ready(f, first.run.id);
+    expect((await f.application.create(TEST_ACTOR, randomUUID(), body)).source).toBe('cache');
+    await expect(
+      f.application.create(TEST_ACTOR, key, { ...body, prompt: 'Different reviewed intent' }),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_CONFLICT' });
+    const other = await f.application.create('other-actor', randomUUID(), body);
+    expect(other.source).toBe('created');
+    expect(other.run.id).not.toBe(first.run.id);
+    await ready(f, other.run.id);
+    expect(f.calls()).toBe(TWO);
+    expect(f.store.state.payloads.size).toBe(TWO);
+    expect(f.store.state.reservations.size).toBe(TWO);
+  } finally {
+    release();
+    await f.runs.drain();
+  }
+});
+it('valid output with unknown usage stays uncached and its liability blocks fresh intent after UTC rollover', async () => {
+  const f = setup({ AI_DAILY_BUDGET_MICRO_USD: '6' }, fixtureAiResult, async function* () {
+    yield {
+      type: 'completed',
+      text: JSON.stringify({ result: fixtureAiResult }),
+      usage: { status: 'unknown' },
+      requestId: null,
+    };
+  });
+  try {
+    const key = randomUUID();
+    const first = await f.application.create(TEST_ACTOR, key, body);
+    await ready(f, first.run.id);
+    expect(f.store.state.runs.get(first.run.id)?.phase).toBe('outcome-unknown');
+    expect(f.store.state.cache.size).toBe(0);
+    expect(f.store.state.payloads.size).toBe(0);
+    expect((await f.application.create(TEST_ACTOR, key, body)).source).toBe('replayed');
+    f.store.clock = new Date(f.store.clock.getTime() + DAY_MS);
+    await expect(f.application.create(TEST_ACTOR, key, body)).rejects.toMatchObject({
+      code: 'AI_RESULT_EXPIRED',
+    });
+    await expect(f.application.create(TEST_ACTOR, randomUUID(), body)).rejects.toMatchObject({
+      code: 'AI_ALLOWANCE_REACHED',
+    });
+    expect(f.calls()).toBe(1);
+    expect(f.store.state.reservations.get(first.run.id)?.status).toBe('unknown');
+    expect(f.store.state.attempts).toHaveLength(1);
+  } finally {
+    await f.runs.drain();
+  }
+});
+it('rechecks current access after a cache lookup and preserves the paid receipt without disclosure', async () => {
+  const f = setup({}, guidanceResult);
+  try {
+    const first = await f.application.create(TEST_ACTOR, randomUUID(), guidanceBody);
+    await ready(f, first.run.id);
+    const lookup = f.cache.lookup.bind(f.cache);
+    jest.spyOn(f.cache, 'lookup').mockImplementationOnce(async (...args) => {
+      const run = await lookup(...args);
+      f.store.denied.set(
+        JSON.stringify([
+          TEST_ACTOR,
+          guidanceBody.target.kind === 'board' ? guidanceBody.target.boardId : null,
+        ]),
+        'FORBIDDEN',
+      );
+      return run;
+    });
+    const key = randomUUID();
+    await expect(f.application.create(TEST_ACTOR, key, guidanceBody)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(f.calls()).toBe(1);
+    expect(f.store.state.reservations.size).toBe(1);
+    f.store.denied.clear();
+    const retry = await f.application.create(TEST_ACTOR, key, guidanceBody);
+    expect(retry.source).toBe('replayed');
+    expect(retry.run.id).toBe(first.run.id);
+    expect(retry.result).toEqual(guidanceResult);
+    expect(f.calls()).toBe(1);
+  } finally {
+    await f.runs.drain();
+  }
+});
 it('server-constructed exact cache hits and receipt replay make one provider call', async () => {
   const f = setup();
   const key = randomUUID();

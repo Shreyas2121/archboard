@@ -83,7 +83,8 @@ index to avoid scanning terminal history during discovery. It is registered but
 has not been applied or inspected during implementation. Prepare it with the
 other pending AI migrations under existing authorization.
 
-Each pass discovers at most 64 expired active runs without board/run locks,
+Each pass discovers at most 64 active runs with expired total deadlines or
+dispatch leases without board/run locks,
 then recovers each through a separate fenced transaction. Recovery rechecks
 namespace/actor/fingerprint/run locks in the established order. Expired unsent
 intent releases unused capacity; expired dispatch becomes `outcome-unknown` and

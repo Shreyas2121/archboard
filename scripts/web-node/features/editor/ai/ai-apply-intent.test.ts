@@ -6,6 +6,7 @@ import {
   createGraphDocument,
   createLocalUndoManager,
   deleteGraphObjects,
+  applyRemoteUpdate,
   projectGraphDocument,
 } from '@archboard/document-model';
 import {
@@ -110,6 +111,43 @@ async function harness() {
 }
 
 describe('reviewed additive AI Apply', () => {
+  it('recovers a lost Apply response after replica convergence without recreating proposal IDs', async () => {
+    const h = await harness();
+    const peer = createGraphDocument();
+    try {
+      h.target.applyAiDiagram.mockImplementationOnce((graph) => {
+        applyAiGraphBatch(h.document, graph);
+        throw new Error('Local response lost after the structural mutation');
+      });
+      expect(h.apply).toThrow(/response lost/);
+      expect(h.journal.get(h.runId)?.state).toBe('prepared');
+      applyRemoteUpdate(peer, Y.encodeStateAsUpdate(h.document));
+      const recovered = new AiApplyJournal(namespace, h.store);
+      const projection = projectGraphDocument(peer);
+      const apply = vi.fn((graph) => applyAiGraphBatch(peer, graph));
+      const before = Y.encodeStateAsUpdate(peer);
+      applyReviewedAiDiagram(
+        {
+          canEdit: () => true,
+          getSnapshot: () => ({ projection }),
+          inspectAiCreatedIds: (ids) => aiCreatedIdsState(peer, ids),
+          applyAiDiagram: apply,
+        },
+        recovered,
+        h.runId,
+        h.draft,
+        projection,
+        () => true,
+      );
+      expect(apply).not.toHaveBeenCalled();
+      expect(Y.encodeStateAsUpdate(peer)).toEqual(before);
+      expect(projectGraphDocument(peer)).toEqual(h.draft.graph);
+      expect(recovered.get(h.runId)?.ids).toEqual(h.draft.ids);
+    } finally {
+      peer.destroy();
+      h.document.destroy();
+    }
+  });
   it('preflights exact full-state bytes using the live writer CRDT client ID', async () => {
     const h = await harness();
     h.document.clientID = MAX_CRDT_CLIENT_ID;

@@ -78,6 +78,17 @@ it('recovers an abandoned dispatch after restart as unknown without another atte
   expect(f.store.state.attempts).toHaveLength(1);
   expect(f.ops.snapshot().unknown_outcomes).toBe('1');
 });
+it('discovers an expired dispatch lease even while the original total deadline is still future', async () => {
+  const f = setup();
+  const { run } = await f.intents.create(fixtureAiIntent());
+  await f.intents.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id);
+  f.store.state.runs.get(run.id)!.leaseExpiresAt = f.store.clock;
+  expect(run.deadlineAt.getTime()).toBeGreaterThan(f.store.clock.getTime());
+  await f.maintenance.tick();
+  expect(f.store.state.runs.get(run.id)?.phase).toBe('outcome-unknown');
+  expect(f.store.state.reservations.get(run.id)?.status).toBe('unknown');
+  expect(f.store.state.attempts).toHaveLength(1);
+});
 it('bounds batches, excludes other namespaces and reports remaining backlog', async () => {
   const f = setup();
   const count = 65;

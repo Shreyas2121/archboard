@@ -21,6 +21,7 @@ const DAY = 86_400_000;
 const THREE = 3;
 const TWO = 2;
 const MAX_BIGINT = '9223372036854775807';
+const PARTITION_TOKENS = 4;
 function setup(overrides: NodeJS.ProcessEnv = {}) {
   const policy = fixtureAiPolicy({
     AI_CREATE_BURST: '100',
@@ -65,6 +66,45 @@ const unsent = (run: AiRunRecord) =>
     usage: { status: 'unknown' },
   });
 describe('integer AI pricing and full-attempt conservative reservation', () => {
+  it('bounds every small disjoint token partition including per-class rounding and separate reasoning', () => {
+    const { snapshot } = setup();
+    const priced = {
+      ...snapshot,
+      maximumInputTokens: PARTITION_TOKENS,
+      maximumOutputTokens: TWO,
+      prices: {
+        uncachedInputMicroUsdPerMillion: '999999',
+        cacheReadMicroUsdPerMillion: '1',
+        cacheWrites: [
+          { writeClass: 'short', microUsdPerMillion: '1000001' },
+          { writeClass: 'long', microUsdPerMillion: '2000001' },
+        ],
+        outputMicroUsdPerMillion: '999999',
+        separateReasoningMicroUsdPerMillion: '1',
+      },
+    };
+    const reserved = BigInt(
+      estimateAiReservation(priced, { repairs: 0, rejectionRetries: 0 }).maximumMicroUsd,
+    );
+    for (let uncached = 0; uncached <= PARTITION_TOKENS; uncached++)
+      for (let reads = 0; reads <= PARTITION_TOKENS - uncached; reads++)
+        for (let short = 0; short <= PARTITION_TOKENS - uncached - reads; short++) {
+          const long = PARTITION_TOKENS - uncached - reads - short;
+          const usage = {
+            status: 'known' as const,
+            uncachedInputTokens: uncached,
+            cacheReadInputTokens: reads,
+            cacheWriteInputTokens: [
+              { writeClass: 'short', tokens: short },
+              { writeClass: 'long', tokens: long },
+            ],
+            outputTokens: TWO,
+            separatelyBilledReasoningTokens: TWO,
+            reasoningTokens: TWO,
+          };
+          expect(BigInt(priceAiUsage(priced, usage))).toBeLessThanOrEqual(reserved);
+        }
+  });
   it('availability includes current reservations and unknown liabilities across rollover', async () => {
     const f = setup({
       AI_DAILY_BUDGET_MICRO_USD: '6',

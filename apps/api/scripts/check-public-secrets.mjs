@@ -3,7 +3,7 @@ import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   BACKEND_SECRET_NAMES,
-  privateArtifactFindings,
+  publicArtifactFindings,
 } from '../../../scripts/security/artifact-policy.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -46,10 +46,7 @@ async function scan(path) {
   if (!extensions.has(extname(path))) return;
   scanned += 1;
   const contents = await readFile(path, 'utf8');
-  if (
-    secretNames.some((name) => contents.includes(name)) ||
-    privateArtifactFindings(contents, secretValues) > 0
-  ) {
+  if (publicArtifactFindings(contents, secretValues) > 0) {
     findings += 1;
   }
 }

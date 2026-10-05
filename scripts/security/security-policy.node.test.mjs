@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { contentSecurityPolicy, shellSecurityHeaders } from '../../apps/web/security-policy.mjs';
-import { privateArtifactFindings } from './artifact-policy.mjs';
+import {
+  BACKEND_SECRET_NAMES,
+  privateArtifactFindings,
+  publicArtifactFindings,
+} from './artifact-policy.mjs';
 
 test('production policy excludes external connections, JS eval and embedding', () => {
   const policy = shellSecurityHeaders()['Content-Security-Policy'];
@@ -64,4 +68,26 @@ test('synthetic sensitive artifacts are rejected with counts and no raw output',
   ])
     assert.equal(privateArtifactFindings(`output ${payload}`, [payload]), 1);
   assert.equal(privateArtifactFindings('PASS: 3 tests. /invite/:redacted'), 0);
+});
+
+test('AI operator credentials are rejected by name and by configured value without disclosure', () => {
+  const environment = {
+    OPENAI_API_KEY: 'synthetic-operator-value-not-a-native-key',
+    AI_CACHE_KEY_SECRET: 'c'.repeat(64),
+    AI_CONTENT_ENCRYPTION_KEY: 'd'.repeat(64),
+  };
+  const values = BACKEND_SECRET_NAMES.map((name) => environment[name]).filter(Boolean);
+  for (const [name, value] of Object.entries(environment)) {
+    assert.ok(publicArtifactFindings(`const setting = "${name}";`) > 0);
+    const findings = publicArtifactFindings(`const setting = "${value}";`, values);
+    assert.equal(findings, 1);
+    assert.equal(typeof findings, 'number');
+  }
+  assert.equal(publicArtifactFindings('AI_DISABLED; semantic proposal; schemaVersion: 1'), 0);
+});
+
+test('recognizable synthetic provider keys are rejected without an operator environment', () => {
+  for (const prefix of ['sk-', 'sk-proj-', 'sk-svcacct-'])
+    assert.ok(privateArtifactFindings(prefix + 'synthetic'.repeat(8)) > 0);
+  assert.equal(privateArtifactFindings('API key withheld; sk-proj-<redacted>'), 0);
 });

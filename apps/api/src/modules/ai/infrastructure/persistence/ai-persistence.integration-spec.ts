@@ -843,6 +843,34 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
     expect((await service.create(intent)).source).toBe('replayed');
     await expect(service.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id)).rejects.toThrow();
   });
+  it('AI-C18 maintenance discovers expired leases before total deadlines across repository instances', async () => {
+    const policy = fixturePersistencePolicy();
+    const funded = new AiIntentService(store, cipher, new AiAdmissionService(policy));
+    const { run } = await funded.create(fresh());
+    await funded.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id);
+    await source.getRepository(AiRunEntity).update(run.id, { leaseExpiresAt: new Date(0) });
+    const runtime = new RuntimeAdmission();
+    runtime.setOwnership(true);
+    runtime.setSchemaCompatible(true);
+    const second = new PostgresAiPersistence(
+      source,
+      new BoardPermissionService(new PostgresBoardAuthorityReader(source)),
+    );
+    const secondIntents = new AiIntentService(second, cipher, new AiAdmissionService(policy));
+    const workers = [
+      new AiMaintenance(store, funded, runtime, TEST_NAMESPACE, new AiOperations()),
+      new AiMaintenance(second, secondIntents, runtime, TEST_NAMESPACE, new AiOperations()),
+    ];
+    await Promise.all(workers.map((worker) => worker.tick()));
+    expect((await funded.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).run.phase).toBe(
+      'outcome-unknown',
+    );
+    expect(await source.getRepository(AiSettlementEntity).countBy({ runId: run.id })).toBe(1);
+    expect(
+      await source.getRepository(AiReservationEntity).findOneBy({ runId: run.id }),
+    ).toMatchObject({ status: 'unknown' });
+    await Promise.all(workers.map((worker) => worker.onModuleDestroy()));
+  });
   it('reuses one encrypted payload for concurrent exact-cache keys without new paid reservations', async () => {
     const policy = fixturePersistencePolicy();
     const cached = new AiIntentService(

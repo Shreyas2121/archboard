@@ -71,7 +71,9 @@ export class InMemoryAiPersistence implements AiPersistence {
             (r) =>
               r.deploymentNamespace === ns &&
               ['pending-admission', 'admitted', 'dispatching'].includes(r.phase) &&
-              r.deadlineAt <= this.clock,
+              (r.phase === 'dispatching'
+                ? r.leaseExpiresAt !== null && r.leaseExpiresAt <= this.clock
+                : r.deadlineAt <= this.clock),
           )
           .sort(
             (a, b) => a.deadlineAt.getTime() - b.deadlineAt.getTime() || a.id.localeCompare(b.id),

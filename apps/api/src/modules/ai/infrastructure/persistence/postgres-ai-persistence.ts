@@ -76,7 +76,10 @@ class PostgresAiScope implements AiPersistenceScope {
       .andWhere('run.phase IN (:...phases)', {
         phases: ['pending-admission', 'admitted', 'dispatching'],
       })
-      .andWhere('run.deadlineAt <= clock_timestamp()')
+      .andWhere(
+        `((run.phase = 'dispatching' AND run.leaseExpiresAt <= clock_timestamp())
+        OR (run.phase IN ('pending-admission', 'admitted') AND run.deadlineAt <= clock_timestamp()))`,
+      )
       .orderBy('run.deadlineAt', 'ASC')
       .addOrderBy('run.id', 'ASC')
       .take(MAX_CLEANUP_BATCH)
