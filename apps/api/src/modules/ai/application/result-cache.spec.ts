@@ -237,14 +237,13 @@ it('unavailable/rotated content keys and tampered ciphertext are never cache hit
   const input = fresh();
   const run = await complete(f, input);
   const rotated = setup({}, f.store, OTHER_KEY);
+  expect((await rotated.service.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).content).toBe('expired');
   const open = jest.spyOn(rotated.cipher, 'open');
   expect((await rotated.service.create({ ...input, key: randomUUID() })).source).toBe('created');
   expect(open).toHaveBeenCalledTimes(1);
   const payload = f.store.state.payloads.get(run.payloadId!)!;
   payload.ciphertext[0] = payload.ciphertext[0]! ^ 1;
-  await expect(f.service.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).rejects.toMatchObject({
-    code: 'AI_RESULT_EXPIRED',
-  });
+  expect((await f.service.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).content).toBe('expired');
 });
 it('bounded cleanup cascades indexes and preserves paid receipts/reservations', async () => {
   const f = setup();

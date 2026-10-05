@@ -9,6 +9,7 @@ import {
   aiRunResponseSchema,
   MAX_AI_REQUEST_BYTES,
   MAX_IMPORT_REQUEST_BYTES,
+  type AiCreateRun,
 } from '@archboard/contracts';
 import { AUTH_REQUEST_ACTOR, type RequestActor } from '../auth/application/index.js';
 import { fail } from '../../platform/http/api-boundary.js';
@@ -39,6 +40,7 @@ import {
 } from './infrastructure/testing/persistence-fixtures.js';
 import { FIXTURE_MODEL_PROFILE } from './infrastructure/testing/fixture-config.js';
 import type { AiProvider } from './application/provider.js';
+import { AiOperations } from './application/operations.js';
 
 const ACCEPTED = 202;
 const OK = 200;
@@ -73,8 +75,12 @@ describe('AI-C09 in-memory Nest HTTP transport', () => {
   let calls: number;
   let ai: AiHttpService;
   let policy: ReturnType<typeof fixturePersistencePolicy>;
+  let operations: AiOperations;
+  let providerWait: Promise<void> | undefined;
   beforeEach(async () => {
     calls = 0;
+    operations = new AiOperations();
+    providerWait = undefined;
     store = new InMemoryAiPersistence();
     policy = fixturePersistencePolicy({
       AI_MODEL_PROFILES: JSON.stringify([
@@ -110,6 +116,7 @@ describe('AI-C09 in-memory Nest HTTP transport', () => {
       }),
       stream: async function* () {
         calls++;
+        if (providerWait) await providerWait;
         yield {
           type: 'completed',
           text: JSON.stringify({ result: fixtureAiResult }),
@@ -131,13 +138,17 @@ describe('AI-C09 in-memory Nest HTTP transport', () => {
       new AiProviderRegistry('test', policy, [adapter]),
       runs,
     );
-    ai = new AiHttpService(policy, {
-      application,
-      runs,
-      admission,
-      persistence: store,
-      subscriptions: new AiRunSubscriptions(runs, new AiConnectionGate(policy)),
-    });
+    ai = new AiHttpService(
+      policy,
+      {
+        application,
+        runs,
+        admission,
+        persistence: store,
+        subscriptions: new AiRunSubscriptions(runs, new AiConnectionGate(policy)),
+      },
+      operations,
+    );
     const actor: RequestActor = {
       require: async (headers) => {
         const id =
@@ -174,6 +185,26 @@ describe('AI-C09 in-memory Nest HTTP transport', () => {
     await runs.drain();
     await app.close();
   });
+  it('disables creation/cache/reads while retaining authorized cancellation and safe availability', async () => {
+    const created = { id: await ready() };
+    const subscription = ai.open(TEST_ACTOR, created.id);
+    operations.setPaidEnabled(false);
+    await expect(subscription.next()).rejects.toMatchObject({ code: 'AI_DISABLED' });
+    subscription.close();
+    await expect(ai.create(TEST_ACTOR, randomUUID(), body as AiCreateRun)).rejects.toMatchObject({
+      code: 'AI_DISABLED',
+    });
+    await expect(ai.read(TEST_ACTOR, created.id)).rejects.toMatchObject({ code: 'AI_DISABLED' });
+    expect(await ai.availability(TEST_ACTOR, null)).toMatchObject({
+      available: false,
+      reason: 'disabled',
+      allowance: null,
+    });
+    expect(() => ai.open(TEST_ACTOR, created.id)).toThrow();
+    await expect(ai.cancel(TEST_ACTOR, created.id)).rejects.toMatchObject({ code: 'AI_DISABLED' });
+    expect(store.state.runs.get(created.id)?.phase).toBe('completed');
+    await expect(ai.cancel('other-actor', created.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
   async function create(input: object = body, key: string = randomUUID()) {
     return request(app.getHttpServer())
       .post('/api/v1/ai/runs')
@@ -181,6 +212,25 @@ describe('AI-C09 in-memory Nest HTTP transport', () => {
       .set('Idempotency-Key', key)
       .send(input);
   }
+  it('allows disabled cancellation of active work and preserves unknown spending', async () => {
+    let release!: () => void;
+    providerWait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    try {
+      const created = await ai.create(TEST_ACTOR, randomUUID(), body as AiCreateRun);
+      expect(calls).toBe(1);
+      operations.setPaidEnabled(false);
+      expect(await ai.cancel(TEST_ACTOR, created.id)).toMatchObject({
+        state: 'outcome-unknown',
+        content: { status: 'unavailable' },
+      });
+      expect(store.state.reservations.get(created.id)?.status).toBe('unknown');
+      expect(store.state.payloads.size).toBe(0);
+    } finally {
+      release();
+    }
+  });
   async function ready() {
     const response = await create();
     expect(response.status).toBe(ACCEPTED);

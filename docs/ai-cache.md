@@ -113,7 +113,7 @@ Changing/dropping the content key or its version makes old payloads unreadable.
 Cache lookup treats an unavailable key or failed authentication as a miss only
 for an explicit new request; authorized old-run reads report safe content expiry
 and never regenerate. No dual-key plaintext cache or implicit re-encryption is
-introduced. The operator key-rotation procedure and background cleanup are C17.
+introduced. AI-C17 supplies the [operator rotation and cleanup runbook](ai-operations.md).
 
 Protected [HTTP/SSE delivery](ai-http.md) uses `Cache-Control: no-store` from C09. Application
 result caching does not authorize CDN, service-worker or browser response caching.

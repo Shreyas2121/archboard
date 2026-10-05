@@ -1,5 +1,11 @@
 # AI operator configuration foundation
 
+AI-C17 adds optional server-only `AI_KILL_SWITCH_FILE`, an absolute local marker
+path controlled by the operator. Presence disables creation and protected result
+reads; authorized cancellation and maintenance continue. Unset means no marker
+check. See the [operations runbook](ai-operations.md) for circuit breakers,
+safe diagnostics, bounded shutdown/recovery and payload-key rotation.
+
 AI-C02 defines configuration and a neutral provider port. AI-C03 registers the
 OpenAI Responses adapter when AI is enabled; disabled composition has no adapter.
 Provider resolution checks the configured profile's capabilities. There is no

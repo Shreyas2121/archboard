@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { aiResultSchema, type AiResult } from '@archboard/contracts';
 import type { AiAdmissionService } from './admission-service.js';
 import type { AiResultCache } from './result-cache.js';
+import type { AiOperations } from './operations.js';
 import {
   AiPersistenceError,
   aiIntentSchema,
@@ -25,6 +26,7 @@ export class AiIntentService {
     private readonly cipher: AiPayloadCipher,
     private readonly admission?: AiAdmissionService,
     private readonly cache?: AiResultCache,
+    private readonly operations?: AiOperations,
   ) {}
 
   public async create(
@@ -33,115 +35,129 @@ export class AiIntentService {
     const parsed = aiIntentSchema.safeParse(input);
     if (!parsed.success) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
     const intent = parsed.data;
-    await this.admission?.request(
-      this.persistence,
-      intent.deploymentNamespace,
-      intent.actorUserId,
-      intent.boardId,
-      'create',
-    );
-    return this.persistence.run(async (scope) => {
-      // Existing board lock order is preserved before any AI coordinator/receipt.
-      await scope.authorize(intent.actorUserId, intent.boardId);
-      await scope.lockAdmission(intent.deploymentNamespace, intent.actorUserId);
-      const now = await scope.now();
-      await this.admission?.prepare(scope, intent.deploymentNamespace, intent.actorUserId, now);
-      await scope.lockFingerprint(
+    let created: Awaited<ReturnType<AiIntentService['create']>>;
+    try {
+      await this.admission?.request(
+        this.persistence,
         intent.deploymentNamespace,
         intent.actorUserId,
-        intent.fingerprint,
+        intent.boardId,
+        'create',
       );
-      await scope.lockReceipt(intent.deploymentNamespace, intent.actorUserId, intent.key);
-      const receipt = await scope.findReceipt(
-        intent.deploymentNamespace,
-        intent.actorUserId,
-        intent.key,
-      );
-      if (receipt) {
-        if (receipt.requestHash !== intent.requestHash)
-          throw new AiPersistenceError('IDEMPOTENCY_CONFLICT');
-        // Expired keys remain tombstones, never permission to recreate paid work.
-        if (receipt.expiresAt <= now) throw new AiPersistenceError('AI_RESULT_EXPIRED');
-        const run = await scope.findRun(
+      created = await this.persistence.run(async (scope) => {
+        // Existing board lock order is preserved before any AI coordinator/receipt.
+        await scope.authorize(intent.actorUserId, intent.boardId);
+        await scope.lockAdmission(intent.deploymentNamespace, intent.actorUserId);
+        const now = await scope.now();
+        await this.admission?.prepare(scope, intent.deploymentNamespace, intent.actorUserId, now);
+        await scope.lockFingerprint(
           intent.deploymentNamespace,
           intent.actorUserId,
-          receipt.runId,
+          intent.fingerprint,
         );
-        if (!run || run.boardId !== intent.boardId) throw new AiPersistenceError('NOT_FOUND');
-        return { run, source: 'replayed' };
-      }
-      // Authority and the same namespace/fingerprint locks protect both the
-      // completed-result lookup and fresh admission, including settlement races.
-      const cached = await this.cache?.lookup(scope, intent, now);
-      if (cached) {
-        await scope.lockRun(cached.id);
+        await scope.lockReceipt(intent.deploymentNamespace, intent.actorUserId, intent.key);
+        const receipt = await scope.findReceipt(
+          intent.deploymentNamespace,
+          intent.actorUserId,
+          intent.key,
+        );
+        if (receipt) {
+          if (receipt.requestHash !== intent.requestHash)
+            throw new AiPersistenceError('IDEMPOTENCY_CONFLICT');
+          // Expired keys remain tombstones, never permission to recreate paid work.
+          if (receipt.expiresAt <= now) throw new AiPersistenceError('AI_RESULT_EXPIRED');
+          const run = await scope.findRun(
+            intent.deploymentNamespace,
+            intent.actorUserId,
+            receipt.runId,
+          );
+          if (!run || run.boardId !== intent.boardId) throw new AiPersistenceError('NOT_FOUND');
+          return { run, source: 'replayed' };
+        }
+        // Authority and the same namespace/fingerprint locks protect both the
+        // completed-result lookup and fresh admission, including settlement races.
+        const cached = await this.cache?.lookup(scope, intent, now);
+        if (cached) {
+          await scope.lockRun(cached.id);
+          await scope.insertReceipt({
+            deploymentNamespace: intent.deploymentNamespace,
+            actorUserId: intent.actorUserId,
+            key: intent.key,
+            requestHash: intent.requestHash,
+            runId: cached.id,
+            createdAt: now,
+            expiresAt: new Date(now.getTime() + intent.snapshot.receiptTtlMs),
+          });
+          return { run: cached, source: 'cache' };
+        }
+        const active = await scope.findActive(
+          intent.deploymentNamespace,
+          intent.actorUserId,
+          intent.fingerprint,
+        );
+        if (
+          active &&
+          (active.boardId !== intent.boardId ||
+            active.requestHash !== intent.requestHash ||
+            active.task !== intent.task ||
+            JSON.stringify(active.snapshot) !== JSON.stringify(intent.snapshot))
+        )
+          throw new AiPersistenceError('IDEMPOTENCY_CONFLICT');
+        const run: AiRunRecord = active ?? {
+          id: randomUUID(),
+          deploymentNamespace: intent.deploymentNamespace,
+          actorUserId: intent.actorUserId,
+          boardId: intent.boardId,
+          requestHash: intent.requestHash,
+          fingerprint: intent.fingerprint,
+          task: intent.task,
+          snapshot: intent.snapshot,
+          phase: 'pending-admission',
+          createdAt: now,
+          updatedAt: now,
+          deadlineAt: new Date(now.getTime() + intent.snapshot.deadlineMs),
+          dispatchToken: null,
+          leaseExpiresAt: null,
+          payloadId: null,
+          payloadExpiresAt: null,
+          usage: { status: 'unknown' },
+          failureCode: null,
+        };
+        await scope.lockRun(run.id);
+        if (!active) {
+          this.operations?.assertFresh(intent.snapshot);
+          await scope.insertRun(run);
+          const reservation = {
+            ...intent.reservation,
+            runId: run.id,
+            status: 'pending' as const,
+            fundedAt: null,
+          };
+          await scope.insertReservation(reservation);
+          await this.admission?.fund(scope, run, reservation, now);
+        }
         await scope.insertReceipt({
           deploymentNamespace: intent.deploymentNamespace,
           actorUserId: intent.actorUserId,
           key: intent.key,
           requestHash: intent.requestHash,
-          runId: cached.id,
+          runId: run.id,
           createdAt: now,
           expiresAt: new Date(now.getTime() + intent.snapshot.receiptTtlMs),
         });
-        return { run: cached, source: 'cache' };
-      }
-      const active = await scope.findActive(
-        intent.deploymentNamespace,
-        intent.actorUserId,
-        intent.fingerprint,
-      );
-      if (
-        active &&
-        (active.boardId !== intent.boardId ||
-          active.requestHash !== intent.requestHash ||
-          active.task !== intent.task ||
-          JSON.stringify(active.snapshot) !== JSON.stringify(intent.snapshot))
-      )
-        throw new AiPersistenceError('IDEMPOTENCY_CONFLICT');
-      const run: AiRunRecord = active ?? {
-        id: randomUUID(),
-        deploymentNamespace: intent.deploymentNamespace,
-        actorUserId: intent.actorUserId,
-        boardId: intent.boardId,
-        requestHash: intent.requestHash,
-        fingerprint: intent.fingerprint,
-        task: intent.task,
-        snapshot: intent.snapshot,
-        phase: 'pending-admission',
-        createdAt: now,
-        updatedAt: now,
-        deadlineAt: new Date(now.getTime() + intent.snapshot.deadlineMs),
-        dispatchToken: null,
-        leaseExpiresAt: null,
-        payloadId: null,
-        payloadExpiresAt: null,
-        usage: { status: 'unknown' },
-        failureCode: null,
-      };
-      await scope.lockRun(run.id);
-      if (!active) {
-        await scope.insertRun(run);
-        const reservation = {
-          ...intent.reservation,
-          runId: run.id,
-          status: 'pending' as const,
-          fundedAt: null,
-        };
-        await scope.insertReservation(reservation);
-        await this.admission?.fund(scope, run, reservation, now);
-      }
-      await scope.insertReceipt({
-        deploymentNamespace: intent.deploymentNamespace,
-        actorUserId: intent.actorUserId,
-        key: intent.key,
-        requestHash: intent.requestHash,
-        runId: run.id,
-        createdAt: now,
-        expiresAt: new Date(now.getTime() + intent.snapshot.receiptTtlMs),
+        return { run, source: active ? 'deduplicated' : 'created' };
       });
-      return { run, source: active ? 'deduplicated' : 'created' };
-    });
+    } catch (error) {
+      this.operations?.add('refused_admission');
+      throw error;
+    }
+    if (created.source === 'cache') this.operations?.add('cache_hits');
+    if (created.source === 'deduplicated') this.operations?.add('deduplicated_starts');
+    if (created.source === 'created') {
+      this.operations?.add('cache_misses');
+      this.operations?.add('reserved_micro_usd', BigInt(intent.reservation.maximumMicroUsd));
+    }
+    return created;
   }
 
   private async owned(
@@ -193,7 +209,7 @@ export class AiIntentService {
 
   /** Trusted worker operation only: records liability even after access revocation.
    * Returns no receipt, result or run metadata. User reads always reauthorize. */
-  public settle(
+  public async settle(
     namespace: string,
     actor: string,
     input: AiSettlement,
@@ -211,14 +227,14 @@ export class AiIntentService {
     const transact =
       this.persistence.runAdmitted?.bind(this.persistence) ??
       this.persistence.run.bind(this.persistence);
-    return transact(async (scope) => {
+    const inserted = await transact(async (scope) => {
       const run = await this.owned(scope, namespace, actor, settlement.runId, false);
       const existing = await scope.findSettlement(run.id);
       if (existing) {
         // First terminal effect is authoritative; a retry never overwrites payloads.
         if (JSON.stringify(aiSettlementSchema.parse(existing)) !== JSON.stringify(settlement))
           throw new AiPersistenceError('IDEMPOTENCY_CONFLICT');
-        return;
+        return false;
       }
       if (
         !ACTIVE_PHASES.has(run.phase) ||
@@ -279,7 +295,15 @@ export class AiIntentService {
       await scope.insertSettlement(settlement);
       await scope.updateReservation(reservation);
       await scope.updateRun(run);
+      return true;
     });
+    if (inserted) {
+      this.operations?.usage(settlement.usage);
+      if (settlement.actualMicroUsd !== null)
+        this.operations?.add('settled_micro_usd', BigInt(settlement.actualMicroUsd));
+      if (settlement.mode === 'unknown') this.operations?.add('unknown_outcomes');
+      if (settlement.phase === 'cancelled') this.operations?.add('cancellations');
+    }
   }
 
   /** C07 must claim every retry/repair before making its additional network call. */
@@ -343,7 +367,11 @@ export class AiIntentService {
         payload.expiresAt.getTime() !== run.payloadExpiresAt.getTime()
       )
         return { run, result: null, content: 'expired' };
-      return { run, result: this.cipher.open(payload), content: 'available' };
+      try {
+        return { run, result: this.cipher.open(payload), content: 'available' };
+      } catch {
+        return { run, result: null, content: 'expired' };
+      }
     });
   }
 }

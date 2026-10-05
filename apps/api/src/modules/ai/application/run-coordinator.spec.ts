@@ -16,6 +16,7 @@ import { AiRunCoordinator } from './run-coordinator.js';
 import { AiProviderError, type AiProvider, type ProviderEvent } from './provider.js';
 import { AiRunSubscriptions } from './run-subscriptions.js';
 import { AiConnectionGate } from './connection-gate.js';
+import { AiOperations } from './operations.js';
 
 const MAX_RESULT_BYTES = 524288;
 const DEADLINE_MS = 120000;
@@ -26,6 +27,7 @@ const DRAIN_MS = 100;
 const SETTLEMENT_WAIT_MS = 20;
 const SMALL_OUTPUT_BYTES = 4;
 const CACHE_FRAMING_INPUT_CEILING = 200;
+const DIGEST_LENGTH = 64;
 const usage = {
   status: 'known' as const,
   uncachedInputTokens: 1,
@@ -44,15 +46,24 @@ const completed: ProviderEvent = {
 function setup(stream: AiProvider['stream']) {
   const store = new InMemoryAiPersistence();
   const policy = fixturePersistencePolicy();
+  const operations = new AiOperations(() => store.clock.getTime());
   const intents = new AiIntentService(
     store,
     new AesGcmAiPayloadCipher(TEST_KEY, TEST_KEY_VERSION),
     new AiAdmissionService(policy),
+    undefined,
+    operations,
   );
   const runtime = new RuntimeAdmission();
   runtime.setOwnership(true);
   runtime.setSchemaCompatible(true);
-  const runs = new AiRunCoordinator(intents, runtime, policy, () => store.clock.getTime());
+  const runs = new AiRunCoordinator(
+    intents,
+    runtime,
+    policy,
+    () => store.clock.getTime(),
+    operations,
+  );
   const intent = fixtureAiIntent();
   const request = {
     model: intent.snapshot.model,
@@ -72,8 +83,41 @@ function setup(stream: AiProvider['stream']) {
     },
     stream,
   };
-  return { store, policy, intents, runtime, runs, intent, request, adapter };
+  return { store, policy, intents, runtime, runs, intent, request, adapter, operations };
 }
+it('rechecks the spending switch after admission and before provider dispatch', async () => {
+  const stream = jest.fn<AiProvider['stream']>(async function* () {
+    yield completed;
+  });
+  const f = setup(stream);
+  const create = f.intents.create.bind(f.intents);
+  jest.spyOn(f.intents, 'create').mockImplementation(async (input) => {
+    const created = await create(input);
+    f.operations.setPaidEnabled(false);
+    return created;
+  });
+  const { run } = await f.runs.start(f.intent, f.adapter, f.request);
+  await finish(f.runs, run.id, f.store);
+  expect(stream).not.toHaveBeenCalled();
+  expect(f.store.state.attempts).toHaveLength(0);
+  expect(f.store.state.reservations.get(run.id)?.status).toBe('settled');
+  expect(f.store.state.settlements.get(run.id)?.actualMicroUsd).toBe('0');
+});
+it('blocks fresh funded starts while the breaker is open but still replays receipts', async () => {
+  const f = setup(async function* () {
+    yield completed;
+  });
+  const { run } = await f.runs.start(f.intent, f.adapter, f.request);
+  await new Promise((resolve) => setImmediate(resolve));
+  const threshold = 3;
+  for (let i = 0; i < threshold; i++) f.operations.acquire(f.intent.snapshot)('failure');
+  expect((await f.runs.start(f.intent, f.adapter, f.request)).source).toBe('replayed');
+  await expect(
+    f.runs.start(fixtureAiIntent({ fingerprint: 'd'.repeat(DIGEST_LENGTH) }), f.adapter, f.request),
+  ).rejects.toMatchObject({ code: 'TEMPORARILY_UNAVAILABLE' });
+  expect(f.store.state.runs.size).toBe(1);
+  await finish(f.runs, run.id, f.store);
+});
 async function finish(runs: AiRunCoordinator, id: string, store: InMemoryAiPersistence) {
   for (let turn = 0; turn < MAX_TURNS && !store.state.settlements.has(id); turn++)
     await new Promise((r) => setImmediate(r));

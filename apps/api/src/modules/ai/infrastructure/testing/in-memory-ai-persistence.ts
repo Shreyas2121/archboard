@@ -65,6 +65,23 @@ export class InMemoryAiPersistence implements AiPersistence {
       run?.deploymentNamespace === namespace && run.actorUserId === actor ? clone(run) : null;
     const copy = <V>(value: V | undefined): V | null => (value === undefined ? null : clone(value));
     const scope: AiPersistenceScope = {
+      expiredRuns: async (ns) =>
+        [...state.runs.values()]
+          .filter(
+            (r) =>
+              r.deploymentNamespace === ns &&
+              ['pending-admission', 'admitted', 'dispatching'].includes(r.phase) &&
+              r.deadlineAt <= this.clock,
+          )
+          .sort(
+            (a, b) => a.deadlineAt.getTime() - b.deadlineAt.getTime() || a.id.localeCompare(b.id),
+          )
+          .slice(0, MAX_CONTENT_BATCH)
+          .map(({ id, actorUserId }) => ({ id, actorUserId })),
+      expiredPayloadCount: async (ns) =>
+        [...state.payloads.values()].filter(
+          (p) => p.deploymentNamespace === ns && p.expiresAt <= this.clock,
+        ).length,
       findCache: async (ns, actor, fingerprint) =>
         copy(state.cache.get(key(ns, actor, fingerprint))),
       putCache: async (record) => {

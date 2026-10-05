@@ -226,6 +226,8 @@ export class AiPersistenceError extends Error {
   }
 }
 export interface AiPersistenceScope {
+  expiredRuns(namespace: string): Promise<{ id: string; actorUserId: string }[]>;
+  expiredPayloadCount(namespace: string): Promise<number>;
   findCache(namespace: string, actor: string, fingerprint: string): Promise<AiCacheRecord | null>;
   putCache(record: AiCacheRecord): Promise<void>;
   payloadUsage(namespace: string, actor?: string): Promise<{ entries: number; bytes: number }>;

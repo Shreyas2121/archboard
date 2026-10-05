@@ -10,6 +10,7 @@ import type { AiRunSubscriptions } from './run-subscriptions.js';
 import type { AiAdmissionService } from './admission-service.js';
 import { AiPersistenceError, type AiPersistence } from './persistence.js';
 import type { AiPolicy } from './operator-policy.js';
+import type { AiOperations } from './operations.js';
 
 type Snapshot = Awaited<ReturnType<AiRunCoordinator['read']>>;
 export function publicAiRun(snapshot: Snapshot, source: AiRun['source'] = 'generation'): AiRun {
@@ -62,15 +63,18 @@ export class AiHttpService {
   public constructor(
     private readonly policy: AiPolicy | null,
     private readonly runtime?: AiHttpRuntime,
+    private readonly operations?: AiOperations,
   ) {}
-  private enabled() {
+  private enabled(allowCancellation = false) {
     if (!this.policy) throw new AiPersistenceError('AI_DISABLED');
+    if (!allowCancellation) this.operations?.assertPaid();
     if (!this.runtime) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
     return { ...this.runtime, namespace: this.policy.deploymentNamespace };
   }
   public async create(actor: string, key: string, body: AiCreateRun) {
     const { application } = this.enabled();
     const snapshot = await application.create(actor, key, body);
+    this.operations?.assertPaid();
     return publicAiRun(
       snapshot,
       snapshot.source === 'cache'
@@ -83,16 +87,23 @@ export class AiHttpService {
   public async read(actor: string, id: string) {
     const { admission, persistence, runs, namespace } = this.enabled();
     await admission.request(persistence, namespace, actor, null, 'poll');
-    return publicAiRun(await runs.read(namespace, actor, id));
+    const snapshot = await runs.read(namespace, actor, id);
+    this.operations?.assertPaid();
+    return publicAiRun(snapshot);
   }
   public async cancel(actor: string, id: string) {
-    const { admission, persistence, runs, namespace } = this.enabled();
+    const { admission, persistence, runs, namespace } = this.enabled(true);
     await admission.request(persistence, namespace, actor, null, 'poll');
     await runs.cancel(namespace, actor, id);
-    return publicAiRun(await runs.read(namespace, actor, id));
+    const snapshot = await runs.read(namespace, actor, id);
+    // Cancellation remains authorized while disabled, but a completed result
+    // must not be disclosed through this endpoint as a substitute for GET.
+    if (this.operations?.disabled && snapshot.content === 'available')
+      throw new AiPersistenceError('AI_DISABLED');
+    return publicAiRun(snapshot);
   }
   public async availability(actor: string, board: string | null): Promise<AiAvailability> {
-    if (!this.policy)
+    if (!this.policy || this.operations?.disabled)
       return { schemaVersion: 1, available: false, reason: 'disabled', allowance: null };
     if (!this.runtime)
       return { schemaVersion: 1, available: false, reason: 'unavailable', allowance: null };
@@ -109,8 +120,11 @@ export class AiHttpService {
     return {
       close: subscription.close,
       next: async () => {
+        this.operations?.assertPaid();
         await admission.request(persistence, namespace, actor, null, 'poll');
-        return publicAiRun(await subscription.next());
+        const snapshot = await subscription.next();
+        this.operations?.assertPaid();
+        return publicAiRun(snapshot);
       },
     };
   }

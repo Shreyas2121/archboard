@@ -65,6 +65,31 @@ export class PostgresAiPersistence implements AiPersistence {
   }
 }
 class PostgresAiScope implements AiPersistenceScope {
+  public expiredRuns(namespace: string): Promise<{ id: string; actorUserId: string }[]> {
+    // Discovery takes no run/board locks; recovery rechecks each candidate using
+    // the established coordinator -> fingerprint -> run -> reservation order.
+    return this.manager
+      .getRepository(AiRunEntity)
+      .createQueryBuilder('run')
+      .select(['run.id', 'run.actorUserId'])
+      .where('run.deploymentNamespace = :namespace', { namespace })
+      .andWhere('run.phase IN (:...phases)', {
+        phases: ['pending-admission', 'admitted', 'dispatching'],
+      })
+      .andWhere('run.deadlineAt <= clock_timestamp()')
+      .orderBy('run.deadlineAt', 'ASC')
+      .addOrderBy('run.id', 'ASC')
+      .take(MAX_CLEANUP_BATCH)
+      .getMany();
+  }
+  public expiredPayloadCount(namespace: string): Promise<number> {
+    return this.manager
+      .getRepository(AiPayloadEntity)
+      .createQueryBuilder('payload')
+      .where('payload.deploymentNamespace = :namespace', { namespace })
+      .andWhere('payload.expiresAt <= clock_timestamp()')
+      .getCount();
+  }
   private contentSavepoint = 0;
   public constructor(
     private readonly runner: QueryRunner,

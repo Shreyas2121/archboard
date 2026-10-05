@@ -20,6 +20,7 @@ import {
 } from './provider.js';
 import { aiModelOutputSchema } from './prompt-renderer.js';
 import { priceAiUsage } from './pricing.js';
+import type { AiOperations } from './operations.js';
 
 export const AI_RUN_COORDINATOR = Symbol('AI_RUN_COORDINATOR');
 const SHUTDOWN_MS = 5000;
@@ -86,6 +87,7 @@ export class AiRunCoordinator {
     private readonly runtime: RuntimeAdmission,
     private readonly policy: AiPolicy,
     private readonly now: () => number = Date.now,
+    private readonly operations?: AiOperations,
   ) {}
 
   public async start(
@@ -95,6 +97,7 @@ export class AiRunCoordinator {
     validateResult: (result: AiResult) => AiResult = (result) => result,
   ) {
     this.runtime.assertAccepting();
+    this.operations?.assertPaid();
     if (this.stopping) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
     const request = normalizedProviderRequestSchema.parse(structuredClone(input));
     if (
@@ -152,7 +155,7 @@ export class AiRunCoordinator {
     const worker = this.workers.get(id);
     if (worker) {
       worker.abort.abort();
-      await worker.done;
+      await this.boundedWait(worker.done, SHUTDOWN_MS);
       return;
     }
     if (
@@ -174,10 +177,16 @@ export class AiRunCoordinator {
   public async drain(maximumMs = SHUTDOWN_MS): Promise<void> {
     this.stopping = true;
     for (const worker of this.workers.values()) worker.abort.abort();
+    await this.boundedWait(
+      Promise.all([...this.workers.values()].map((worker) => worker.done)),
+      Math.min(SHUTDOWN_MS, Math.max(0, maximumMs)),
+    );
+  }
+  private async boundedWait(work: Promise<unknown>, maximumMs: number): Promise<void> {
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
-        Promise.all([...this.workers.values()].map((worker) => worker.done)),
+        work,
         new Promise<void>((resolve) => {
           timer = setTimeout(resolve, maximumMs);
         }),
@@ -199,12 +208,10 @@ export class AiRunCoordinator {
   ) {
     const ns = prior.deploymentNamespace;
     const actor = prior.actorUserId;
-    let run: AiRunRecord;
+    let release: ReturnType<AiOperations['acquire']> | undefined;
     try {
-      run = await this.intents.markDispatch(ns, actor, prior.id);
+      release = this.operations?.acquire(prior.snapshot);
     } catch {
-      // A failed claim is never permission to call. If commit was ambiguous the
-      // null fence rejects this unsent settlement, preserving recovery liability.
       await this.intents.settle(ns, actor, {
         runId: prior.id,
         dispatchToken: null,
@@ -216,114 +223,149 @@ export class AiRunCoordinator {
       });
       return;
     }
-    const request = {
-      ...input,
-      deadlineAtUnixMs: run.deadlineAt.getTime(),
-      maximumResponseBytes: Math.min(input.maximumResponseBytes, MAX_AI_RESULT_BYTES),
-    };
-    let usage: NormalizedUsage = ZERO_USAGE;
-    let repair = false;
-    let retry = false;
-    let result: AiResult | undefined;
-    let phase: AiSettlement['phase'] = 'failed';
-    let failure: AiSettlement['failureCode'] = 'AI_GENERATION_FAILED';
-    const deadline = setTimeout(
-      () => abort.abort(),
-      Math.max(0, run.deadlineAt.getTime() - this.now()),
-    );
+    let health: 'healthy' | 'failure' | 'neutral' = 'neutral';
+    const started = this.now();
     try {
-      while (true) {
-        if (abort.signal.aborted) {
-          usage = { status: 'unknown' };
-          break;
-        }
-        let terminal: Exclude<ProviderEvent, { type: 'text-delta' }>;
-        try {
-          terminal = await this.consume(adapter, request, abort.signal);
-        } catch (error) {
-          const rejection =
-            error instanceof AiProviderError && error.failure.execution !== 'may-have-started';
-          if (error instanceof AiProviderError && error.failure.usage.status === 'known')
-            usage = sumUsage(usage, error.failure.usage);
-          if (
-            rejection &&
-            !retry &&
-            this.policy.limits.rejectionRetries === 1 &&
-            ['rate-limited', 'overloaded'].includes(error.failure.code)
-          ) {
-            retry = true;
-            await this.pause(
-              Math.max(REJECTION_BACKOFF_MS, error.failure.retryAfterMs ?? REJECTION_BACKOFF_MS),
-              abort.signal,
-            );
-            await this.intents.claimAttempt(ns, actor, run.id, run.dispatchToken!);
-            continue;
-          }
-          if (!rejection) usage = { status: 'unknown' };
-          break;
-        }
-        usage = sumUsage(usage, terminal.usage);
-        if (terminal.type === 'refused') {
-          phase = 'refused';
-          failure = 'AI_REFUSED';
-          break;
-        }
-        if (terminal.type === 'incomplete') {
-          phase = 'incomplete';
-          break;
-        }
-        try {
-          result = validateResult(
-            aiResultSchema.parse(aiModelOutputSchema.parse(JSON.parse(terminal.text)).result),
-          );
-          if (result.kind !== 'clarification' && result.kind !== RESULT_KINDS[run.task])
-            throw new Error('Wrong task');
-          phase = 'completed';
-          failure = null;
-          break;
-        } catch {
-          result = undefined;
-          failure = 'AI_OUTPUT_INVALID';
-          if (repair || this.policy.limits.repairs !== 1 || usage.status === 'unknown') break;
-          repair = true;
-          // Never retain or resend malformed model text; the original reviewed context stays bounded.
-          request.instructions +=
-            ' The previous output was invalid. Return only the required JSON result matching the schema.';
-          normalizedProviderRequestSchema.parse(request);
-          if (inputBytes(request) > run.snapshot.maximumInputTokens) break;
-          await this.intents.claimAttempt(ns, actor, run.id, run.dispatchToken!);
-        }
+      let run: AiRunRecord;
+      try {
+        run = await this.intents.markDispatch(ns, actor, prior.id);
+      } catch {
+        // A failed claim is never permission to call. If commit was ambiguous the
+        // null fence rejects this unsent settlement, preserving recovery liability.
+        await this.intents.settle(ns, actor, {
+          runId: prior.id,
+          dispatchToken: null,
+          mode: 'unsent',
+          phase: 'cancelled',
+          actualMicroUsd: '0',
+          usage: ZERO_USAGE,
+          failureCode: null,
+        });
+        return;
       }
-    } catch {
-      /* Claim/admission failures stop further network calls. */
+      const request = {
+        ...input,
+        deadlineAtUnixMs: run.deadlineAt.getTime(),
+        maximumResponseBytes: Math.min(input.maximumResponseBytes, MAX_AI_RESULT_BYTES),
+      };
+      let usage: NormalizedUsage = ZERO_USAGE;
+      let repair = false;
+      let retry = false;
+      let result: AiResult | undefined;
+      let phase: AiSettlement['phase'] = 'failed';
+      let failure: AiSettlement['failureCode'] = 'AI_GENERATION_FAILED';
+      const deadline = setTimeout(
+        () => abort.abort(),
+        Math.max(0, run.deadlineAt.getTime() - this.now()),
+      );
+      try {
+        while (true) {
+          if (abort.signal.aborted) {
+            usage = { status: 'unknown' };
+            break;
+          }
+          let terminal: Exclude<ProviderEvent, { type: 'text-delta' }>;
+          try {
+            this.operations?.assertPaid();
+            this.operations?.add('fresh_calls');
+            terminal = await this.consume(adapter, request, abort.signal);
+            health = 'healthy';
+          } catch (error) {
+            if (error instanceof AiPersistenceError) {
+              phase = 'cancelled';
+              failure = null;
+              break;
+            }
+            if (!(error instanceof AiPersistenceError) && !abort.signal.aborted) health = 'failure';
+            const rejection =
+              error instanceof AiProviderError && error.failure.execution !== 'may-have-started';
+            if (error instanceof AiProviderError && error.failure.usage.status === 'known')
+              usage = sumUsage(usage, error.failure.usage);
+            if (
+              rejection &&
+              !retry &&
+              this.policy.limits.rejectionRetries === 1 &&
+              ['rate-limited', 'overloaded'].includes(error.failure.code)
+            ) {
+              retry = true;
+              await this.pause(
+                Math.max(REJECTION_BACKOFF_MS, error.failure.retryAfterMs ?? REJECTION_BACKOFF_MS),
+                abort.signal,
+              );
+              await this.intents.claimAttempt(ns, actor, run.id, run.dispatchToken!);
+              continue;
+            }
+            if (!rejection) usage = { status: 'unknown' };
+            break;
+          }
+          usage = sumUsage(usage, terminal.usage);
+          if (terminal.type === 'refused') {
+            phase = 'refused';
+            failure = 'AI_REFUSED';
+            break;
+          }
+          if (terminal.type === 'incomplete') {
+            phase = 'incomplete';
+            break;
+          }
+          try {
+            result = validateResult(
+              aiResultSchema.parse(aiModelOutputSchema.parse(JSON.parse(terminal.text)).result),
+            );
+            if (result.kind !== 'clarification' && result.kind !== RESULT_KINDS[run.task])
+              throw new Error('Wrong task');
+            phase = 'completed';
+            failure = null;
+            break;
+          } catch {
+            result = undefined;
+            failure = 'AI_OUTPUT_INVALID';
+            if (repair || this.policy.limits.repairs !== 1 || usage.status === 'unknown') break;
+            repair = true;
+            // Never retain or resend malformed model text; the original reviewed context stays bounded.
+            request.instructions +=
+              ' The previous output was invalid. Return only the required JSON result matching the schema.';
+            normalizedProviderRequestSchema.parse(request);
+            if (inputBytes(request) > run.snapshot.maximumInputTokens) break;
+            await this.intents.claimAttempt(ns, actor, run.id, run.dispatchToken!);
+          }
+        }
+      } catch {
+        /* Claim/admission failures stop further network calls. */
+      } finally {
+        clearTimeout(deadline);
+      }
+      if (abort.signal.aborted) {
+        result = undefined;
+        phase = 'cancelled';
+        failure = null;
+      }
+      if (usage.status === 'unknown' || this.now() >= run.deadlineAt.getTime()) {
+        usage = { status: 'unknown' };
+        phase = 'outcome-unknown';
+        failure = 'AI_OUTCOME_UNKNOWN';
+        result = undefined;
+      }
+      await this.intents.settle(
+        ns,
+        actor,
+        {
+          runId: run.id,
+          dispatchToken: run.dispatchToken,
+          mode: usage.status === 'known' ? 'known' : 'unknown',
+          phase,
+          actualMicroUsd: usage.status === 'known' ? priceAiUsage(run.snapshot, usage) : null,
+          usage,
+          failureCode: failure,
+        },
+        result,
+      );
+      if (abort.signal.aborted && phase === 'outcome-unknown')
+        this.operations?.add('cancellations');
     } finally {
-      clearTimeout(deadline);
+      release?.(health);
+      this.operations?.add('latency_ms', Math.max(0, this.now() - started));
     }
-    if (abort.signal.aborted) {
-      result = undefined;
-      phase = 'cancelled';
-      failure = null;
-    }
-    if (usage.status === 'unknown' || this.now() >= run.deadlineAt.getTime()) {
-      usage = { status: 'unknown' };
-      phase = 'outcome-unknown';
-      failure = 'AI_OUTCOME_UNKNOWN';
-      result = undefined;
-    }
-    await this.intents.settle(
-      ns,
-      actor,
-      {
-        runId: run.id,
-        dispatchToken: run.dispatchToken,
-        mode: usage.status === 'known' ? 'known' : 'unknown',
-        phase,
-        actualMicroUsd: usage.status === 'known' ? priceAiUsage(run.snapshot, usage) : null,
-        usage,
-        failureCode: failure,
-      },
-      result,
-    );
   }
 
   private async consume(

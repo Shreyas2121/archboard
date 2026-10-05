@@ -29,7 +29,10 @@ import { RetainCompactedUpdateReceipts1790426800000 } from '../../../../migratio
 import { AiPersistenceFoundation1791072000000 } from '../../../../migrations/1791072000000-AiPersistenceFoundation.js';
 import { AiAdmissionFoundation1791072000001 } from '../../../../migrations/1791072000001-AiAdmissionFoundation.js';
 import { AiResultCache1791072000002 } from '../../../../migrations/1791072000002-AiResultCache.js';
+import { AiMaintenance1791072000003 } from '../../../../migrations/1791072000003-AiMaintenance.js';
 import { AiResultCache } from '../../application/result-cache.js';
+import { AiMaintenance } from '../../application/maintenance.js';
+import { AiOperations } from '../../application/operations.js';
 import { AiAdmissionService } from '../../application/admission-service.js';
 import { estimateAiReservation } from '../../application/pricing.js';
 import { snapshotAiConfiguration } from '../../application/persistence.js';
@@ -105,6 +108,7 @@ beforeAll(async () => {
       AiPersistenceFoundation1791072000000,
       AiAdmissionFoundation1791072000001,
       AiResultCache1791072000002,
+      AiMaintenance1791072000003,
     ],
     synchronize: false,
     migrationsRun: false,
@@ -921,6 +925,79 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
     expect((await cached.create(input)).source).toBe('replayed');
     expect(await source.getRepository(AiSettlementEntity).countBy({ runId: run.id })).toBe(1);
   });
+  it('AI-C17 concurrent maintenance cascades expired content while retaining settled accounting', async () => {
+    const policy = fixturePersistencePolicy();
+    const funded = new AiIntentService(
+      store,
+      cipher,
+      new AiAdmissionService(policy),
+      new AiResultCache(cipher, policy.cache),
+    );
+    const input = fresh();
+    input.snapshot = { ...input.snapshot, resultTtlMs: 1 };
+    const { run } = await funded.create(input);
+    const dispatched = await funded.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id);
+    await funded.settle(TEST_NAMESPACE, TEST_ACTOR, fixtureSettlement(dispatched), fixtureAiResult);
+    const result = await source.getRepository(AiRunEntity).findOneByOrFail({ id: run.id });
+    expect(result.payloadId).not.toBeNull();
+    const expiryWaitMs = 20;
+    await new Promise((resolve) => setTimeout(resolve, expiryWaitMs));
+    const runtime = new RuntimeAdmission();
+    runtime.setOwnership(true);
+    runtime.setSchemaCompatible(true);
+    const workers = [
+      new AiMaintenance(store, funded, runtime, TEST_NAMESPACE, new AiOperations()),
+      new AiMaintenance(store, funded, runtime, TEST_NAMESPACE, new AiOperations()),
+    ];
+    await Promise.all(workers.map((worker) => worker.tick()));
+    expect(await source.getRepository(AiPayloadEntity).countBy({ id: result.payloadId! })).toBe(0);
+    expect((await funded.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).content).toBe('expired');
+    expect(await source.getRepository(AiReceiptEntity).countBy({ runId: run.id })).toBe(1);
+    expect(await source.getRepository(AiSettlementEntity).countBy({ runId: run.id })).toBe(1);
+    expect(
+      await source.getRepository(AiReservationEntity).findOneBy({ runId: run.id }),
+    ).toMatchObject({ status: 'settled' });
+    await Promise.all(workers.map((worker) => worker.onModuleDestroy()));
+  });
+  it('AI-C17 restart cleanup preserves unknown liabilities and receipts after a failed maintenance pass', async () => {
+    // PREPARED ONLY: real transaction/failure/restart acceptance remains deferred.
+    const deadlineMs = 1000;
+    const recoveryWaitMs = 1100;
+    const policy = fixturePersistencePolicy();
+    const operations = new AiOperations();
+    const funded = new AiIntentService(
+      store,
+      cipher,
+      new AiAdmissionService(policy),
+      new AiResultCache(cipher, policy.cache),
+      operations,
+    );
+    const input = fresh();
+    input.snapshot = { ...input.snapshot, deadlineMs };
+    const { run } = await funded.create(input);
+    await funded.markDispatch(TEST_NAMESPACE, TEST_ACTOR, run.id);
+    await new Promise((resolve) => setTimeout(resolve, recoveryWaitMs));
+    const runtime = new RuntimeAdmission();
+    runtime.setOwnership(true);
+    runtime.setSchemaCompatible(true);
+    const restarted = new AiMaintenance(store, funded, runtime, TEST_NAMESPACE, operations);
+    jest.spyOn(store, 'run').mockRejectedValueOnce(new Error('simulated persistence outage'));
+    await restarted.tick();
+    expect(operations.snapshot().maintenance_failures).toBe('1');
+    operations.setPaidEnabled(false);
+    await restarted.tick();
+    await restarted.tick();
+    expect((await funded.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).run.phase).toBe(
+      'outcome-unknown',
+    );
+    expect(
+      await source.getRepository(AiReservationEntity).findOneBy({ runId: run.id }),
+    ).toMatchObject({ status: 'unknown' });
+    expect(await source.getRepository(AiReceiptEntity).countBy({ runId: run.id })).toBe(1);
+    expect(await source.getRepository(AiSettlementEntity).countBy({ runId: run.id })).toBe(1);
+    expect((await funded.create(input)).source).toBe('replayed');
+    await restarted.onModuleDestroy();
+  });
   it('round trips the AI forward migration in an independent empty schema', async () => {
     // This isolated migration test is explicitly deferred with the entire suite.
     const isolated = schema + '_migration';
@@ -943,6 +1020,10 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
         await cacheMigration.up(runner);
         await cacheMigration.down(runner);
         await cacheMigration.up(runner);
+        const maintenanceMigration = new AiMaintenance1791072000003();
+        await maintenanceMigration.up(runner);
+        await maintenanceMigration.down(runner);
+        await maintenanceMigration.up(runner);
         const rows: { count: string }[] = await runner.query(
           "SELECT count(*)::text AS count FROM information_schema.tables WHERE table_schema=$1 AND table_name LIKE 'ai_%'",
           [isolated],

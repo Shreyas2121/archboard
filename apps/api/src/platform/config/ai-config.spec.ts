@@ -1,4 +1,5 @@
 import { AiConfigurationError, loadAiConfig } from './ai-config.js';
+import { resolve } from 'node:path';
 import {
   FIXTURE_AI_ENVIRONMENT,
   FIXTURE_MODEL_PROFILE,
@@ -7,6 +8,20 @@ import {
 const DEFAULT_GLOBAL_CONCURRENCY = 2;
 
 describe('server-owned AI operator configuration', () => {
+  it('accepts only absolute operator switch paths without changing content identity', () => {
+    const plain = loadAiConfig(FIXTURE_AI_ENVIRONMENT);
+    const marker = resolve('ai-disabled');
+    const switched = loadAiConfig({
+      ...FIXTURE_AI_ENVIRONMENT,
+      AI_KILL_SWITCH_FILE: marker,
+    });
+    if (!plain.enabled || !switched.enabled) throw new Error('Enabled fixture required');
+    expect(switched.killSwitchFile).toBe(marker);
+    expect(switched.policy.fingerprint).toBe(plain.policy.fingerprint);
+    expect(() =>
+      loadAiConfig({ ...FIXTURE_AI_ENVIRONMENT, AI_KILL_SWITCH_FILE: './public-marker' }),
+    ).toThrow('AI_KILL_SWITCH_FILE');
+  });
   it('defaults per-model prompt caching off and fingerprints explicit capability/retention with required write pricing', () => {
     const initial = loadAiConfig(FIXTURE_AI_ENVIRONMENT);
     if (!initial.enabled) throw new Error('Enabled fixture required');

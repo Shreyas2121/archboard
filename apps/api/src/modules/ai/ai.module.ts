@@ -12,6 +12,9 @@ import {
   type AiPayloadCipher,
 } from './application/persistence.js';
 import { AiIntentService } from './application/intent-service.js';
+import { AiOperations } from './application/operations.js';
+import { AiMaintenance } from './application/maintenance.js';
+import { aiKillSwitch } from './infrastructure/kill-switch.js';
 import { AI_RUN_COORDINATOR, AiRunCoordinator } from './application/run-coordinator.js';
 import { AiRunSubscriptions } from './application/run-subscriptions.js';
 import { AiPrivateIdentity } from './application/private-identity.js';
@@ -45,6 +48,23 @@ export class AiModule {
       config.ai.enabled && persistence
         ? [
             {
+              provide: AiMaintenance,
+              inject: [AI_PERSISTENCE, AI_INTENT_SERVICE, RuntimeAdmission, AiOperations],
+              useFactory: (
+                store: AiPersistence,
+                intents: AiIntentService,
+                runtime: RuntimeAdmission,
+                operations: AiOperations,
+              ) =>
+                new AiMaintenance(
+                  store,
+                  intents,
+                  runtime,
+                  config.ai.enabled ? config.ai.policy.deploymentNamespace : '',
+                  operations,
+                ),
+            },
+            {
               provide: AiPrivateIdentity,
               useFactory: () => {
                 if (!config.ai.enabled) throw new Error('AI disabled.');
@@ -76,10 +96,20 @@ export class AiModule {
             },
             {
               provide: AI_RUN_COORDINATOR,
-              inject: [AI_INTENT_SERVICE, RuntimeAdmission],
-              useFactory: (intents: AiIntentService, runtime: RuntimeAdmission) => {
+              inject: [AI_INTENT_SERVICE, RuntimeAdmission, AiOperations],
+              useFactory: (
+                intents: AiIntentService,
+                runtime: RuntimeAdmission,
+                operations: AiOperations,
+              ) => {
                 if (!config.ai.enabled) throw new Error('AI disabled.');
-                return new AiRunCoordinator(intents, runtime, config.ai.policy);
+                return new AiRunCoordinator(
+                  intents,
+                  runtime,
+                  config.ai.policy,
+                  Date.now,
+                  operations,
+                );
               },
             },
             {
@@ -112,13 +142,20 @@ export class AiModule {
             },
             {
               provide: AI_INTENT_SERVICE,
-              inject: [AI_PERSISTENCE, AI_PAYLOAD_CIPHER, AI_ADMISSION_SERVICE, AiResultCache],
+              inject: [
+                AI_PERSISTENCE,
+                AI_PAYLOAD_CIPHER,
+                AI_ADMISSION_SERVICE,
+                AiResultCache,
+                AiOperations,
+              ],
               useFactory: (
                 store: AiPersistence,
                 cipher: AiPayloadCipher,
                 admission: AiAdmissionService,
                 cache: AiResultCache,
-              ) => new AiIntentService(store, cipher, admission, cache),
+                operations: AiOperations,
+              ) => new AiIntentService(store, cipher, admission, cache, operations),
             },
           ]
         : [];
@@ -130,19 +167,30 @@ export class AiModule {
       ],
       controllers: auth ? [AiController] : [],
       providers: [
+        {
+          provide: AiOperations,
+          useFactory: () =>
+            new AiOperations(
+              Date.now,
+              aiKillSwitch(config.ai.enabled ? config.ai.killSwitchFile : undefined),
+              (value) => console.info(value),
+            ),
+        },
         AiEvents,
         {
           provide: AiHttpService,
           inject: durableProviders.length
             ? [
+                AiOperations,
                 AiRunApplication,
                 AI_RUN_COORDINATOR,
                 AiRunSubscriptions,
                 AI_ADMISSION_SERVICE,
                 AI_PERSISTENCE,
               ]
-            : [],
+            : [AiOperations],
           useFactory: (
+            operations: AiOperations,
             application?: AiRunApplication,
             runs?: AiRunCoordinator,
             subscriptions?: AiRunSubscriptions,
@@ -154,6 +202,7 @@ export class AiModule {
               application && runs && subscriptions && admission && store
                 ? { application, runs, subscriptions, admission, persistence: store }
                 : undefined,
+              operations,
             ),
         },
         ...durableProviders,
@@ -178,6 +227,7 @@ export class AiModule {
         },
       ],
       exports: [
+        AiOperations,
         AI_POLICY,
         AI_PROVIDER_REGISTRY,
         ...(durableProviders.length

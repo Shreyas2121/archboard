@@ -9,6 +9,9 @@ import type {
 
 @Entity({ name: 'ai_runs' })
 @Index('UQ_ai_runs_owner', ['deploymentNamespace', 'actorUserId', 'id'], { unique: true })
+@Index('IDX_ai_runs_active_deadline', ['deploymentNamespace', 'deadlineAt', 'id'], {
+  where: "\"phase\" IN ('pending-admission', 'admitted', 'dispatching')",
+})
 @Index('UQ_ai_runs_active', ['deploymentNamespace', 'actorUserId', 'fingerprint'], {
   unique: true,
   where: "\"phase\" IN ('pending-admission', 'admitted', 'dispatching')",

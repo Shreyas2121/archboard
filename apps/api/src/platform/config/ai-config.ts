@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { KIBIBYTE, MEBIBYTE, MAX_AI_RESULT_BYTES } from '@archboard/contracts';
 import {
@@ -13,6 +14,7 @@ const MAX_IDENTIFIER_CHARACTERS = 128;
 const MAX_PROFILES = 2;
 const MAX_CACHE_WRITE_CLASSES = 16;
 const MAX_KEY_CHARACTERS = 512;
+const MAX_PATH_CHARACTERS = 4096;
 const MIN_KEY_CHARACTERS = 32;
 const MAX_BIGINT = 9_223_372_036_854_775_807n;
 const MAX_DECIMAL_CHARACTERS = 19;
@@ -150,6 +152,7 @@ const optionalMoney = z.preprocess(
   positiveMoney.optional(),
 );
 const activeEnvironmentSchema = z.strictObject({
+  AI_KILL_SWITCH_FILE: z.string().min(1).max(MAX_PATH_CHARACTERS).refine(isAbsolute).optional(),
   AI_PROVIDER: z.literal('openai'),
   AI_MODEL: identifier,
   AI_CONFIG_VERSION: identifier,
@@ -199,6 +202,7 @@ export type AiOperatorConfig =
       readonly enabled: true;
       readonly policy: AiPolicy;
       readonly contentKeyVersion: string;
+      readonly killSwitchFile?: string;
       readonly secrets: {
         readonly openaiApiKey: string;
         readonly cacheKeySecret: string;
@@ -332,6 +336,7 @@ export function loadAiConfig(environment: NodeJS.ProcessEnv): AiOperatorConfig {
     enabled: true as const,
     policy,
     contentKeyVersion: values.AI_CONTENT_KEY_VERSION,
+    killSwitchFile: values.AI_KILL_SWITCH_FILE,
   };
   // Avoid accidental JSON/inspect serialization of newly introduced AI secrets.
   Object.defineProperty(config, 'secrets', {
