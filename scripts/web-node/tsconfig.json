@@ -5,7 +5,11 @@
     "paths": {
       "@/*": ["../../apps/web/src/*"],
       "@archboard/*": ["../../packages/*/dist/index.d.ts"],
+      "@tanstack/react-query": [
+        "../../apps/web/node_modules/@tanstack/react-query/build/modern/index.d.ts"
+      ],
       "@xyflow/react": ["../../apps/web/node_modules/@xyflow/react"],
+      "elkjs/*": ["../../apps/web/node_modules/elkjs/*"],
       "yjs": ["../../apps/web/node_modules/yjs"],
       "zod": ["../../apps/web/node_modules/zod"]
     }

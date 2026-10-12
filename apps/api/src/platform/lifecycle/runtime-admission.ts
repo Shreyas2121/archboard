@@ -68,6 +68,7 @@ export class RuntimeAdmission {
       fail(ERROR_CODES.TEMPORARILY_UNAVAILABLE, 'Service temporarily unavailable.');
   }
   private reportState(): void {
+    if (process.env.NODE_ENV !== 'production') return;
     try {
       console.info(
         JSON.stringify({

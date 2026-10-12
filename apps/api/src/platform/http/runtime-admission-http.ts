@@ -5,7 +5,7 @@ import { errorEnvelope } from './api-boundary.js';
 
 const HTTP_UNAVAILABLE = 503;
 
-/** Runs after protected headers, before CORS, auth handlers or product body parsing. */
+/** Runs after protected headers and CORS, before auth handlers or product body parsing. */
 export function configureRuntimeAdmission(
   application: NestExpressApplication,
   admission: RuntimeAdmission,

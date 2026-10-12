@@ -1,11 +1,33 @@
 import { jest } from '@jest/globals';
+import { Logger } from '@nestjs/common';
 import { ConfigurationError } from '../config/api-config.js';
 import { AiConfigurationError } from '../config/ai-config.js';
 import { CollaborationWriterLockUnavailableError } from '../database/collaboration-writer-lock.service.js';
 import { StartupReadinessUnavailableError } from './startup-errors.js';
 import { logStartupFailure, logStartupStage } from './startup-diagnostics.js';
 
+beforeEach(() => jest.replaceProperty(process.env, 'NODE_ENV', 'production'));
 afterEach(() => jest.restoreAllMocks());
+
+it.each(['development', 'test', undefined])(
+  'omits startup progress outside production (%s)',
+  (mode) => {
+    if (mode === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = mode;
+    const sink = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+    logStartupStage('application_creation');
+    expect(sink).not.toHaveBeenCalled();
+  },
+);
+
+it('uses Nest logging for sanitized local startup failures', () => {
+  process.env.NODE_ENV = 'development';
+  const sink = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  const structured = jest.spyOn(console, 'info').mockImplementation(() => undefined);
+  logStartupFailure('listen', { code: 'EADDRINUSE', message: 'private credentials' });
+  expect(sink).toHaveBeenCalledWith('Startup failed at listen: PORT_IN_USE');
+  expect(structured).not.toHaveBeenCalled();
+});
 
 it('reports invalid AI settings through the fixed startup whitelist without secret values', () => {
   const sink = jest.spyOn(console, 'info').mockImplementation(() => undefined);

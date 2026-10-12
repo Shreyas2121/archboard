@@ -196,6 +196,17 @@ async function ready(f: ReturnType<typeof setup>, id: string) {
     await new Promise((resolve) => setImmediate(resolve));
   expect(f.store.state.settlements.has(id)).toBe(true);
 }
+it('acknowledges committed pending admission without rereading behind its worker', async () => {
+  const f = setup();
+  const read = jest.spyOn(f.runs, 'read').mockRejectedValue(new Error('Read is unavailable'));
+  const admitted = await f.application.create(TEST_ACTOR, randomUUID(), body);
+  expect(admitted.content).toBe('pending');
+  expect(admitted.result).toBeNull();
+  expect(read).not.toHaveBeenCalled();
+  await ready(f, admitted.run.id);
+  expect(f.calls()).toBe(1);
+  await f.runs.drain();
+});
 it("coordinates public receipt/dedupe races under one paid slot and never shares another actor's cache", async () => {
   let release!: () => void;
   const wait = new Promise<void>((resolve) => {

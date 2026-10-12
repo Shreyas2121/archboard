@@ -353,7 +353,14 @@ export class AiIntentService {
     content: 'pending' | 'available' | 'expired' | 'unavailable';
   }> {
     return this.persistence.run(async (scope) => {
-      const run = await this.owned(scope, namespace, actor, id);
+      // Committed run metadata and immutable payloads need no accounting/fingerprint
+      // locks. Reauthorize before rereading metadata; board authority remains locked
+      // through disclosure. Concurrent payload expiry fails closed below.
+      const prior = await scope.findRun(namespace, actor, id);
+      if (!prior) throw new AiPersistenceError('NOT_FOUND');
+      await scope.authorize(actor, prior.boardId);
+      const run = await scope.findRun(namespace, actor, id);
+      if (!run || run.boardId !== prior.boardId) throw new AiPersistenceError('NOT_FOUND');
       if (ACTIVE_PHASES.has(run.phase)) return { run, result: null, content: 'pending' };
       if (run.phase !== 'completed') return { run, result: null, content: 'unavailable' };
       const now = await scope.now();

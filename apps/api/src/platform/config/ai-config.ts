@@ -280,6 +280,7 @@ export function loadAiConfig(environment: NodeJS.ProcessEnv): AiOperatorConfig {
       'AI_CACHE_ACTOR_BYTES',
     );
   if (
+    environment.NODE_ENV !== 'development' &&
     profiles.some(
       (profile) =>
         profile.maximumInputTokens > values.AI_PROVIDER_INPUT_TPM ||
@@ -289,6 +290,7 @@ export function loadAiConfig(environment: NodeJS.ProcessEnv): AiOperatorConfig {
     errors.push('AI_PROVIDER_INPUT_TPM', 'AI_PROVIDER_OUTPUT_TPM');
   if (errors.length) throw new AiConfigurationError(errors);
   const unsignedPolicy = {
+    localUnlimited: environment.NODE_ENV === 'development',
     deploymentNamespace: values.AI_DEPLOYMENT_NAMESPACE,
     configurationVersion: values.AI_CONFIG_VERSION,
     provider: values.AI_PROVIDER,

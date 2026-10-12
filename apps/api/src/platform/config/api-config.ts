@@ -270,7 +270,7 @@ export function loadApiConfig(environment: NodeJS.ProcessEnv): ApiConfig {
   }
 
   return Object.freeze({
-    ai: loadAiConfig(environment),
+    ai: loadAiConfig({ ...environment, NODE_ENV: mode }),
     mode,
     publicApiOrigin,
     allowedWebOrigins: Object.freeze(allowedWebOrigins),

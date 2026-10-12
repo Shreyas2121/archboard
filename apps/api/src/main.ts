@@ -28,7 +28,7 @@ async function bootstrap(): Promise<void> {
   enterStartupStage('application_creation');
   const application = await NestFactory.create<NestExpressApplication>(AppModule.register(config), {
     bodyParser: false,
-    logger: new PrivacyLogger(),
+    ...(config.mode === 'production' ? { logger: new PrivacyLogger() } : {}),
     // Propagate initialization failures to the sanitized startup diagnostic below.
     abortOnError: false,
   });
@@ -43,17 +43,19 @@ async function bootstrap(): Promise<void> {
       closing = true;
       const started = performance.now();
       admission.stop();
-      console.info(JSON.stringify({ event: 'runtime.shutdown_started' }));
+      if (config.mode === 'production')
+        console.info(JSON.stringify({ event: 'runtime.shutdown_started' }));
       void new ShutdownDeadline()
         .run(() => application.close(), PROCESS_SHUTDOWN_MS)
         .then(
           () => {
-            console.info(
-              JSON.stringify({
-                event: 'runtime.shutdown_complete',
-                durationMs: Math.round(performance.now() - started),
-              }),
-            );
+            if (config.mode === 'production')
+              console.info(
+                JSON.stringify({
+                  event: 'runtime.shutdown_complete',
+                  durationMs: Math.round(performance.now() - started),
+                }),
+              );
             process.exit(0);
           },
           () => process.exit(1),

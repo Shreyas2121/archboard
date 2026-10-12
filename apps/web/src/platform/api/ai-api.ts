@@ -19,6 +19,7 @@ import {
   fetchApiResponse,
   readApiResponse,
   ApiClientError,
+  ApiRequestTimeoutError,
   type ApiRequestOptions,
 } from './api-client';
 import type { z } from 'zod';
@@ -27,10 +28,12 @@ import { AiEventParser, MAX_AI_STREAM_BYTES } from './ai-events';
 const MAX_RESPONSE_BYTES = MAX_AI_RESULT_BYTES + MAX_AI_STREAM_BYTES;
 const STREAM_DEADLINE_MS = 125_000;
 const REQUEST_DEADLINE_MS = 15_000;
+const CREATE_DEADLINE_MS = STREAM_DEADLINE_MS;
 /** A timeout never retries POST. Even an adapter ignoring AbortSignal loses its reply. */
 export async function withAiDeadline<T>(
   signal: AbortSignal,
   work: (signal: AbortSignal) => Promise<T>,
+  deadlineMs = REQUEST_DEADLINE_MS,
 ): Promise<T> {
   const abort = new AbortController();
   let reject!: (error: Error) => void;
@@ -49,7 +52,10 @@ export async function withAiDeadline<T>(
     );
   };
   signal.addEventListener('abort', stop, { once: true });
-  const timer = setTimeout(stop, REQUEST_DEADLINE_MS);
+  const timer = setTimeout(() => {
+    abort.abort();
+    reject(new ApiRequestTimeoutError(deadlineMs));
+  }, deadlineMs);
   try {
     if (signal.aborted) stop();
     return await Promise.race([
@@ -65,9 +71,12 @@ function aiRequest<T>(
   path: `/${string}`,
   schema: z.ZodType<T>,
   options: ApiRequestOptions & { signal: AbortSignal },
+  deadlineMs = REQUEST_DEADLINE_MS,
 ) {
-  return withAiDeadline(options.signal, (signal) =>
-    apiRequest(path, schema, { ...options, signal }),
+  return withAiDeadline(
+    options.signal,
+    (signal) => apiRequest(path, schema, { ...options, signal }),
+    deadlineMs,
   );
 }
 export interface AiTransport {
@@ -96,13 +105,18 @@ export const aiTransport: AiTransport = {
   },
   create: async (key, body, signal) => {
     const run = (
-      await aiRequest('/ai/runs', aiRunResponseSchema, {
-        method: 'POST',
-        signal,
-        body: aiCreateRunSchema.parse(body),
-        headers: { 'Idempotency-Key': idempotencyKeySchema.parse(key) },
-        maxResponseBytes: MAX_RESPONSE_BYTES,
-      })
+      await aiRequest(
+        '/ai/runs',
+        aiRunResponseSchema,
+        {
+          method: 'POST',
+          signal,
+          body: aiCreateRunSchema.parse(body),
+          headers: { 'Idempotency-Key': idempotencyKeySchema.parse(key) },
+          maxResponseBytes: MAX_RESPONSE_BYTES,
+        },
+        CREATE_DEADLINE_MS,
+      )
     ).data;
     if (run.task !== body.task)
       throw new ApiClientError('invalid-response', null, null, 'AI task binding did not match.');

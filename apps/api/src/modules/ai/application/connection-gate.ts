@@ -17,8 +17,9 @@ export class AiConnectionGate {
       throw new AiAdmissionError('TEMPORARILY_UNAVAILABLE');
     const actorCount = [...this.leases.values()].filter((value) => value === actor).length;
     if (
-      this.leases.size >= MAX_CONNECTIONS ||
-      actorCount >= this.policy.limits.sseConnectionsPerActor
+      !this.policy.localUnlimited &&
+      (this.leases.size >= MAX_CONNECTIONS ||
+        actorCount >= this.policy.limits.sseConnectionsPerActor)
     )
       throw new AiAdmissionError('RATE_LIMITED');
     const token = randomUUID();

@@ -1,0 +1,40 @@
+{
+  "kind": "archboard.project-context",
+  "schemaVersion": 1,
+  "project": {
+    "name": "AI Debug Example",
+    "description": "Synthetic browser client calling an API.",
+    "technologies": ["TypeScript"]
+  },
+  "components": [
+    {
+      "key": "client",
+      "name": "Browser",
+      "category": "client",
+      "technology": "TypeScript",
+      "description": "Sends requests to the API.",
+      "evidenceKeys": []
+    },
+    {
+      "key": "api",
+      "name": "API",
+      "category": "service",
+      "technology": "NestJS",
+      "description": "Receives browser requests.",
+      "evidenceKeys": []
+    }
+  ],
+  "connections": [
+    {
+      "source": "client",
+      "target": "api",
+      "label": "Requests",
+      "protocol": "HTTPS",
+      "evidenceKeys": []
+    }
+  ],
+  "groups": [],
+  "evidence": [],
+  "constraints": [],
+  "unknowns": []
+}

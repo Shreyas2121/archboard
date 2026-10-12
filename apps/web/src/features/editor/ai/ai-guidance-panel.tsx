@@ -1,49 +1,59 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { MAX_AI_PROMPT_CHARACTERS, aiResultForRequestSchema } from '@archboard/contracts';
 import { boardStorageNamespaceKey } from '@archboard/sync-client';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import type { EditorSession } from '@/features/editor/application';
 import {
   useEditorSelection,
   readEditorSelection,
   useEditorUiActions,
 } from '@/features/editor/state';
-import { useAiReviewSession } from './use-ai-review-session';
-import { AI_JSON_INDENT, aiValidationMessage } from './ai-review-model';
+import type { useAiReviewSession } from './use-ai-review-session';
+import type { useAiGuidanceDraft } from './use-ai-guidance-draft';
+import { aiValidationMessage, aiRunFailureMessage } from './ai-review-model';
 import { AiScopedEditReview } from './ai-scoped-edit-review';
 import { AiPresentationReview } from './ai-presentation-review';
+import { AiAvailabilityCheck } from './ai-availability-check';
+import { AiRequestReviewDialog } from './ai-request-review-dialog';
 import {
   GUIDANCE_STARTERS,
   reviewAiGuidance,
   retainAiGuidanceExchange,
   aiGuidanceMatchesContext,
   currentAiGuidanceHighlights,
-  type AiGuidanceHistory,
-  type AiGuidanceTask,
-  type AiPresentationMode,
 } from './ai-guidance-model';
 
 export function AiGuidancePanel({
   session,
   active,
+  reviewSession,
+  draft,
 }: {
   readonly session: EditorSession;
   readonly active: boolean;
+  readonly reviewSession: ReturnType<typeof useAiReviewSession>;
+  readonly draft: ReturnType<typeof useAiGuidanceDraft>;
 }) {
-  const { workflow, state, identity, online } = useAiReviewSession(session);
+  const { workflow, state, identity, online } = reviewSession;
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const selection = useEditorSelection();
   const actions = useEditorUiActions();
-  const [task, setTask] = useState<AiGuidanceTask>('explain-selection');
-  const [prompt, setPrompt] = useState(GUIDANCE_STARTERS['explain-selection']);
-  const [history, setHistory] = useState<AiGuidanceHistory>([]);
-  const [problem, setProblem] = useState('');
-  const [presentationMode, setPresentationMode] = useState<AiPresentationMode>('append');
-  const reviewedSelection = useRef('');
+  const {
+    task,
+    setTask,
+    prompt,
+    setPrompt,
+    history,
+    setHistory,
+    problem,
+    setProblem,
+    presentationMode,
+    setPresentationMode,
+    reviewedSelection,
+  } = draft;
   const selectionKey = () =>
     JSON.stringify(
       readEditorSelection()
@@ -89,15 +99,6 @@ export function AiGuidancePanel({
     state.run?.state !== 'outcome-unknown';
   const hasGuidance = guidance !== null;
   useEffect(() => {
-    if (!identity) {
-      setHistory([]);
-      setPrompt(GUIDANCE_STARTERS['explain-selection']);
-      setTask('explain-selection');
-      setPresentationMode('append');
-      setProblem('');
-    }
-  }, [identity]);
-  useEffect(() => {
     if (!active || !identity || !current || !hasGuidance) actions.setPrivateAiHighlights(null);
     return () => actions.setPrivateAiHighlights(null);
   }, [actions, active, identity, current, hasGuidance, state.run?.id, state.run?.content.status]);
@@ -109,7 +110,7 @@ export function AiGuidancePanel({
       </p>
     );
   return (
-    <section className="grid gap-3 p-4" aria-label="Private architecture guidance">
+    <section className="grid min-w-0 gap-3 p-4" aria-label="Private architecture guidance">
       <h3 className="text-sm font-semibold">Understand selected architecture</h3>
       <p className="text-xs leading-5 text-muted-foreground">
         Select cards or connections, then review exactly what will be sent. Selected connections
@@ -134,17 +135,36 @@ export function AiGuidancePanel({
           }
         }}
       >
-        <TabsList className="flex h-auto flex-wrap" aria-label="Guidance task">
-          <TabsTrigger value="explain-selection" disabled={!workflow.editable() || !!state.run}>
+        <TabsList
+          className="grid w-full grid-cols-2 gap-1 group-data-[orientation=horizontal]/tabs:h-auto"
+          aria-label="Guidance task"
+        >
+          <TabsTrigger
+            value="explain-selection"
+            disabled={!workflow.editable() || !!state.run}
+            className="h-auto min-h-9 min-w-0 whitespace-normal text-xs"
+          >
             Explain selection
           </TabsTrigger>
-          <TabsTrigger value="trace-flow" disabled={!workflow.editable() || !!state.run}>
+          <TabsTrigger
+            value="trace-flow"
+            disabled={!workflow.editable() || !!state.run}
+            className="h-auto min-h-9 min-w-0 whitespace-normal text-xs"
+          >
             Trace request flow
           </TabsTrigger>
-          <TabsTrigger value="scoped-edit" disabled={!workflow.editable() || !!state.run}>
+          <TabsTrigger
+            value="scoped-edit"
+            disabled={!workflow.editable() || !!state.run}
+            className="h-auto min-h-9 min-w-0 whitespace-normal text-xs"
+          >
             Propose scoped edits
           </TabsTrigger>
-          <TabsTrigger value="presentation" disabled={!workflow.editable() || !!state.run}>
+          <TabsTrigger
+            value="presentation"
+            disabled={!workflow.editable() || !!state.run}
+            className="h-auto min-h-9 min-w-0 whitespace-normal text-xs"
+          >
             Recruiter walkthrough
           </TabsTrigger>
         </TabsList>
@@ -157,11 +177,19 @@ export function AiGuidancePanel({
               if (value === 'append' || value === 'replace-reviewed') setPresentationMode(value);
             }}
           >
-            <TabsList className="flex h-auto flex-wrap">
-              <TabsTrigger value="append" disabled={!workflow.editable() || !!state.run}>
+            <TabsList className="grid w-full grid-cols-2 gap-1 group-data-[orientation=horizontal]/tabs:h-auto">
+              <TabsTrigger
+                value="append"
+                disabled={!workflow.editable() || !!state.run}
+                className="h-auto min-h-9 min-w-0 whitespace-normal text-xs"
+              >
                 Append steps
               </TabsTrigger>
-              <TabsTrigger value="replace-reviewed" disabled={!workflow.editable() || !!state.run}>
+              <TabsTrigger
+                value="replace-reviewed"
+                disabled={!workflow.editable() || !!state.run}
+                className="h-auto min-h-9 min-w-0 whitespace-normal text-xs"
+              >
                 Replace reviewed steps
               </TabsTrigger>
             </TabsList>
@@ -174,33 +202,23 @@ export function AiGuidancePanel({
           </p>
         </section>
       )}
-      <Label htmlFor="ai-guidance-prompt">Question or answers to earlier questions</Label>
-      <Textarea
-        id="ai-guidance-prompt"
-        value={prompt}
-        maxLength={MAX_AI_PROMPT_CHARACTERS}
-        disabled={!workflow.editable() || !!state.run}
-        onChange={(event) => setPrompt(event.target.value)}
-      />
+      <div className="grid min-w-0 gap-2">
+        <Label htmlFor="ai-guidance-prompt" className="leading-5">
+          Question or answers to earlier questions
+        </Label>
+        <Textarea
+          id="ai-guidance-prompt"
+          value={prompt}
+          maxLength={MAX_AI_PROMPT_CHARACTERS}
+          disabled={!workflow.editable() || !!state.run}
+          onChange={(event) => setPrompt(event.target.value)}
+        />
+      </div>
       <p className="text-xs">
         Private history: {history.length} messages. A complete exchange must fit the history limit;
         excess content is rejected rather than truncated.
       </p>
-      <Button
-        type="button"
-        variant="outline"
-        disabled={!online || state.busy}
-        onClick={() => void workflow.availability()}
-      >
-        Check guidance availability
-      </Button>
-      <p role="status" className="text-xs">
-        {!online
-          ? 'Offline. Guidance will not be queued.'
-          : state.availability?.available
-            ? `${state.availability.allowance.remainingFreshRuns} fresh requests remain in the current allowance.`
-            : 'Check availability before requesting guidance.'}
-      </p>
+      <AiAvailabilityCheck workflow={workflow} state={state} online={online} guidance />
       <Button
         type="button"
         variant="outline"
@@ -246,18 +264,7 @@ export function AiGuidancePanel({
             Review all text for secrets. This exact selection and history go to the cloud only when
             you choose Request guidance.
           </p>
-          <Collapsible>
-            <CollapsibleTrigger asChild>
-              <Button type="button" variant="outline">
-                Read complete reviewed request
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs">
-                {JSON.stringify(review, null, AI_JSON_INDENT)}
-              </pre>
-            </CollapsibleContent>
-          </Collapsible>
+          <AiRequestReviewDialog review={review} />
           {!current && (
             <p role="status" className="text-xs">
               Selection, graph fields, question or history changed. Review current context before a
@@ -314,6 +321,12 @@ export function AiGuidancePanel({
       )}
       {state.run && (
         <>
+          <p className="break-all text-xs text-muted-foreground">Run ID: {state.run.id}</p>
+          {state.run.failure && (
+            <p role="alert" className="text-xs text-destructive">
+              {aiRunFailureMessage(state.run.failure)}
+            </p>
+          )}
           <p role="status" className="text-xs">
             {state.run.state.replaceAll('-', ' ')}.{' '}
             {state.run.content.status === 'expired'

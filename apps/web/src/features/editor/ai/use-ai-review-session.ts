@@ -39,10 +39,10 @@ export function useAiReviewSession(session: EditorSession) {
         return false;
       }
     };
-    const connected = () =>
-      navigator.onLine &&
-      client.getQueryState(CURRENT_USER_QUERY_KEY)?.status === 'success' &&
-      client.getQueryState(CURRENT_USER_QUERY_KEY)?.fetchStatus === 'idle';
+    // Background session refetches must not swallow explicit checks or prevent recovery
+    // after a transient API failure. allowed() fences identity; the API authorizes reads,
+    // and generation separately authenticates immediately before dispatch.
+    const connected = () => navigator.onLine;
     return new AiReviewSession(
       scope?.boardId ?? '',
       aiTransport,
@@ -76,7 +76,7 @@ export function useAiReviewSession(session: EditorSession) {
     const changed = () => {
       setOnline(navigator.onLine);
       if (!navigator.onLine) workflow.pause();
-      // Returning online never creates or queues a run. Availability/status are explicit reads.
+      else workflow.resume();
     };
     const boundaryChanged = () => {
       if (!workflow.currentScope()) workflow.clear();

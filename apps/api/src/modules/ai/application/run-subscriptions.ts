@@ -16,7 +16,7 @@ export class AiRunSubscriptions {
     const release = this.gate.acquire(namespace, actor);
     let closed = false;
     let reading = false;
-    let timer: NodeJS.Timeout;
+    let timer: NodeJS.Timeout | undefined;
     const close = () => {
       closed = true;
       clearTimeout(timer);
@@ -28,17 +28,22 @@ export class AiRunSubscriptions {
       timer = setTimeout(close, MAX_IDLE_MS);
       timer.unref();
     };
-    renew();
+    // The transport bounds setup/session checks as part of its total lifetime.
+    // A consumer becomes idle only after the first snapshot was delivered.
     this.closers.add(close);
     return {
       close,
-      next: async () => {
+      next: async (beforeRead: () => Promise<void> = async () => undefined) => {
         if (closed || reading) {
           close();
           throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
         }
+        // Active server work is not an idle consumer. Idle time starts again only
+        // after the authorized snapshot completes; the HTTP stream bounds lifetime.
+        clearTimeout(timer);
         reading = true;
         try {
+          await beforeRead();
           const snapshot = await this.runs.read(namespace, actor, id);
           if (closed) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
           renew();

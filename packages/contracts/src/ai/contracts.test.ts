@@ -605,6 +605,12 @@ describe('privacy-safe lifecycle, allowance and events', () => {
     expect(
       aiAvailabilitySchema.safeParse({
         ...available,
+        allowance: { remainingFreshRuns: null, remainingMicroUsd: null, resetsAt: null },
+      }).success,
+    ).toBe(true);
+    expect(
+      aiAvailabilitySchema.safeParse({
+        ...available,
         allowance: { ...available.allowance, remainingFreshRuns: -1 },
       }).success,
     ).toBe(false);

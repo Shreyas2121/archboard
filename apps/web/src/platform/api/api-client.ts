@@ -13,6 +13,8 @@ const API_ORIGIN = loadWebConfig(import.meta.env).apiOrigin;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_NO_CONTENT = 204;
 const HTTP_SERVER_ERROR = 500;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const MILLISECONDS_PER_SECOND = 1000;
 
 export type ApiFailureKind = 'unauthenticated' | 'http' | 'network' | 'invalid-response';
 
@@ -26,6 +28,18 @@ export class ApiClientError extends Error {
   ) {
     super(message);
     this.name = 'ApiClientError';
+  }
+}
+
+export class ApiRequestTimeoutError extends ApiClientError {
+  public constructor(timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+    super(
+      'network',
+      null,
+      null,
+      `The API did not respond within ${Math.ceil(timeoutMs / MILLISECONDS_PER_SECOND)} seconds.`,
+    );
+    this.name = 'ApiRequestTimeoutError';
   }
 }
 

@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 
 import type { ApiConfig } from '../../../platform/config/index.js';
 import { logAuthDiagnostic } from './auth-diagnostics.js';
+import { localDevelopmentLogin, localLoginEnabled } from './local-development-login.js';
 
 function createAuth(config: ApiConfig, pool: Pool) {
   return betterAuth({
@@ -13,6 +14,7 @@ function createAuth(config: ApiConfig, pool: Pool) {
     secret: config.betterAuthSecret,
     rateLimit: { enabled: config.mode === 'production' },
     database: pool,
+    plugins: localLoginEnabled(config) ? [localDevelopmentLogin()] : [],
     socialProviders:
       config.githubClientId !== null && config.githubClientSecret !== null
         ? {

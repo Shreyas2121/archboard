@@ -5,6 +5,7 @@ import {
   aiCreateRunSchema,
   MAX_AI_CONTEXT_FILE_BYTES,
   MAX_AI_PROMPT_CHARACTERS,
+  type AiRun,
 } from '@archboard/contracts';
 import { AiReviewSession } from '@/features/editor/ai/ai-review-session';
 import {
@@ -12,8 +13,9 @@ import {
   emptyAiForm,
   contextFromForm,
   parseAiContext,
+  DEFAULT_AI_FILE_PROMPT,
 } from '@/features/editor/ai/ai-review-model';
-import { ApiClientError } from '@/platform/api/api-client';
+import { ApiClientError, ApiRequestTimeoutError } from '@/platform/api/api-client';
 import type { AiTransport } from '@/platform/api/ai-api';
 vi.mock('@/platform/config', () => ({
   loadWebConfig: () => ({ apiOrigin: 'https://api.example.test' }),
@@ -21,9 +23,12 @@ vi.mock('@/platform/config', () => ({
 const HTTP_BAD_REQUEST = 400;
 const HTTP_FORBIDDEN = 403;
 const HTTP_RATE_LIMITED = 429;
+const HTTP_UNAVAILABLE = 503;
 const RETRY_SECONDS = 30;
 const TWO = 2;
 const INVALID_UTF8 = 255;
+const RECONNECT_MS = 10_000;
+const EVENT_RETRIES = 3;
 const now = Date.parse('2026-10-04T10:00:00Z');
 function run(state: 'pending' | 'ready' | 'unknown' = 'ready') {
   return aiRunSchema.parse({
@@ -97,6 +102,229 @@ const file = (text = JSON.stringify(context())) => ({
   arrayBuffer: vi.fn(async () => new TextEncoder().encode(text).buffer),
 });
 describe('AI reviewed inputs and session-only lifecycle', () => {
+  it('falls back to original-ID status polling after event failures without another creation', async () => {
+    vi.useFakeTimers();
+    const f = setup();
+    try {
+      await f.prepared();
+      const active = run('pending');
+      f.transport.create.mockResolvedValueOnce(active);
+      f.transport.events.mockRejectedValue(new Error('Disconnected'));
+      f.transport.read.mockResolvedValue({ ...run(), id: active.id });
+      await f.session.generate();
+      await vi.advanceTimersByTimeAsync(RECONNECT_MS * EVENT_RETRIES);
+      expect(f.session.snapshot()).toMatchObject({
+        run: { id: active.id, state: 'needs-input' },
+        problem: '',
+        observing: false,
+      });
+      expect(f.transport.events).toHaveBeenCalledTimes(EVENT_RETRIES);
+      expect(f.transport.read.mock.calls[0]?.[0]).toBe(active.id);
+      expect(f.transport.create).toHaveBeenCalledTimes(1);
+    } finally {
+      f.session.dispose();
+      vi.useRealTimers();
+    }
+  });
+  it('accepts authorized pending snapshots without redundant GETs and resumes only the known original run', async () => {
+    const f = setup();
+    await f.prepared();
+    const active = run('pending');
+    f.transport.create.mockResolvedValueOnce(active);
+    f.transport.events.mockImplementation(
+      (_id, _last, signal) =>
+        new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true })),
+    );
+    await f.session.generate();
+    const receive = f.transport.events.mock.calls[0]![3];
+    await receive({
+      schemaVersion: 1,
+      type: 'status',
+      runId: active.id,
+      sequence: String(now),
+      state: 'generating',
+    });
+    expect(f.transport.read).not.toHaveBeenCalled();
+    f.guard.online = false;
+    f.session.pause();
+    expect(f.transport.events.mock.calls[0]?.[TWO].aborted).toBe(true);
+    f.guard.online = true;
+    f.session.resume();
+    expect(f.transport.events).toHaveBeenCalledTimes(TWO);
+    expect(f.transport.events.mock.calls[1]?.[0]).toBe(active.id);
+    expect(f.transport.create).toHaveBeenCalledTimes(1);
+    f.session.dispose();
+  });
+  it('publishes submission progress while authentication and creation wait, and ignores duplicate generation', async () => {
+    let authenticate!: () => void;
+    let finish!: (value: AiRun) => void;
+    const f = setup(
+      () =>
+        new Promise<void>((resolve) => {
+          authenticate = resolve;
+        }),
+    );
+    f.transport.create.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await f.prepared();
+    const sending = f.session.generate();
+    expect(f.session.snapshot()).toMatchObject({ phase: 'submitting', busy: true });
+    expect(f.transport.create).not.toHaveBeenCalled();
+    await f.session.generate();
+    authenticate();
+    await Promise.resolve();
+    expect(f.transport.create).toHaveBeenCalledTimes(1);
+    expect(f.session.snapshot()).toMatchObject({ phase: 'submitting', busy: true });
+    finish(run());
+    await sending;
+    expect(f.session.snapshot()).toMatchObject({ phase: 'known', busy: false });
+  });
+  it('reviews a JSON file without requiring a separate prompt and preserves optional instructions', async () => {
+    const f = setup();
+    await f.session.file(file());
+    f.session.draft({ prompt: '   ' });
+    f.session.review();
+    expect(f.session.snapshot().review).toMatchObject({
+      task: 'propose-design',
+      prompt: DEFAULT_AI_FILE_PROMPT,
+      context: context(),
+    });
+    f.session.draft({ prompt: 'Focus on the request flow.' });
+    f.session.review();
+    expect(f.session.snapshot().review?.prompt).toBe('Focus on the request flow.');
+    f.session.draft({ mode: 'prompt', prompt: '' });
+    f.session.review();
+    expect(f.session.snapshot().review).toBeNull();
+    expect(f.session.snapshot().problem).not.toBe('');
+    expect(f.transport.create).not.toHaveBeenCalled();
+  });
+  it('explains an availability timeout rather than reporting the API is unreachable', async () => {
+    const f = setup();
+    f.transport.availability.mockRejectedValueOnce(new ApiRequestTimeoutError());
+    await f.session.availability();
+    expect(f.session.snapshot().availabilityProblem).toContain('within 15 seconds');
+    expect(f.session.snapshot().checkingAvailability).toBe(false);
+    expect(f.session.canGenerate()).toBe(false);
+  });
+  it('explains a creation timeout and recovers with the same request body and key', async () => {
+    const f = setup();
+    await f.prepared();
+    f.transport.create.mockRejectedValueOnce(new ApiRequestTimeoutError());
+    await f.session.generate();
+    expect(f.session.snapshot().phase).toBe('uncertain');
+    expect(f.session.snapshot().problem).toContain('too long to confirm creation');
+    await f.session.recover();
+    expect(f.transport.create.mock.calls[1]?.slice(0, TWO)).toEqual(
+      f.transport.create.mock.calls[0]?.slice(0, TWO),
+    );
+    expect(f.key).toHaveBeenCalledTimes(1);
+  });
+  it('reports a server refusal separately from AI being disabled or a network failure', async () => {
+    const f = setup();
+    f.transport.availability.mockRejectedValueOnce(
+      new ApiClientError(
+        'http',
+        HTTP_UNAVAILABLE,
+        'TEMPORARILY_UNAVAILABLE',
+        'Service temporarily unavailable.',
+      ),
+    );
+    await f.session.availability();
+    expect(f.session.snapshot().availability).toBeNull();
+    expect(f.session.snapshot().availabilityProblem).toBe(
+      'Could not check AI availability: Service temporarily unavailable.',
+    );
+    expect(f.session.snapshot().checkingAvailability).toBe(false);
+    expect(f.transport.create).not.toHaveBeenCalled();
+  });
+  it('publishes availability progress immediately and clears it after success or failure', async () => {
+    const f = setup();
+    let finish!: (value: Awaited<ReturnType<AiTransport['availability']>>) => void;
+    f.transport.availability.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = f.session.availability();
+    expect(f.session.snapshot().checkingAvailability).toBe(true);
+    expect(f.session.snapshot().availability).toBeNull();
+    finish({ schemaVersion: 1, available: false, reason: 'disabled', allowance: null });
+    await pending;
+    expect(f.session.snapshot().checkingAvailability).toBe(false);
+    expect(f.session.snapshot().availability).toMatchObject({
+      available: false,
+      reason: 'disabled',
+    });
+    f.transport.availability.mockRejectedValueOnce(
+      new ApiClientError('network', null, null, 'Network unavailable'),
+    );
+    await f.session.availability();
+    expect(f.session.snapshot().checkingAvailability).toBe(false);
+    expect(f.session.snapshot().availability).toBeNull();
+    expect(f.session.snapshot().availabilityProblem).toContain('Could not reach');
+    await f.session.availability();
+    expect(f.session.snapshot().availabilityProblem).toBe('');
+    expect(f.session.snapshot().availability?.available).toBe(true);
+    expect(f.transport.create).not.toHaveBeenCalled();
+  });
+  it('explains an offline connection instead of silently ignoring the check', async () => {
+    const f = setup();
+    f.guard.online = false;
+    await f.session.availability();
+    expect(f.transport.availability).not.toHaveBeenCalled();
+    expect(f.session.snapshot().checkingAvailability).toBe(false);
+    expect(f.session.snapshot().availabilityProblem).toContain('offline');
+    f.guard.online = true;
+    await f.session.availability();
+    expect(f.session.snapshot().availabilityProblem).toBe('');
+    expect(f.session.snapshot().availability?.available).toBe(true);
+  });
+  it('keeps the first availability request alive when clicks repeat before the UI updates', async () => {
+    const f = setup();
+    let finish!: (value: Awaited<ReturnType<AiTransport['availability']>>) => void;
+    f.transport.availability.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = f.session.availability();
+    await f.session.availability();
+    expect(f.transport.availability).toHaveBeenCalledTimes(1);
+    expect(f.transport.availability.mock.calls[0]![1].aborted).toBe(false);
+    finish({ schemaVersion: 1, available: false, reason: 'disabled', allowance: null });
+    await pending;
+    expect(f.session.snapshot().checkingAvailability).toBe(false);
+    expect(f.session.snapshot().availability).toMatchObject({ reason: 'disabled' });
+  });
+  it('clears availability progress on scope reset and ignores late private replies', async () => {
+    const f = setup();
+    let finish!: (value: Awaited<ReturnType<AiTransport['availability']>>) => void;
+    f.transport.availability.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = f.session.availability();
+    const signal = f.transport.availability.mock.calls[0]![1];
+    f.session.clear();
+    expect(signal.aborted).toBe(true);
+    expect(f.session.snapshot().checkingAvailability).toBe(false);
+    finish({
+      schemaVersion: 1,
+      available: true,
+      allowance: { remainingFreshRuns: TWO, remainingMicroUsd: '1000', resetsAt: null },
+    });
+    await pending;
+    expect(f.session.snapshot().availability).toBeNull();
+    expect(f.session.snapshot().availabilityProblem).toBe('');
+  });
   it.each(['explain-selection', 'scoped-edit', 'presentation'] as const)(
     'requires a same-board %s review and rechecks selection/history after asynchronous authentication',
     async (task) => {

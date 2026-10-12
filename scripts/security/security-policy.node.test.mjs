@@ -14,6 +14,8 @@ test('production policy excludes external connections, JS eval and embedding', (
   assert.match(policy, /form-action 'self'/);
   assert.doesNotMatch(policy, /https:|wss:|localhost|script-src[^;]*'unsafe-eval'/);
   assert.match(contentSecurityPolicy(true), /ws:\/\/localhost:\*/);
+  assert.match(contentSecurityPolicy(true), /script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'/);
+  assert.match(contentSecurityPolicy(false), /script-src 'self' 'wasm-unsafe-eval';/);
 });
 
 test('split-host policy permits only the configured exact API and WebSocket origins', () => {

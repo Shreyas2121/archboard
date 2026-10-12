@@ -1,5 +1,7 @@
 import { AiPersistenceError, type AiRunSnapshot } from './persistence.js';
 import type { NormalizedUsage } from './provider.js';
+import { AiProviderError } from './provider.js';
+import { ERROR_CODES } from '@archboard/contracts';
 
 const FAILURE_THRESHOLD = 3;
 const COOLDOWN_MS = 30_000;
@@ -26,6 +28,9 @@ const METRICS = [
   'retained_entries',
   'retained_bytes',
   'maintenance_failures',
+  'worker_failures',
+  'settlement_failures',
+  'provider_failures',
 ] as const;
 type Metric = (typeof METRICS)[number];
 type Breaker = { failures: number; until: number; probe: boolean };
@@ -132,6 +137,47 @@ export class AiOperations {
       );
     } catch {
       /* No raw error or content reaches logging. */
+    }
+  }
+  public diagnostic(
+    stage: 'admission' | 'dispatch' | 'provider' | 'validation' | 'settlement' | 'worker',
+    durationMs: number,
+    error?: unknown,
+  ): void {
+    // Error instances/messages/causes are never serialized. Even forged adapter
+    // failures must match a fixed allowlist before reaching operator diagnostics.
+    const providerCodes = [
+      'rate-limited',
+      'invalid-request',
+      'authentication',
+      'overloaded',
+      'transport',
+      'cancelled',
+      'deadline',
+      'capability-unsupported',
+      'output-too-large',
+      'adapter-unavailable',
+    ];
+    const code =
+      error instanceof AiPersistenceError && Object.values(ERROR_CODES).includes(error.code)
+        ? error.code
+        : error instanceof AiProviderError && providerCodes.includes(error.failure.code)
+          ? error.failure.code
+          : error === undefined
+            ? null
+            : 'unavailable';
+    try {
+      this.sink(
+        JSON.stringify({
+          event: 'ai.stage',
+          stage,
+          durationMs: Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : 0,
+          outcome: error === undefined ? 'completed' : 'failed',
+          code,
+        }),
+      );
+    } catch {
+      /* Diagnostics cannot affect accounting or execution. */
     }
   }
 }

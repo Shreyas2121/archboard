@@ -2,15 +2,18 @@ import type { ProjectContextV1 } from '@archboard/contracts';
 
 export function AiContextReview({ context }: { readonly context: ProjectContextV1 }) {
   return (
-    <div className="grid min-w-0 gap-3 text-xs" aria-label="Complete reviewed project context">
-      <p className="text-sm font-medium">{context.project.name}</p>
+    <div
+      className="grid min-w-0 gap-3 text-xs *:min-w-0 [overflow-wrap:anywhere]"
+      aria-label="Complete reviewed project context"
+    >
+      <p className="text-sm font-medium [overflow-wrap:anywhere]">{context.project.name}</p>
       <p className="whitespace-pre-wrap break-words">{context.project.description}</p>
       <p className="break-words">
         Technologies: {context.project.technologies.join(', ') || 'None supplied'}
       </p>
       <h5 className="font-medium">Components ({context.components.length})</h5>
       {context.components.map((component) => (
-        <div key={component.key} className="grid gap-1 rounded-md border p-2">
+        <div key={component.key} className="grid min-w-0 gap-1 rounded-md border p-2 *:min-w-0">
           <p className="break-words font-medium">
             {component.name} · {component.key}
           </p>
@@ -27,7 +30,7 @@ export function AiContextReview({ context }: { readonly context: ProjectContextV
       {context.connections.map((connection, index) => (
         <div
           key={`${index}:${connection.source}:${connection.target}`}
-          className="grid gap-1 rounded-md border p-2"
+          className="grid min-w-0 gap-1 rounded-md border p-2 *:min-w-0"
         >
           <p className="break-words">
             {connection.source} → {connection.target}
@@ -48,7 +51,7 @@ export function AiContextReview({ context }: { readonly context: ProjectContextV
       ))}
       <h5 className="font-medium">Evidence excerpts ({context.evidence.length})</h5>
       {context.evidence.map((evidence) => (
-        <div key={evidence.key} className="grid gap-1 rounded-md border p-2">
+        <div key={evidence.key} className="grid min-w-0 gap-1 rounded-md border p-2 *:min-w-0">
           <p className="break-words">
             {evidence.key}: {evidence.path}, lines {evidence.startLine}–{evidence.endLine}
           </p>

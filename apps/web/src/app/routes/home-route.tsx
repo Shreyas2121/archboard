@@ -10,6 +10,7 @@ import { ThemeControl } from '@/app/components/theme-control';
 import { Button } from '@/components/ui/button';
 import { safeReturnPath, SessionState, useCurrentUser } from '@/features/auth';
 import { startSocialSignIn } from '@/features/auth/social-sign-in';
+import { LocalDevelopmentSignIn } from '@/features/auth/local-development-sign-in';
 
 const FEATURES = [
   {
@@ -124,6 +125,7 @@ export function HomeRoute() {
               demo, or sign in to manage your boards.
             </p>
             <div className="mt-9 flex flex-wrap items-center gap-3">
+              <LocalDevelopmentSignIn onSignedIn={() => session.refetch()} />
               <Button
                 type="button"
                 size="lg"

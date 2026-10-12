@@ -8,6 +8,17 @@ import {
 const DEFAULT_GLOBAL_CONCURRENCY = 2;
 
 describe('server-owned AI operator configuration', () => {
+  it('enables unlimited usage only for development and preserves production/test quotas', () => {
+    for (const mode of ['development', 'production', 'test']) {
+      const config = loadAiConfig({ ...FIXTURE_AI_ENVIRONMENT, NODE_ENV: mode });
+      if (!config.enabled) throw new Error('Enabled fixture required');
+      expect(config.policy.localUnlimited).toBe(mode === 'development');
+    }
+    const defaultApi = fixtureApiConfig({ ...FIXTURE_AI_ENVIRONMENT, NODE_ENV: undefined });
+    if (!defaultApi.ai.enabled) throw new Error('Enabled fixture required');
+    expect(defaultApi.mode).toBe('development');
+    expect(defaultApi.ai.policy.localUnlimited).toBe(true);
+  });
   it('accepts only absolute operator switch paths without changing content identity', () => {
     const plain = loadAiConfig(FIXTURE_AI_ENVIRONMENT);
     const marker = resolve('ai-disabled');

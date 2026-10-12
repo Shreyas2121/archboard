@@ -135,6 +135,12 @@ export class InMemoryAiPersistence implements AiPersistence {
           return null;
         }
       },
+      readLedgers: async (keys) =>
+        keys.map((key) =>
+          clone(
+            state.ledger.get(aiLedgerIdentity(key)) ?? { ...key, committed: '0', reserved: '0' },
+          ),
+        ),
       getLedger: async (key) => {
         const id = aiLedgerIdentity(key);
         let row = state.ledger.get(id);
@@ -143,6 +149,13 @@ export class InMemoryAiPersistence implements AiPersistence {
           state.ledger.set(id, row);
         }
         return clone(row);
+      },
+      prepareLedgers: async (keys) => {
+        for (const key of keys) {
+          const id = aiLedgerIdentity(key);
+          if (!state.ledger.has(id))
+            state.ledger.set(id, { ...clone(key), committed: '0', reserved: '0' });
+        }
       },
       saveLedger: async (row) => {
         state.ledger.set(aiLedgerIdentity(row), clone(row));
@@ -167,6 +180,9 @@ export class InMemoryAiPersistence implements AiPersistence {
       },
       lockAdmission: async () => {
         this.locks.push('global', 'actor');
+      },
+      lockRequest: async () => {
+        this.locks.push('request');
       },
       lockFingerprint: async () => {
         this.locks.push('fingerprint');

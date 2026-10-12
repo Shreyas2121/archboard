@@ -13,6 +13,8 @@ export default defineConfig({
           '@archboard/document-model',
           '@archboard/fixtures',
           '@archboard/sync-client',
+          '@tanstack/react-query',
+          'react',
           'yjs',
           'zod',
         ].map((name) => [

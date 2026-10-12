@@ -1,6 +1,8 @@
-import { useMemo } from 'react';
-import { importBoardSchema } from '@archboard/contracts';
+import { useMemo, useState } from 'react';
+import { applicationIdSchema, importBoardSchema } from '@archboard/contracts';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import type { EditorSession } from '@/features/editor/application';
 import { AiApplyJournal } from './ai-apply-intent';
 import { AiNewBoard } from './ai-new-board';
@@ -21,11 +23,36 @@ export function AiApplyRecovery({
     [session],
   );
   const scope = session.resourceScope;
+  const [runId, setRunId] = useState('');
+  const original = applicationIdSchema.safeParse(runId.trim());
   if (!scope || !allowed()) return null;
   try {
     const records = journal.list();
     return (
       <section className="grid gap-3" aria-label="Previous AI Apply intents">
+        <div className="grid gap-2 rounded-lg border p-3">
+          <Label htmlFor="ai-recover-run">Recover an original run</Label>
+          <Input
+            id="ai-recover-run"
+            value={runId}
+            onChange={(event) => setRunId(event.target.value)}
+            placeholder="Run ID"
+          />
+          <p className="text-xs text-muted-foreground">
+            Use the run ID shown during generation to check its result after reloading. Recovery
+            checks your current access and never starts generation.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!original.success}
+            onClick={() => {
+              if (original.success) recover(original.data);
+            }}
+          >
+            Check original run
+          </Button>
+        </div>
         {Object.entries(records).map(([runId, record]) => {
           if (record.kind === 'scoped-edit' || record.kind === 'presentation')
             return (

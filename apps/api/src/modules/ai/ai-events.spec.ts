@@ -46,7 +46,8 @@ describe('bounded authorized snapshot SSE', () => {
     let authorized = true;
     const subscription = {
       close: jest.fn(),
-      next: jest.fn(async () => {
+      next: jest.fn(async (requireSession?: () => Promise<void>) => {
+        await requireSession?.();
         if (!authorized) throw new Error('Revoked');
         return run;
       }),
@@ -68,14 +69,23 @@ describe('bounded authorized snapshot SSE', () => {
   });
   it('rechecks cookies on delivery and closes on session expiry', async () => {
     let signedIn = true;
-    const subscription = { close: jest.fn(), next: jest.fn(async () => pending()) };
+    const read = jest.fn(() => pending());
+    const subscription = {
+      close: jest.fn(),
+      next: jest.fn(async (requireSession?: () => Promise<void>) => {
+        await requireSession?.();
+        return read();
+      }),
+    };
     const target = response();
     await new AiEvents().serve(target as unknown as ServerResponse, subscription, async () => {
       if (!signedIn) throw new Error('Expired session');
     });
     signedIn = false;
     await jest.advanceTimersByTimeAsync(INTERVAL_MS);
-    expect(subscription.next).toHaveBeenCalledTimes(1);
+    expect(subscription.next).toHaveBeenCalledTimes(TWO);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(target.write).toHaveBeenCalledTimes(1);
     expect(target.end).toHaveBeenCalledTimes(1);
   });
   it('disconnects slow consumers after one bounded write without canceling the run', async () => {

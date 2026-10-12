@@ -8,6 +8,7 @@ import type { EditorViewState } from './editor-view-state';
 type Actions = ReturnType<typeof useEditorUiActions>;
 type ButtonRef = RefObject<HTMLButtonElement | null>;
 export interface EditorToolbarProps {
+  readonly ai?: ReactNode;
   readonly boardPanels?: ReactNode;
   readonly imageExport?: ReactNode;
   readonly portability?: ReactNode;
@@ -31,7 +32,6 @@ export interface EditorToolbarProps {
   readonly setServerReloadOpen: (open: boolean) => void;
 }
 export interface EditorInspectorProps {
-  readonly ai?: ReactNode;
   readonly narrowScreen: boolean;
   readonly compactOpen: boolean;
   readonly setCompactOpen: (open: boolean) => void;

@@ -128,6 +128,20 @@ Never log the full configuration, stringify secret objects, or publish fingerpri
 as metrics/content labels. Configuration errors and startup diagnostics name fixed
 settings without rejected values or nested JSON content.
 
+In `NODE_ENV=development` (including the API's default local mode), application AI
+usage is unmetered. Admission bypasses spending, create/poll/fresh-run rates,
+provider rate/token ceilings, worker concurrency and SSE connection quotas. The
+configured input-token admission guard is also bypassed, allowing reviewed project
+context to reach the provider. Availability reports null remaining allowances,
+which the frontend displays as unlimited local development usage. This is a
+server-owned policy; browser requests cannot enable it. Restart the API to adopt it.
+
+Authentication, board permissions, request/file schemas, provider model/output
+configuration, timeouts, bounded repair/retry behavior, cache retention and durable
+idempotency remain in effect. Real usage and cost are recorded even when they exceed
+the original reservation. The provider's own context/rate limits and billing still
+apply. Production and test modes enforce the configured application quotas below.
+
 The user made spending and provider ceilings optional during AI-C02. Omitted or
 blank `AI_DAILY_BUDGET_MICRO_USD`, `AI_MONTHLY_BUDGET_MICRO_USD`, and
 `AI_GLOBAL_BUDGET_MICRO_USD` use finite defaults of `1000000` ($1 daily), `5000000`

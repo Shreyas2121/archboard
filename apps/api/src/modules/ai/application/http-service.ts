@@ -27,7 +27,7 @@ export function publicAiRun(snapshot: Snapshot, source: AiRun['source'] = 'gener
           : content === 'pending'
             ? run.phase === 'dispatching'
               ? 'generating'
-              : 'validating'
+              : 'queued'
             : 'failed';
   return aiRunSchema.parse({
     schemaVersion: 1,
@@ -119,10 +119,12 @@ export class AiHttpService {
     const subscription = subscriptions.open(namespace, actor, id);
     return {
       close: subscription.close,
-      next: async () => {
+      next: async (requireSession: () => Promise<void> = async () => undefined) => {
         this.operations?.assertPaid();
-        await admission.request(persistence, namespace, actor, null, 'poll');
-        const snapshot = await subscription.next();
+        const snapshot = await subscription.next(async () => {
+          await requireSession();
+          await admission.request(persistence, namespace, actor, null, 'poll');
+        });
         this.operations?.assertPaid();
         return publicAiRun(snapshot);
       },

@@ -21,7 +21,8 @@ export class ShutdownDeadline {
     }
   }
   protected terminate(): void {
-    console.info(JSON.stringify({ event: 'runtime.shutdown_timeout' }));
+    if (process.env.NODE_ENV === 'production')
+      console.info(JSON.stringify({ event: 'runtime.shutdown_timeout' }));
     process.exit(1);
   }
 }

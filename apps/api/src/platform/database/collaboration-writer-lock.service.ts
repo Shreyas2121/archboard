@@ -55,7 +55,8 @@ export class CollaborationWriterLockService implements OnModuleInit, OnApplicati
       this.lockOwned = rows[0]?.acquired === true;
       if (!this.lockOwned) throw new CollaborationWriterLockUnavailableError();
       this.admission?.setOwnership(true);
-      console.info(JSON.stringify({ event: 'runtime.writer_owned' }));
+      if (process.env.NODE_ENV === 'production')
+        console.info(JSON.stringify({ event: 'runtime.writer_owned' }));
       this.heartbeat = setInterval(() => {
         if (this.checking) return;
         this.checking = true;
@@ -103,7 +104,8 @@ export class CollaborationWriterLockService implements OnModuleInit, OnApplicati
     if (!this.lockOwned) return;
     this.lockOwned = false;
     this.admission?.setOwnership(false);
-    if (!this.shuttingDown) console.info(JSON.stringify({ event: 'runtime.writer_lost' }));
+    if (!this.shuttingDown && process.env.NODE_ENV === 'production')
+      console.info(JSON.stringify({ event: 'runtime.writer_lost' }));
     if (this.heartbeat !== undefined) clearInterval(this.heartbeat);
     this.heartbeat = undefined;
     if (!this.shuttingDown) this.terminateProcess();

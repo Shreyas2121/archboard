@@ -4,11 +4,14 @@ import {
   MAX_AI_CONTEXT_FILE_BYTES,
   type AiCreateRun,
   type ProjectContextV1,
+  type AiRun,
 } from '@archboard/contracts';
 import { parseBoundedJson } from '@archboard/export';
 
 export const AI_JSON_INDENT = 2;
 export const AI_RECEIPT_WINDOW_MS = 86_400_000;
+export const DEFAULT_AI_FILE_PROMPT =
+  'Diagram the existing architecture described in the supplied project context. Show the components and their connections, use the supplied groups where helpful, and clearly identify unknowns. Do not invent unsupported components or connections.';
 export interface AiContextForm {
   name: string;
   description: string;
@@ -90,4 +93,20 @@ export function aiValidationMessage(error: unknown): string {
       .join('\n');
   }
   return error instanceof Error ? error.message : 'The AI request could not be validated.';
+}
+export function aiRunFailureMessage(failure: NonNullable<AiRun['failure']>): string {
+  switch (failure.code) {
+    case 'AI_OUTPUT_INVALID':
+      return 'The AI response could not be validated. No proposal was applied.';
+    case 'AI_REFUSED':
+      return 'The AI declined this request. Review your instructions before starting a new request.';
+    case 'AI_OUTCOME_UNKNOWN':
+      return 'The generation outcome and charge may be unknown. Check the original run; it will not be resubmitted automatically.';
+    case 'AI_GENERATION_FAILED':
+      return 'AI generation failed. No proposal was applied. You can check this run or explicitly start a new reviewed request.';
+    case 'AI_INPUT_TOO_LARGE':
+      return 'The reviewed context exceeds this model’s input limit. Reduce the context before starting a new request.';
+    default:
+      return `This request ended with ${failure.code.replaceAll('_', ' ').toLowerCase()}. Check the original run before starting a new request.`;
+  }
 }

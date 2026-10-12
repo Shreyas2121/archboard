@@ -1,55 +1,116 @@
 import { useState } from 'react';
+import { LoaderCircle } from 'lucide-react';
 import { MAX_AI_PROMPT_CHARACTERS } from '@archboard/contracts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import type { EditorSession } from '@/features/editor/application';
 import { downloadAiContext } from '@/platform/download/ai-context-download';
 import { useAiReviewSession } from './use-ai-review-session';
 import { AiContextFormFields } from './ai-context-form';
-import { AiContextReview } from './ai-context-review';
-import { AI_JSON_INDENT, contextFromForm, aiValidationMessage } from './ai-review-model';
+import {
+  DEFAULT_AI_FILE_PROMPT,
+  contextFromForm,
+  aiValidationMessage,
+  aiRunFailureMessage,
+} from './ai-review-model';
 import { AiDiagramPreparation } from './ai-diagram-preparation';
 import { AiApplyRecovery } from './ai-apply-recovery';
 import { AiGuidancePanel } from './ai-guidance-panel';
+import { useAiGuidanceDraft } from './use-ai-guidance-draft';
+import { AiAvailabilityCheck } from './ai-availability-check';
+import { AiLocalContextPromptCard } from './ai-local-context-prompt-card';
+import { AiRequestReviewDialog } from './ai-request-review-dialog';
 
 export function AiPanel({
   session,
   readOnly,
+  open,
+  onOpenChange,
 }: {
   readonly session: EditorSession;
   readonly readOnly: boolean;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
 }) {
   const [tab, setTab] = useState('generate');
+  // Session ownership stays above the dialog portal. Closing it unmounts its UI,
+  // while requests, recovery keys and private drafts remain scoped to this board.
+  const generation = useAiReviewSession(session);
+  const guidance = useAiReviewSession(session);
+  const guidanceDraft = useAiGuidanceDraft(guidance.identity);
   return (
-    <Tabs value={tab} onValueChange={setTab}>
-      <TabsList className="mx-4 mt-4" aria-label="AI assistant mode">
-        <TabsTrigger value="generate">Generate diagram</TabsTrigger>
-        <TabsTrigger value="guidance" disabled={readOnly}>
-          Understand selection
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent value="generate" forceMount className="data-[state=inactive]:hidden">
-        <AiGenerationPanel session={session} readOnly={readOnly} />
-      </TabsContent>
-      <TabsContent value="guidance" forceMount className="data-[state=inactive]:hidden">
-        {!readOnly && <AiGuidancePanel session={session} active={tab === 'guidance'} />}
-      </TabsContent>
-    </Tabs>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="sm:max-w-4xl"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          document.getElementById('ai-assistant')?.focus();
+        }}
+      >
+        <DialogHeader>
+          <DialogTitle>AI assistant</DialogTitle>
+          <DialogDescription>
+            Review what you send, follow generation, and preview additions before applying. Close
+            this dialog and return to the same request while this board stays open.
+          </DialogDescription>
+        </DialogHeader>
+        <Tabs value={tab} onValueChange={setTab}>
+          <div className="min-w-0 px-4 pt-4">
+            <TabsList
+              className="grid w-full grid-cols-2 gap-1 group-data-[orientation=horizontal]/tabs:h-auto"
+              aria-label="AI assistant mode"
+            >
+              <TabsTrigger value="generate" className="h-auto min-h-9 min-w-0 whitespace-normal">
+                Generate diagram
+              </TabsTrigger>
+              <TabsTrigger
+                value="guidance"
+                disabled={readOnly}
+                className="h-auto min-h-9 min-w-0 whitespace-normal"
+              >
+                Understand selection
+              </TabsTrigger>
+            </TabsList>
+          </div>
+          <TabsContent value="generate" forceMount className="data-[state=inactive]:hidden">
+            <AiGenerationPanel session={session} readOnly={readOnly} reviewSession={generation} />
+          </TabsContent>
+          <TabsContent value="guidance" forceMount className="data-[state=inactive]:hidden">
+            {!readOnly && (
+              <AiGuidancePanel
+                session={session}
+                active={open && tab === 'guidance'}
+                reviewSession={guidance}
+                draft={guidanceDraft}
+              />
+            )}
+          </TabsContent>
+        </Tabs>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function AiGenerationPanel({
   session,
   readOnly,
+  reviewSession,
 }: {
   readonly session: EditorSession;
   readonly readOnly: boolean;
+  readonly reviewSession: ReturnType<typeof useAiReviewSession>;
 }) {
-  const { workflow, state, online, identity } = useAiReviewSession(session);
+  const { workflow, state, online, identity } = reviewSession;
   const [exportError, setExportError] = useState('');
   if (!identity || readOnly)
     return (
@@ -73,14 +134,6 @@ function AiGenerationPanel({
           session and are not shared with collaborators.
         </p>
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        disabled={!online || state.busy}
-        onClick={() => void workflow.availability()}
-      >
-        Check AI availability
-      </Button>
       {!state.run && !state.intent && !state.busy && (
         <AiApplyRecovery
           session={session}
@@ -90,45 +143,35 @@ function AiGenerationPanel({
           }}
         />
       )}
-      <div role="status" className="text-xs leading-5">
-        {!online
-          ? 'Offline. Generation is disabled and will not be queued.'
-          : state.availability?.available === true
-            ? `AI is available. ${state.availability.allowance.remainingFreshRuns} fresh requests remain in the current allowance.`
-            : state.availability
-              ? `AI is unavailable: ${state.availability.reason.replaceAll('-', ' ')}.`
-              : 'Check availability before generating.'}
-        {state.availability?.allowance?.remainingMicroUsd === '0' && (
-          <p>The application’s AI spending allowance is reached. A reset time is not guaranteed.</p>
-        )}
-      </div>
-      <Label htmlFor="ai-prompt">What would you like to diagram?</Label>
-      <Textarea
-        id="ai-prompt"
-        value={state.prompt}
-        maxLength={MAX_AI_PROMPT_CHARACTERS}
-        disabled={!editable}
-        aria-describedby="ai-prompt-help"
-        onChange={(event) => workflow.draft({ prompt: event.target.value })}
-      />
-      <p id="ai-prompt-help" className="text-xs text-muted-foreground">
-        Up to {MAX_AI_PROMPT_CHARACTERS} characters. The current board graph is not included in this
-        request.
-      </p>
       <Tabs
         value={state.mode}
         onValueChange={(mode) => {
           if (mode === 'prompt' || mode === 'form' || mode === 'file') workflow.draft({ mode });
         }}
       >
-        <TabsList className="flex h-auto max-w-full flex-wrap" aria-label="Context input">
-          <TabsTrigger value="prompt" disabled={!editable}>
+        <TabsList
+          className="grid w-full grid-cols-3 gap-1 group-data-[orientation=horizontal]/tabs:h-auto"
+          aria-label="Context input"
+        >
+          <TabsTrigger
+            value="prompt"
+            disabled={!editable}
+            className="h-auto min-h-9 min-w-0 whitespace-normal text-xs"
+          >
             Prompt only
           </TabsTrigger>
-          <TabsTrigger value="form" disabled={!editable}>
+          <TabsTrigger
+            value="form"
+            disabled={!editable}
+            className="h-auto min-h-9 min-w-0 whitespace-normal text-xs"
+          >
             Guided context
           </TabsTrigger>
-          <TabsTrigger value="file" disabled={!editable}>
+          <TabsTrigger
+            value="file"
+            disabled={!editable}
+            className="h-auto min-h-9 min-w-0 whitespace-normal text-xs"
+          >
             JSON file
           </TabsTrigger>
         </TabsList>
@@ -158,6 +201,7 @@ function AiGenerationPanel({
       )}
       {state.mode === 'file' && (
         <div className="grid gap-2">
+          <AiLocalContextPromptCard />
           <Label htmlFor="ai-context-file">
             One project context JSON file (UTF-8, up to 1 MiB)
           </Label>
@@ -183,12 +227,31 @@ function AiGenerationPanel({
           </p>
         </div>
       )}
+      <Label htmlFor="ai-prompt">
+        {state.mode === 'file'
+          ? 'Diagram instructions (optional)'
+          : 'What would you like to diagram?'}
+      </Label>
+      <Textarea
+        id="ai-prompt"
+        value={state.prompt}
+        placeholder={state.mode === 'file' ? DEFAULT_AI_FILE_PROMPT : undefined}
+        maxLength={MAX_AI_PROMPT_CHARACTERS}
+        disabled={!editable}
+        aria-describedby="ai-prompt-help"
+        onChange={(event) => workflow.draft({ prompt: event.target.value })}
+      />
+      <p id="ai-prompt-help" className="text-xs text-muted-foreground">
+        {state.mode === 'file'
+          ? 'Leave blank to diagram the architecture in your JSON file. Add instructions only to request a particular focus.'
+          : `Up to ${MAX_AI_PROMPT_CHARACTERS} characters. The current board graph is not included in this request.`}
+      </p>
       {exportError && (
         <p role="alert" className="whitespace-pre-wrap text-xs text-destructive">
           {exportError}
         </p>
       )}
-      {state.problem && (
+      {state.problem && !state.review && (
         <p role="alert" className="whitespace-pre-wrap text-xs text-destructive">
           {state.problem}
         </p>
@@ -215,29 +278,72 @@ function AiGenerationPanel({
           <p className="text-xs">
             Target: a diagram proposal for this board. Generating does not change the board.
           </p>
-          <p className="whitespace-pre-wrap break-words text-sm">{state.review.prompt}</p>
-          {state.review.context && <AiContextReview context={state.review.context} />}
-          <Collapsible>
-            <CollapsibleTrigger asChild>
-              <Button type="button" variant="outline">
-                Read complete reviewed request
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words text-xs">
-                {JSON.stringify(state.review, null, AI_JSON_INDENT)}
-              </pre>
-            </CollapsibleContent>
-          </Collapsible>
+          <p className="min-w-0 whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">
+            {state.review.prompt}
+          </p>
+          {state.review.context && (
+            <p className="min-w-0 text-xs [overflow-wrap:anywhere]">
+              {state.review.context.project.name}: {state.review.context.components.length}{' '}
+              components, {state.review.context.connections.length} connections,{' '}
+              {state.review.context.groups.length} groups, {state.review.context.evidence.length}{' '}
+              evidence excerpts.
+            </p>
+          )}
+          <AiRequestReviewDialog review={state.review} />
+          {state.phase === 'reviewed' && (
+            <AiAvailabilityCheck workflow={workflow} state={state} online={online} />
+          )}
           <Button
             type="button"
+            className="h-auto min-h-9 w-full min-w-0 whitespace-normal"
             disabled={!workflow.canGenerate()}
+            aria-busy={state.phase === 'submitting' || state.run?.content.status === 'pending'}
+            aria-describedby="ai-generation-feedback"
             onClick={() => void workflow.generate()}
           >
+            {(state.phase === 'submitting' || state.run?.content.status === 'pending') && (
+              <LoaderCircle
+                aria-hidden="true"
+                className="animate-spin motion-reduce:animate-none"
+              />
+            )}
             {state.phase === 'submitting'
-              ? 'Submitting original request…'
-              : 'Generate from this review'}
+              ? 'Submitting reviewed request…'
+              : state.run?.content.status === 'pending'
+                ? 'Generating diagram…'
+                : state.phase === 'known'
+                  ? 'Request submitted'
+                  : 'Generate from this review'}
           </Button>
+          <p
+            id="ai-generation-feedback"
+            role="status"
+            aria-live="polite"
+            className="text-xs leading-5"
+          >
+            {state.phase === 'submitting'
+              ? state.submissionStage === 'authenticating'
+                ? 'Verifying your account…'
+                : 'Reserving this request and waiting for its acknowledgment…'
+              : state.run?.content.status === 'pending'
+                ? state.run.state === 'queued'
+                  ? 'Your request is reserved. Waiting for AI execution to begin…'
+                  : 'The AI is generating your proposal. Status updates will appear below.'
+                : state.phase === 'known'
+                  ? state.run?.failure
+                    ? 'Generation ended. See the failure and recovery options below.'
+                    : 'Generation ended. Review its result below.'
+                  : state.phase === 'reviewed' && !workflow.canGenerate()
+                    ? 'Generation is disabled until AI availability is confirmed above.'
+                    : state.phase === 'reviewed'
+                      ? 'Ready to generate from this review.'
+                      : null}
+          </p>
+          {state.problem && (
+            <p role="alert" className="text-xs leading-5 text-destructive">
+              {state.problem}
+            </p>
+          )}
         </section>
       )}
       {state.phase === 'uncertain' && (
@@ -263,6 +369,9 @@ function AiGenerationPanel({
       )}
       {state.run && (
         <section className="grid gap-3 rounded-lg border bg-card p-3" aria-label="AI run status">
+          <p className="break-all text-xs text-muted-foreground">
+            Run ID: {state.run.id}. Keep this ID to recover the original run after reloading.
+          </p>
           <p role="status" className="text-sm">
             {state.run.state.replaceAll('-', ' ')}
             {state.observing ? ' · Receiving status updates' : ''}
@@ -274,8 +383,8 @@ function AiGenerationPanel({
             </p>
           )}
           {state.run.failure && (
-            <p className="text-xs">
-              This request ended with {state.run.failure.code.replaceAll('_', ' ').toLowerCase()}.
+            <p role="alert" className="text-xs text-destructive">
+              {aiRunFailureMessage(state.run.failure)}
             </p>
           )}
           {state.run.content.status === 'expired' && (

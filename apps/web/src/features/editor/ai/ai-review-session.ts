@@ -7,7 +7,7 @@ import {
   type AiCreateRun,
 } from '@archboard/contracts';
 import type { AiTransport } from '@/platform/api/ai-api';
-import { ApiClientError } from '@/platform/api/api-client';
+import { ApiClientError, ApiRequestTimeoutError } from '@/platform/api/api-client';
 import {
   emptyAiForm,
   contextFromForm,
@@ -15,6 +15,7 @@ import {
   parseAiContext,
   aiValidationMessage,
   AI_RECEIPT_WINDOW_MS,
+  DEFAULT_AI_FILE_PROMPT,
   type AiContextForm,
 } from './ai-review-model';
 
@@ -31,7 +32,10 @@ export interface AiReviewState {
     'draft' | 'reviewed' | 'submitting' | 'uncertain' | 'rejected' | 'known' | 'expired';
   readonly run: AiRun | null;
   readonly availability: AiAvailability | null;
+  readonly checkingAvailability: boolean;
+  readonly availabilityProblem: string;
   readonly busy: boolean;
+  readonly submissionStage: 'authenticating' | 'admitting' | null;
   readonly observing: boolean;
   readonly problem: string;
   readonly retryAfterSeconds: number | null;
@@ -48,7 +52,10 @@ const initial = (): AiReviewState => ({
   phase: 'draft',
   run: null,
   availability: null,
+  checkingAvailability: false,
+  availabilityProblem: '',
   busy: false,
+  submissionStage: null,
   observing: false,
   problem: '',
   retryAfterSeconds: null,
@@ -100,6 +107,7 @@ export class AiReviewSession {
     this.availabilityRequest?.abort();
     this.request = null;
     this.stream = null;
+    this.availabilityRequest = null;
     this.lastId = undefined;
     this.state = initial();
     for (const listener of this.listeners) listener();
@@ -116,11 +124,15 @@ export class AiReviewSession {
     this.availabilityRequest?.abort();
     this.request = null;
     this.stream = null;
+    this.availabilityRequest = null;
     this.patch({
       busy: false,
+      submissionStage: null,
       observing: false,
       reading: false,
       availability: null,
+      checkingAvailability: false,
+      availabilityProblem: '',
       phase: this.state.phase === 'submitting' ? 'uncertain' : this.state.phase,
       problem: 'Reconnect to check the original request. No generation is queued.',
     });
@@ -159,7 +171,7 @@ export class AiReviewSession {
         (previous.content.status === 'expired' && run.content.status === 'available'))
     )
       return;
-    this.patch({ run });
+    this.patch({ run, problem: '' });
   }
   public expire() {
     const run = this.state.run;
@@ -188,7 +200,11 @@ export class AiReviewSession {
             : undefined;
       if (this.state.mode === 'file' && !context)
         throw new Error('Select and validate one JSON context file first.');
-      const body = reviewAiRequest(this.state.prompt, this.boardId, context);
+      const prompt =
+        this.state.mode === 'file' && !this.state.prompt.trim()
+          ? DEFAULT_AI_FILE_PROMPT
+          : this.state.prompt;
+      const body = reviewAiRequest(prompt, this.boardId, context);
       this.patch({ review: body, phase: 'reviewed', problem: '' });
     } catch (error) {
       this.patch({ review: null, problem: aiValidationMessage(error) });
@@ -238,17 +254,40 @@ export class AiReviewSession {
     }
   }
   public async availability() {
-    if (!this.currentScope() || !this.online()) return;
+    if (!this.currentScope() || this.state.checkingAvailability) return;
+    if (!this.online()) {
+      this.patch({
+        availability: null,
+        checkingAvailability: false,
+        availabilityProblem:
+          'Cannot check AI availability while offline. Reconnect, then try again.',
+      });
+      return;
+    }
     const epoch = this.epoch;
     const abort = new AbortController();
     this.availabilityRequest?.abort();
     this.availabilityRequest = abort;
+    this.patch({ availability: null, checkingAvailability: true, availabilityProblem: '' });
     try {
       const availability = await this.transport.availability(this.boardId, abort.signal);
       if (this.accepts(epoch) && this.availabilityRequest === abort) this.patch({ availability });
     } catch (error) {
       if (this.accepts(epoch) && this.availabilityRequest === abort && !this.accessFailure(error))
-        this.patch({ availability: null, problem: aiValidationMessage(error) });
+        this.patch({
+          availability: null,
+          availabilityProblem:
+            error instanceof ApiRequestTimeoutError
+              ? 'The API did not respond to the availability check within 15 seconds. Try again; if it keeps timing out, the server needs investigation.'
+              : error instanceof ApiClientError && error.kind !== 'network'
+                ? `Could not check AI availability: ${error.message}`
+                : 'Could not reach the AI service. Check your connection and that the API is running, then try again.',
+        });
+    } finally {
+      if (this.accepts(epoch) && this.availabilityRequest === abort) {
+        this.availabilityRequest = null;
+        this.patch({ checkingAvailability: false });
+      }
     }
   }
   public canGenerate() {
@@ -287,7 +326,13 @@ export class AiReviewSession {
     const epoch = this.epoch;
     const abort = new AbortController();
     this.request = abort;
-    this.patch({ phase: 'submitting', busy: true, problem: '', retryAfterSeconds: null });
+    this.patch({
+      phase: 'submitting',
+      submissionStage: 'authenticating',
+      busy: true,
+      problem: '',
+      retryAfterSeconds: null,
+    });
     try {
       await this.authenticate(abort.signal);
       if (!this.accepts(epoch) || !this.online() || abort.signal.aborted) return;
@@ -301,6 +346,7 @@ export class AiReviewSession {
         });
         return;
       }
+      this.patch({ submissionStage: 'admitting' });
       const run = await this.transport.create(
         intent.key,
         aiCreateRunSchema.parse(JSON.parse(intent.json)),
@@ -322,13 +368,15 @@ export class AiReviewSession {
         phase: expired ? 'expired' : wasUncertain || !definite ? 'uncertain' : 'rejected',
         problem: definite
           ? error.message
-          : 'The creation outcome is uncertain. Recover only the original request.',
+          : error instanceof ApiRequestTimeoutError
+            ? 'The API took too long to confirm creation. The original request may still exist. Recover only the original request.'
+            : 'The creation outcome is uncertain. Recover only the original request.',
         retryAfterSeconds: error instanceof ApiClientError ? error.retryAfterSeconds : null,
       });
     } finally {
       if (this.accepts(epoch)) {
         this.request = null;
-        this.patch({ busy: false });
+        this.patch({ busy: false, submissionStage: null });
       }
     }
   }
@@ -389,24 +437,106 @@ export class AiReviewSession {
     const epoch = this.epoch;
     const abort = new AbortController();
     this.stream = abort;
-    this.patch({ observing: true });
+    this.patch({ observing: true, problem: '' });
+    const deadline = this.now() + OBSERVATION_WINDOW_MS;
+    let failures = 0;
     try {
-      await this.transport.events(run.id, this.lastId, abort.signal, async (event) => {
-        if (!this.accepts(epoch) || abort.signal.aborted || event.runId !== run.id) return;
-        this.lastId = event.sequence;
-        const current = await this.transport.read(run.id, abort.signal);
-        if (this.accepts(epoch) && !abort.signal.aborted) this.acceptRun(current, run.id);
-      });
+      // Reconnect and fallback GETs only ever observe this ID. No POST/key creation.
+      for (let attempt = 0; attempt < MAX_OBSERVATION_ATTEMPTS; attempt++) {
+        if (
+          !this.accepts(epoch) ||
+          abort.signal.aborted ||
+          !this.online() ||
+          !pending(this.state.run)
+        )
+          return;
+        if (this.now() >= deadline) break;
+        try {
+          if (failures < MAX_EVENT_FAILURES) {
+            await this.transport.events(run.id, this.lastId, abort.signal, async (event) => {
+              if (
+                !this.accepts(epoch) ||
+                abort.signal.aborted ||
+                event.runId !== run.id ||
+                !pending(this.state.run)
+              )
+                return;
+              if (
+                event.type === 'status' &&
+                ['queued', 'validating', 'generating'].includes(event.state)
+              ) {
+                // SSE already reauthorized this snapshot. Fetch private result only
+                // on terminal events, avoiding a duplicate GET for every status.
+                const stamp = Number(event.sequence);
+                if (Number.isSafeInteger(stamp) && stamp >= Date.parse(this.state.run!.updatedAt)) {
+                  this.acceptRun(
+                    {
+                      ...this.state.run!,
+                      state: event.state,
+                      updatedAt: new Date(stamp).toISOString(),
+                    },
+                    run.id,
+                  );
+                }
+              } else {
+                const current = await this.transport.read(run.id, abort.signal);
+                if (this.accepts(epoch) && !abort.signal.aborted) this.acceptRun(current, run.id);
+              }
+              this.lastId = event.sequence;
+            });
+          }
+          if (!this.accepts(epoch) || abort.signal.aborted || !pending(this.state.run)) return;
+          // Streams have a finite lifetime. Reauthorize the original run before
+          // reopening; failed event transports fall back to bounded status polling.
+          const current = await this.transport.read(run.id, abort.signal);
+          if (!this.accepts(epoch) || abort.signal.aborted) return;
+          this.acceptRun(current, run.id);
+        } catch (error) {
+          if (!this.accepts(epoch) || abort.signal.aborted || this.accessFailure(error)) return;
+          if (!pending(this.state.run)) return;
+          failures++;
+        }
+        if (!pending(this.state.run)) return;
+        this.patch({
+          problem: failures
+            ? 'Status connection interrupted. Reconnecting to the original run…'
+            : '',
+        });
+        await this.observationPause(abort.signal);
+      }
       if (this.accepts(epoch) && !abort.signal.aborted && pending(this.state.run))
         this.patch({
-          problem: 'The event connection closed. Check status to reconnect to this run.',
+          problem:
+            'Automatic status checks paused. Check status / reconnect to resume the original run.',
         });
-    } catch (error) {
-      if (this.accepts(epoch) && !abort.signal.aborted && !this.accessFailure(error))
-        this.patch({ problem: 'Events are unavailable. Check status to reconnect to this run.' });
     } finally {
-      if (this.accepts(epoch) && this.stream === abort) this.patch({ observing: false });
+      if (this.accepts(epoch) && this.stream === abort) {
+        this.stream = null;
+        this.patch({ observing: false });
+      }
     }
+  }
+  private observationPause(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, OBSERVATION_POLL_MS);
+      signal.addEventListener('abort', finish, { once: true });
+      if (signal.aborted) finish();
+    });
+  }
+  public resume() {
+    if (
+      this.currentScope() &&
+      this.online() &&
+      !this.state.busy &&
+      pending(this.state.run) &&
+      !this.stream
+    )
+      void this.observe();
   }
   public newDraft() {
     if (
@@ -421,3 +551,7 @@ export class AiReviewSession {
   }
 }
 const HTTP_SERVER_ERROR = 500;
+const OBSERVATION_WINDOW_MS = 300_000;
+const OBSERVATION_POLL_MS = 10_000;
+const MAX_OBSERVATION_ATTEMPTS = 30;
+const MAX_EVENT_FAILURES = 3;

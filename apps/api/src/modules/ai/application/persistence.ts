@@ -236,6 +236,10 @@ export interface AiPersistenceScope {
   /** Savepoint protects accounting from optional content/index write failure. */
   tryContent<T>(work: () => Promise<T>): Promise<T | null>;
   getLedger(key: AiLedgerKey): Promise<AiLedgerRecord>;
+  /** Materialize and lock a bounded batch in the accounting lock order. */
+  prepareLedgers(keys: readonly AiLedgerKey[]): Promise<void>;
+  /** Read-only allowance snapshot after lockAdmission; absent rows have zero usage. */
+  readLedgers(keys: readonly AiLedgerKey[]): Promise<AiLedgerRecord[]>;
   saveLedger(record: AiLedgerRecord): Promise<void>;
   findAllocations(runId: string): Promise<AiAllocationRecord[]>;
   insertAllocations(records: AiAllocationRecord[]): Promise<void>;
@@ -244,6 +248,8 @@ export interface AiPersistenceScope {
   now(): Promise<Date>;
   authorize(actorUserId: string, boardId: string | null): Promise<void>;
   lockAdmission(namespace: string, actorUserId: string): Promise<void>;
+  /** Frequency counters are independent of funding and content coordination. */
+  lockRequest(namespace: string, actorUserId: string): Promise<void>;
   lockFingerprint(namespace: string, actorUserId: string, fingerprint: string): Promise<void>;
   lockReceipt(namespace: string, actorUserId: string, key: string): Promise<void>;
   lockRun(runId: string): Promise<void>;

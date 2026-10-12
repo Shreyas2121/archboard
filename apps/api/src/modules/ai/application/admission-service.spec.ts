@@ -175,6 +175,84 @@ describe('integer AI pricing and full-attempt conservative reservation', () => {
       f.admission.availability(f.store, input.deploymentNamespace, input.actorUserId, board),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
+  it('development bypasses quotas while retaining funded allocations, authorization and actual settlements', async () => {
+    const f = setup({
+      NODE_ENV: 'development',
+      AI_POLLS_PER_MINUTE: '1',
+      AI_FRESH_PER_MINUTE: '1',
+      AI_FRESH_PER_DAY: '1',
+      AI_DAILY_BUDGET_MICRO_USD: '1',
+      AI_MONTHLY_BUDGET_MICRO_USD: '1',
+      AI_GLOBAL_BUDGET_MICRO_USD: '1',
+      AI_PROVIDER_INPUT_TPM: '1',
+      AI_PROVIDER_OUTPUT_TPM: '1',
+      AI_GLOBAL_CONCURRENCY: '1',
+      AI_ACTOR_CONCURRENCY: '1',
+    });
+    const input = f.intent();
+    for (let i = 0; i < THREE; i++) {
+      expect(
+        await f.admission.availability(f.store, input.deploymentNamespace, input.actorUserId, null),
+      ).toMatchObject({
+        available: true,
+        allowance: { remainingFreshRuns: null, remainingMicroUsd: null },
+      });
+    }
+    const first = (await f.service.create(input)).run;
+    // PostgreSQL's deferred funding trigger requires these durable allocations,
+    // even when application quota enforcement is disabled.
+    const requiredAllocations = 12;
+    expect(
+      f.store.state.allocations.filter(
+        (row) =>
+          row.runId === first.id &&
+          !(row.kind === 'budget' && row.scope === 'actor' && row.period !== 'lifetime'),
+      ),
+    ).toHaveLength(requiredAllocations);
+    expect(budget(f.store, 'lifetime')[0]?.reserved).toBe(input.reservation.maximumMicroUsd);
+    await f.service.create(f.intent());
+    const dispatched = await f.service.markDispatch(
+      input.deploymentNamespace,
+      input.actorUserId,
+      first.id,
+    );
+    const settlement = fixtureSettlement(dispatched);
+    await f.service.settle(
+      input.deploymentNamespace,
+      input.actorUserId,
+      settlement,
+      fixtureAiResult,
+    );
+    expect(f.store.state.settlements.get(first.id)?.actualMicroUsd).toBe(settlement.actualMicroUsd);
+    expect(f.store.state.attempts).toHaveLength(1);
+    expect(budget(f.store, 'lifetime')[0]?.committed).toBe(settlement.actualMicroUsd);
+    expect(budget(f.store, 'lifetime')[0]?.reserved).toBe(input.reservation.maximumMicroUsd);
+    const board = randomUUID();
+    f.store.denied.set(JSON.stringify([input.actorUserId, board]), 'FORBIDDEN');
+    await expect(
+      f.admission.availability(f.store, input.deploymentNamespace, input.actorUserId, board),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const connections = new AiConnectionGate(f.policy);
+    const closeFirst = connections.acquire(input.deploymentNamespace, input.actorUserId);
+    const closeSecond = connections.acquire(input.deploymentNamespace, input.actorUserId);
+    closeFirst();
+    closeSecond();
+  });
+  it('availability creates only the poll counter, leaving untouched allowance rows absent', async () => {
+    const f = setup();
+    const input = f.intent();
+    const result = await f.admission.availability(
+      f.store,
+      input.deploymentNamespace,
+      input.actorUserId,
+      null,
+    );
+    expect(result.available).toBe(true);
+    expect([...f.store.state.ledger.values()]).toEqual([
+      expect.objectContaining({ kind: 'capacity', metric: 'poll', committed: '1' }),
+    ]);
+    expect(f.store.locks).toEqual(['authority', 'request', 'authority', 'global', 'actor']);
+  });
   it('covers per-category upward rounding when full input is split among read/write/uncached classes', () => {
     const { snapshot } = setup();
     const split = {

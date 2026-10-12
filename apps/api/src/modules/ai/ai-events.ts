@@ -24,7 +24,7 @@ export class AiEvents {
   private readonly closers = new Set<() => void>();
   public async serve(
     response: ServerResponse,
-    subscription: { close(): void; next(): Promise<AiRun> },
+    subscription: { close(): void; next(requireSession?: () => Promise<void>): Promise<AiRun> },
     requireSession: () => Promise<void>,
   ): Promise<void> {
     let closed = false;
@@ -49,8 +49,9 @@ export class AiEvents {
     const deadline = setTimeout(close, MAX_STREAM_MS);
     deadline.unref();
     const deliver = async () => {
-      await requireSession();
-      const run = await subscription.next();
+      // Include session revalidation in active subscription work, so a slow
+      // authorized heartbeat cannot be expired as an idle consumer.
+      const run = await subscription.next(requireSession);
       if (closed) return;
       const event = aiSnapshotEvent(run);
       const json = JSON.stringify(event);

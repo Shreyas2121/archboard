@@ -44,6 +44,7 @@ import {
   type AiPersistence,
   type AiPersistenceScope,
   type AiRunRecord,
+  type AiLedgerKey,
 } from '../../application/persistence.js';
 import { PostgresAiPersistence } from './postgres-ai-persistence.js';
 import { AesGcmAiPayloadCipher } from './payload-cipher.js';
@@ -72,6 +73,7 @@ const TEST_TIMEOUT_MS = 90_000;
 const FOUR = 4;
 const TWO = 2;
 const LOCK_WAIT_MS = 40;
+const READ_WITH_LOCK_TIMEOUT_MS = 5_000;
 const schema = 'archboard_aic05_' + process.pid + '_' + randomUUID().replaceAll('-', '');
 let admin: DataSource;
 let source: DataSource;
@@ -452,6 +454,93 @@ async function fund(run: AiRunRecord) {
   return service.markDispatch(run.deploymentNamespace, run.actorUserId, run.id);
 }
 describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
+  it('commits unlimited development admission and settlement through the real funding triggers', async () => {
+    const policy = fixturePersistencePolicy({
+      NODE_ENV: 'development',
+      AI_DEPLOYMENT_NAMESPACE: randomUUID(),
+      AI_GLOBAL_BUDGET_MICRO_USD: '1',
+      AI_DAILY_BUDGET_MICRO_USD: '1',
+      AI_MONTHLY_BUDGET_MICRO_USD: '1',
+    });
+    const snapshot = snapshotAiConfiguration({
+      provider: policy.provider,
+      profile: policy.profiles[0]!,
+      policy,
+    });
+    const intent = fixtureAiIntent({
+      snapshot,
+      deploymentNamespace: policy.deploymentNamespace,
+      reservation: estimateAiReservation(snapshot, policy.limits),
+    });
+    const local = new AiIntentService(
+      store,
+      new AesGcmAiPayloadCipher(TEST_KEY, TEST_KEY_VERSION),
+      new AiAdmissionService(policy),
+    );
+    const first = (await local.create(intent)).run;
+    await local.create({
+      ...intent,
+      key: randomUUID(),
+      fingerprint: 'e'.repeat(TEST_KEY.length),
+      requestHash: 'f'.repeat(TEST_KEY.length),
+    });
+    const dispatched = await local.markDispatch(
+      intent.deploymentNamespace,
+      intent.actorUserId,
+      first.id,
+    );
+    await local.settle(
+      intent.deploymentNamespace,
+      intent.actorUserId,
+      fixtureSettlement(dispatched),
+      fixtureAiResult,
+    );
+    expect(
+      (await local.read(intent.deploymentNamespace, intent.actorUserId, first.id)).run.phase,
+    ).toBe('completed');
+  });
+  it('reads fresh and budget usage in a batch without materializing missing allowance rows', async () => {
+    const namespace = randomUUID();
+    const base = {
+      deploymentNamespace: namespace,
+      scope: 'actor' as const,
+      subject: TEST_ACTOR,
+      periodStart: new Date(0),
+    };
+    const keys: AiLedgerKey[] = [
+      { ...base, kind: 'capacity', metric: 'fresh', period: 'day' },
+      { ...base, kind: 'budget', metric: 'micro-usd', period: 'lifetime' },
+      { ...base, kind: 'capacity', metric: 'fresh', period: 'minute' },
+    ];
+    await store.run(async (scope) => {
+      await scope.lockAdmission(namespace, TEST_ACTOR);
+      await scope.saveLedger({
+        ...(await scope.getLedger(keys[0]!)),
+        committed: '3',
+        reserved: '0',
+      });
+      await scope.saveLedger({
+        ...(await scope.getLedger(keys[1]!)),
+        committed: '12',
+        reserved: '7',
+      });
+    });
+    const rows = await store.run(async (scope) => {
+      await scope.lockAdmission(namespace, TEST_ACTOR);
+      return scope.readLedgers(keys);
+    });
+    expect(rows).toEqual([
+      { ...keys[0], committed: '3', reserved: '0' },
+      { ...keys[1], committed: '12', reserved: '7' },
+      { ...keys[2], committed: '0', reserved: '0' },
+    ]);
+    expect(
+      await source.getRepository(AiCounterEntity).countBy({ deploymentNamespace: namespace }),
+    ).toBe(1);
+    expect(
+      await source.getRepository(AiBudgetPeriodEntity).countBy({ deploymentNamespace: namespace }),
+    ).toBe(1);
+  });
   it.each([
     ['AI_DAILY_BUDGET_MICRO_USD', '6'],
     ['AI_GLOBAL_CONCURRENCY', '1'],
@@ -623,6 +712,42 @@ describe('AI-C05 PostgreSQL persistence (deferred acceptance)', () => {
       release();
       await holder;
       await contender;
+    }
+  });
+  it('reads the owned run while another connection holds accounting admission locks', async () => {
+    const { run } = await service.create(fresh());
+    let acquired!: () => void;
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      acquired = resolve;
+    });
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const holder = store.run(async (scope) => {
+      await scope.lockAdmission(TEST_NAMESPACE, TEST_ACTOR);
+      acquired();
+      await barrier;
+    });
+    await ready;
+    const read = service.read(TEST_NAMESPACE, TEST_ACTOR, run.id);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const observed = await Promise.race([
+        read,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('Status waited for accounting lock')),
+            READ_WITH_LOCK_TIMEOUT_MS,
+          );
+        }),
+      ]);
+      expect(observed.run.id).toBe(run.id);
+    } finally {
+      clearTimeout(timer);
+      release();
+      await holder;
+      await read;
     }
   });
   it('rolls back all creation records on a failed receipt write', async () => {

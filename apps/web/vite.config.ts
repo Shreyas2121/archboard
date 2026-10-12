@@ -19,6 +19,9 @@ export default defineConfig(({ command, mode }) => {
     server: { headers },
     preview: { headers },
     envDir,
+    // The layout worker is first loaded at Preview. Discovering this dependency
+    // then causes Vite to reload the page and discard the private AI request.
+    optimizeDeps: { include: ['elkjs/lib/elk-api.js'] },
     plugins: [
       {
         name: 'archboard-security-policy',

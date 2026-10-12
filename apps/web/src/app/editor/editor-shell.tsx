@@ -17,6 +17,7 @@ import {
   PanelLeftOpen,
   RotateCcw,
   Scan,
+  Sparkles,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -139,6 +140,7 @@ export function EditorShell({
   const storageButtonRef = useRef<HTMLButtonElement>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [imageExportOpen, setImageExportOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const [compactPanelsOpen, setCompactPanelsOpen] = useState(false);
   useEffect(() => {
     if (!narrowScreen) setCompactPanelsOpen(false);
@@ -161,6 +163,7 @@ export function EditorShell({
       sharingOpen ||
       portabilityOpen ||
       imageExportOpen ||
+      aiOpen ||
       compactPanelsOpen,
     canvasContainer,
     sessionSnapshot,
@@ -361,6 +364,7 @@ export function EditorShell({
       sharingOpen ||
       portabilityOpen ||
       imageExportOpen ||
+      aiOpen ||
       compactPanelsOpen,
     editable: viewState.editable && !playback.presenting,
     projection,
@@ -465,6 +469,21 @@ export function EditorShell({
       {playback.presenting && <PresentationControls playback={playback} />}
       <div className={playback.presenting ? 'hidden' : 'contents'}>
         <EditorToolbar
+          ai={
+            boardMode &&
+            session?.resourceScope && (
+              <Button
+                id="ai-assistant"
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={narrowScreen}
+                onClick={() => setAiOpen(true)}
+              >
+                <Sparkles aria-hidden="true" /> AI assistant
+              </Button>
+            )
+          }
           boardPanels={
             narrowScreen && (
               <Button
@@ -795,15 +814,6 @@ export function EditorShell({
 
         <div className={playback.presenting ? 'hidden' : 'contents'}>
           <EditorInspector
-            ai={
-              boardMode && session?.resourceScope ? (
-                <AiPanel
-                  key={JSON.stringify(session.resourceScope)}
-                  session={session}
-                  readOnly={narrowScreen}
-                />
-              ) : undefined
-            }
             narrowScreen={narrowScreen}
             compactOpen={compactPanelsOpen}
             setCompactOpen={setCompactPanelsOpen}
@@ -919,6 +929,15 @@ export function EditorShell({
         </div>
       </footer>
 
+      {boardMode && session?.resourceScope && (
+        <AiPanel
+          key={JSON.stringify(session.resourceScope)}
+          session={session}
+          readOnly={narrowScreen}
+          open={aiOpen}
+          onOpenChange={setAiOpen}
+        />
+      )}
       <EditorDialogs
         storageOpen={storageOpen}
         setStorageOpen={setStorageOpen}

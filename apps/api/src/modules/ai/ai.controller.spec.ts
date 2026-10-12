@@ -219,6 +219,10 @@ describe('AI-C09 in-memory Nest HTTP transport', () => {
     });
     try {
       const created = await ai.create(TEST_ACTOR, randomUUID(), body as AiCreateRun);
+      // Acknowledgment no longer waits behind worker dispatch. This case tests
+      // cancellation after provider execution has actually begun.
+      for (let turn = 0; turn < MAX_TURNS && calls === 0; turn++)
+        await new Promise((resolve) => setImmediate(resolve));
       expect(calls).toBe(1);
       operations.setPaidEnabled(false);
       expect(await ai.cancel(TEST_ACTOR, created.id)).toMatchObject({

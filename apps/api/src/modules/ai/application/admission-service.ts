@@ -117,6 +117,7 @@ export class AiAdmissionService {
     keys: AiLedgerKey[],
   ): Promise<Map<string, AiLedgerRecord>> {
     const unique = new Map(keys.map((value) => [aiLedgerIdentity(value), value]));
+    await scope.prepareLedgers([...unique.values()]);
     const rows = new Map<string, AiLedgerRecord>();
     for (const [id, value] of [...unique].sort(([a, ka], [b, kb]) =>
       ka.scope !== kb.scope ? (ka.scope === 'global' ? -1 : 1) : a < b ? -1 : a > b ? 1 : 0,
@@ -157,7 +158,8 @@ export class AiAdmissionService {
     const policy = this.enabled(namespace);
     await persistence.run(async (scope) => {
       await scope.authorize(actor, board);
-      await scope.lockAdmission(namespace, actor);
+      if (policy.localUnlimited) return;
+      await scope.lockRequest(namespace, actor);
       const now = await scope.now();
       const specs =
         metric === 'create'
@@ -192,24 +194,39 @@ export class AiAdmissionService {
   ): Promise<AiAvailability> {
     const policy = this.enabled(namespace);
     await this.request(persistence, namespace, actor, board, 'poll');
+    if (policy.localUnlimited)
+      return {
+        schemaVersion: 1,
+        available: true,
+        allowance: { remainingFreshRuns: null, remainingMicroUsd: null, resetsAt: null },
+      };
     return persistence.run(async (scope) => {
       await scope.authorize(actor, board);
       await scope.lockAdmission(namespace, actor);
       const now = await scope.now();
-      await this.prepare(scope, namespace, actor, now);
+      // Availability only needs fresh counters and budgets. Preparing every provider
+      // ledger creates rows and adds sequential round trips to this advisory read.
+      const keys: AiLedgerKey[] = (['day', 'minute'] as const).map((period) =>
+        key(namespace, 'actor', actor, 'capacity', 'fresh', period, now),
+      );
+      for (const locality of ['global', 'actor'] as const)
+        for (const period of ['day', 'month', 'lifetime'] as const)
+          keys.push(key(namespace, locality, actor, 'budget', 'micro-usd', period, now));
+      const rows = new Map(
+        (await scope.readLedgers(keys)).map((row) => [aiLedgerIdentity(row), row]),
+      );
+      const ledger = (value: AiLedgerKey) => rows.get(aiLedgerIdentity(value))!;
       let fresh = policy.limits.freshPerDay;
       for (const [period, limit] of [
         ['day', policy.limits.freshPerDay],
         ['minute', policy.limits.freshPerMinute],
       ] as const) {
-        const row = await scope.getLedger(
-          key(namespace, 'actor', actor, 'capacity', 'fresh', period, now),
-        );
+        const row = ledger(key(namespace, 'actor', actor, 'capacity', 'fresh', period, now));
         fresh = Math.min(fresh, Math.max(0, limit - Number(row.committed)));
       }
       let money = BigInt(policy.budgets.globalMicroUsd);
       for (const locality of ['global', 'actor'] as const) {
-        const lifetime = await scope.getLedger(
+        const lifetime = ledger(
           key(namespace, locality, actor, 'budget', 'micro-usd', 'lifetime', now),
         );
         for (const [period, limit] of [
@@ -222,9 +239,7 @@ export class AiAdmissionService {
           ['month', policy.budgets.monthlyMicroUsd],
           ['lifetime', policy.budgets.globalMicroUsd],
         ] as const) {
-          const row = await scope.getLedger(
-            key(namespace, locality, actor, 'budget', 'micro-usd', period, now),
-          );
+          const row = ledger(key(namespace, locality, actor, 'budget', 'micro-usd', period, now));
           const remaining = BigInt(limit) - BigInt(row.committed) - BigInt(lifetime.reserved);
           if (remaining < money) money = remaining;
         }
@@ -296,7 +311,7 @@ export class AiAdmissionService {
       ['day', policy.limits.freshPerDay],
     ] as const) {
       const row = await scope.getLedger(key(ns, 'actor', actor, 'capacity', 'fresh', period, now));
-      if (BigInt(row.committed) >= BigInt(limit))
+      if (!policy.localUnlimited && BigInt(row.committed) >= BigInt(limit))
         throw new AiAdmissionError('RATE_LIMITED', periodRetry(now, period));
       add(row, 'committed', ONE);
       await scope.saveLedger(row);
@@ -307,7 +322,8 @@ export class AiAdmissionService {
     ] as const) {
       const k = key(ns, locality, actor, 'capacity', 'concurrency', 'active', now);
       const row = await scope.getLedger(k);
-      if (BigInt(row.reserved) >= BigInt(limit)) throw new AiAdmissionError('RATE_LIMITED');
+      if (!policy.localUnlimited && BigInt(row.reserved) >= BigInt(limit))
+        throw new AiAdmissionError('RATE_LIMITED');
       await allocate(k, ONE);
     }
     const money = BigInt(hold.maximumMicroUsd);
@@ -331,7 +347,10 @@ export class AiAdmissionService {
         const k = key(ns, locality, actor, 'budget', 'micro-usd', period, now);
         const row = await scope.getLedger(k);
         // Lifetime reserved includes ALL outstanding periods, including unknown work.
-        if (BigInt(row.committed) + BigInt(lifetime.reserved) + money > BigInt(limit))
+        if (
+          !policy.localUnlimited &&
+          BigInt(row.committed) + BigInt(lifetime.reserved) + money > BigInt(limit)
+        )
           throw new AiAdmissionError('AI_ALLOWANCE_REACHED');
       }
       for (const [period] of specs)
@@ -348,7 +367,10 @@ export class AiAdmissionService {
       const active = await scope.getLedger(
         key(ns, 'global', actor, 'capacity', metric, 'active', now),
       );
-      if (BigInt(minute.committed) + BigInt(active.reserved) + total > BigInt(limit))
+      if (
+        !policy.localUnlimited &&
+        BigInt(minute.committed) + BigInt(active.reserved) + total > BigInt(limit)
+      )
         throw new AiAdmissionError('RATE_LIMITED', periodRetry(now, 'minute'));
       await allocate(key(ns, 'global', actor, 'capacity', metric, 'minute', now), total);
       await allocate(key(ns, 'global', actor, 'capacity', metric, 'active', now), total);
@@ -434,7 +456,10 @@ export class AiAdmissionService {
       const current = await scope.getLedger(
         key(ns, 'global', actor, 'capacity', metric, 'minute', now),
       );
-      if (BigInt(current.committed) + BigInt(active.reserved) > BigInt(limit))
+      if (
+        !policy.localUnlimited &&
+        BigInt(current.committed) + BigInt(active.reserved) > BigInt(limit)
+      )
         throw new AiAdmissionError('RATE_LIMITED', periodRetry(now, 'minute'));
       const original =
         aiLedgerIdentity(origin) === aiLedgerIdentity(current)
@@ -465,6 +490,7 @@ export class AiAdmissionService {
     final: AiSettlement,
     now: Date,
   ): Promise<void> {
+    const policy = this.enabled(run.deploymentNamespace);
     if (hold.status === 'pending') {
       if (final.mode !== 'unsent') throw new AiAdmissionError('TEMPORARILY_UNAVAILABLE');
       return;
@@ -491,13 +517,15 @@ export class AiAdmissionService {
       const outputUsed =
         BigInt(final.usage.outputTokens) + BigInt(final.usage.separatelyBilledReasoningTokens);
       if (
-        inputUsed > attempts.reduce((sum, attempt) => sum + BigInt(attempt.inputCapacity), ZERO) ||
-        outputUsed > attempts.reduce((sum, attempt) => sum + BigInt(attempt.outputCapacity), ZERO)
+        !policy.localUnlimited &&
+        (inputUsed > attempts.reduce((sum, attempt) => sum + BigInt(attempt.inputCapacity), ZERO) ||
+          outputUsed >
+            attempts.reduce((sum, attempt) => sum + BigInt(attempt.outputCapacity), ZERO))
       )
         throw new AiPersistenceError('AI_CAPABILITY_UNSUPPORTED');
       if (
         final.actualMicroUsd !== priceAiUsage(run.snapshot, final.usage) ||
-        BigInt(final.actualMicroUsd!) > BigInt(hold.maximumMicroUsd)
+        (!policy.localUnlimited && BigInt(final.actualMicroUsd!) > BigInt(hold.maximumMicroUsd))
       )
         throw new AiPersistenceError('AI_CAPABILITY_UNSUPPORTED');
     }

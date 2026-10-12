@@ -6,4 +6,7 @@ export const currentUserQueryOptions = queryOptions({
   queryFn: loadCurrentUser,
   staleTime: SESSION_STALE_MS,
   retry: false,
+  // Multiple routes/observers must not restart a failed session check on each mount.
+  // Explicit retry, reconnect, and window focus can still check again.
+  retryOnMount: false,
 });

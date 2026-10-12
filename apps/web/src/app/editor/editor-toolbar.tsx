@@ -8,6 +8,7 @@ import { EditorStatusAnnouncement } from './editor-status-announcement';
 
 import type { EditorToolbarProps } from './editor-composition-types';
 export function EditorToolbar({
+  ai,
   boardPanels,
   imageExport,
   portability,
@@ -69,6 +70,7 @@ export function EditorToolbar({
         </div>
         <div className="flex shrink-0 items-center gap-0.5" aria-label="Board actions">
           {boardPanels}
+          {ai}
           {presentation}
           {sharing}
           {portability}

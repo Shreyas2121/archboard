@@ -21,6 +21,7 @@ import {
   type AiPayloadSummary,
 } from '../../application/persistence.js';
 import { normalizedUsageSchema } from '../../application/provider.js';
+import { aiLedgerIdentity } from '../../application/admission-service.js';
 import {
   AiRunEntity,
   AiReceiptEntity,
@@ -53,10 +54,12 @@ export class PostgresAiPersistence implements AiPersistence {
     alreadyAdmitted = false,
   ): Promise<T> {
     try {
-      return await this.transactions.run(
-        (runner) => work(new PostgresAiScope(runner, this.authority)),
-        alreadyAdmitted,
-      );
+      return await this.transactions.run(async (runner) => {
+        const scope = new PostgresAiScope(runner, this.authority);
+        const result = await work(scope);
+        await scope.flushLedgers();
+        return result;
+      }, alreadyAdmitted);
     } catch (error) {
       if (error instanceof AiPersistenceError) throw error;
       // No SQL detail, native cause, content or encrypted bytes cross this boundary.
@@ -65,6 +68,10 @@ export class PostgresAiPersistence implements AiPersistence {
   }
 }
 class PostgresAiScope implements AiPersistenceScope {
+  // These rows are locked until this scope's transaction ends. Reuse only within
+  // that transaction; each run gets a fresh scope and rechecks current balances.
+  private readonly ledgers = new Map<string, AiLedgerRecord>();
+  private readonly dirtyLedgers = new Map<string, AiLedgerRecord>();
   public expiredRuns(namespace: string): Promise<{ id: string; actorUserId: string }[]> {
     // Discovery takes no run/board locks; recovery rechecks each candidate using
     // the established coordinator -> fingerprint -> run -> reservation order.
@@ -164,6 +171,9 @@ class PostgresAiScope implements AiPersistenceScope {
       .execute();
   }
   public async tryContent<T>(work: () => Promise<T>): Promise<T | null> {
+    // Accounting writes precede the optional-content savepoint, so its rollback
+    // cannot discard funded liability or leave staged balances ahead of SQL.
+    await this.flushLedgers();
     this.contentSavepoint++;
     // Internal integer-only name, never input. Savepoints are transaction control
     // unavailable through Repository APIs and isolate optional content writes.
@@ -175,11 +185,15 @@ class PostgresAiScope implements AiPersistenceScope {
       return value;
     } catch {
       await this.runner.query('ROLLBACK TO SAVEPOINT ' + name);
+      this.ledgers.clear();
+      this.dirtyLedgers.clear();
       await this.runner.query('RELEASE SAVEPOINT ' + name);
       return null;
     }
   }
   public async getLedger(key: AiLedgerKey): Promise<AiLedgerRecord> {
+    const cached = this.ledgers.get(aiLedgerIdentity(key));
+    if (cached) return structuredClone(cached);
     const { deploymentNamespace, scope, subject, periodStart } = key;
     if (key.kind === 'capacity') {
       const identity = {
@@ -203,7 +217,9 @@ class PostgresAiScope implements AiPersistenceScope {
         .where(identity)
         .setLock('pessimistic_write')
         .getOneOrFail();
-      return { ...key, committed: row.committed, reserved: row.reserved };
+      const record = { ...key, committed: row.committed, reserved: row.reserved };
+      this.ledgers.set(aiLedgerIdentity(key), structuredClone(record));
+      return record;
     }
     const identity = {
       deploymentNamespace,
@@ -225,35 +241,223 @@ class PostgresAiScope implements AiPersistenceScope {
       .where(identity)
       .setLock('pessimistic_write')
       .getOneOrFail();
-    return { ...key, committed: row.committedMicroUsd, reserved: row.reservedMicroUsd };
+    const record = { ...key, committed: row.committedMicroUsd, reserved: row.reservedMicroUsd };
+    this.ledgers.set(aiLedgerIdentity(key), structuredClone(record));
+    return record;
+  }
+  public async prepareLedgers(keys: readonly AiLedgerKey[]): Promise<void> {
+    const missing = [...new Map(keys.map((key) => [aiLedgerIdentity(key), key])).values()]
+      .filter((key) => !this.ledgers.has(aiLedgerIdentity(key)))
+      .sort((a, b) => {
+        if (a.scope !== b.scope) return a.scope === 'global' ? -1 : 1;
+        return aiLedgerIdentity(a).localeCompare(aiLedgerIdentity(b));
+      });
+    if (missing.length > MAX_CLEANUP_BATCH) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
+    for (const locality of ['global', 'actor'] as const) {
+      const counters = missing
+        .filter((key) => key.kind === 'capacity' && key.scope === locality)
+        .map((key) => ({
+          deploymentNamespace: key.deploymentNamespace,
+          scope: key.scope,
+          subject: key.subject,
+          metric: key.metric as AiCounterEntity['metric'],
+          period: key.period as AiCounterEntity['period'],
+          periodStart: key.periodStart,
+        }));
+      const budgets = missing
+        .filter((key) => key.kind === 'budget' && key.scope === locality)
+        .map((key) => ({
+          deploymentNamespace: key.deploymentNamespace,
+          scope: key.scope,
+          subject: key.subject,
+          period: key.period as AiBudgetPeriodEntity['period'],
+          periodStart: key.periodStart,
+        }));
+      // The namespace/actor coordinator is held before this batch. Keep a stable
+      // global-before-actor row order, including origin periods on settlement.
+      if (counters.length) {
+        await this.manager
+          .getRepository(AiCounterEntity)
+          .createQueryBuilder()
+          .insert()
+          .values(counters.map((identity) => ({ ...identity, committed: '0', reserved: '0' })))
+          .orIgnore()
+          .execute();
+        const rows = await this.manager
+          .getRepository(AiCounterEntity)
+          .createQueryBuilder('counter')
+          .where(counters)
+          .orderBy('counter.scope', 'DESC')
+          .addOrderBy('counter.subject', 'ASC')
+          .addOrderBy('counter.metric', 'ASC')
+          .addOrderBy('counter.period', 'ASC')
+          .addOrderBy('counter.periodStart', 'ASC')
+          .setLock('pessimistic_write')
+          .getMany();
+        for (const row of rows) {
+          const record: AiLedgerRecord = { ...row, kind: 'capacity' };
+          this.ledgers.set(aiLedgerIdentity(record), record);
+        }
+      }
+      if (budgets.length) {
+        await this.manager
+          .getRepository(AiBudgetPeriodEntity)
+          .createQueryBuilder()
+          .insert()
+          .values(
+            budgets.map((identity) => ({
+              ...identity,
+              committedMicroUsd: '0',
+              reservedMicroUsd: '0',
+            })),
+          )
+          .orIgnore()
+          .execute();
+        const rows = await this.manager
+          .getRepository(AiBudgetPeriodEntity)
+          .createQueryBuilder('budget')
+          .where(budgets)
+          .orderBy('budget.scope', 'DESC')
+          .addOrderBy('budget.subject', 'ASC')
+          .addOrderBy('budget.period', 'ASC')
+          .addOrderBy('budget.periodStart', 'ASC')
+          .setLock('pessimistic_write')
+          .getMany();
+        for (const row of rows) {
+          const record: AiLedgerRecord = {
+            ...row,
+            kind: 'budget',
+            metric: 'micro-usd',
+            committed: row.committedMicroUsd,
+            reserved: row.reservedMicroUsd,
+          };
+          this.ledgers.set(aiLedgerIdentity(record), record);
+        }
+      }
+    }
+    if (missing.some((key) => !this.ledgers.has(aiLedgerIdentity(key))))
+      throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
+  }
+  public async readLedgers(keys: readonly AiLedgerKey[]): Promise<AiLedgerRecord[]> {
+    const capacity = keys.filter((key) => key.kind === 'capacity');
+    const budgets = keys.filter((key) => key.kind === 'budget');
+    // The caller holds namespace/actor admission locks, which also fence accounting
+    // writes. Two batched reads need neither row creation nor additional row locks.
+    const counters = capacity.length
+      ? await this.manager.find(AiCounterEntity, {
+          where: capacity.map(
+            ({ deploymentNamespace, scope, subject, metric, period, periodStart }) => ({
+              deploymentNamespace,
+              scope,
+              subject,
+              periodStart,
+              metric: metric as AiCounterEntity['metric'],
+              period: period as AiCounterEntity['period'],
+            }),
+          ),
+          select: {
+            deploymentNamespace: true,
+            scope: true,
+            subject: true,
+            metric: true,
+            period: true,
+            periodStart: true,
+            committed: true,
+            reserved: true,
+          },
+        })
+      : [];
+    const periods = budgets.length
+      ? await this.manager.find(AiBudgetPeriodEntity, {
+          where: budgets.map(({ deploymentNamespace, scope, subject, period, periodStart }) => ({
+            deploymentNamespace,
+            scope,
+            subject,
+            periodStart,
+            period: period as AiBudgetPeriodEntity['period'],
+          })),
+          select: {
+            deploymentNamespace: true,
+            scope: true,
+            subject: true,
+            period: true,
+            periodStart: true,
+            committedMicroUsd: true,
+            reservedMicroUsd: true,
+          },
+        })
+      : [];
+    return keys.map((key) => {
+      const matches = (row: AiCounterEntity | AiBudgetPeriodEntity) =>
+        row.deploymentNamespace === key.deploymentNamespace &&
+        row.scope === key.scope &&
+        row.subject === key.subject &&
+        row.period === key.period &&
+        row.periodStart.getTime() === key.periodStart.getTime();
+      if (key.kind === 'capacity') {
+        const row = counters.find((row) => matches(row) && row.metric === key.metric);
+        return { ...key, committed: row?.committed ?? '0', reserved: row?.reserved ?? '0' };
+      }
+      const row = periods.find(matches);
+      return {
+        ...key,
+        committed: row?.committedMicroUsd ?? '0',
+        reserved: row?.reservedMicroUsd ?? '0',
+      };
+    });
   }
   public async saveLedger(record: AiLedgerRecord): Promise<void> {
-    const { deploymentNamespace, scope, subject, periodStart } = record;
-    if (record.kind === 'capacity') {
-      await this.manager.update(
-        AiCounterEntity,
-        {
-          deploymentNamespace,
-          scope,
-          subject,
-          periodStart,
-          metric: record.metric as AiCounterEntity['metric'],
-          period: record.period as AiCounterEntity['period'],
-        },
-        { committed: record.committed, reserved: record.reserved },
-      );
-    } else
-      await this.manager.update(
-        AiBudgetPeriodEntity,
-        {
-          deploymentNamespace,
-          scope,
-          subject,
-          periodStart,
-          period: record.period as AiBudgetPeriodEntity['period'],
-        },
-        { committedMicroUsd: record.committed, reservedMicroUsd: record.reserved },
-      );
+    const identity = aiLedgerIdentity(record);
+    if (!this.ledgers.has(identity)) throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
+    this.ledgers.set(identity, structuredClone(record));
+    this.dirtyLedgers.set(identity, structuredClone(record));
+  }
+  public async flushLedgers(): Promise<void> {
+    const records = [...this.dirtyLedgers.values()];
+    const counters = records
+      .filter((record) => record.kind === 'capacity')
+      .map((record) => ({
+        deploymentNamespace: record.deploymentNamespace,
+        scope: record.scope,
+        subject: record.subject,
+        metric: record.metric as AiCounterEntity['metric'],
+        period: record.period as AiCounterEntity['period'],
+        periodStart: record.periodStart,
+        committed: record.committed,
+        reserved: record.reserved,
+      }));
+    const budgets = records
+      .filter((record) => record.kind === 'budget')
+      .map((record) => ({
+        deploymentNamespace: record.deploymentNamespace,
+        scope: record.scope,
+        subject: record.subject,
+        period: record.period as AiBudgetPeriodEntity['period'],
+        periodStart: record.periodStart,
+        committedMicroUsd: record.committed,
+        reservedMicroUsd: record.reserved,
+      }));
+    // Absolute balances are safe only for rows already locked in this transaction.
+    // Flush before commit so PostgreSQL's deferred funding constraints still see
+    // all allocations, attempts, balances and terminal records atomically.
+    if (counters.length)
+      await this.manager.upsert(AiCounterEntity, counters, [
+        'deploymentNamespace',
+        'scope',
+        'subject',
+        'metric',
+        'period',
+        'periodStart',
+      ]);
+    if (budgets.length)
+      await this.manager.upsert(AiBudgetPeriodEntity, budgets, [
+        'deploymentNamespace',
+        'scope',
+        'subject',
+        'period',
+        'periodStart',
+      ]);
+    this.dirtyLedgers.clear();
   }
   public async findAllocations(runId: string): Promise<AiAllocationRecord[]> {
     const rows = await this.manager.findBy(AiAllocationEntity, { runId });
@@ -295,6 +499,9 @@ class PostgresAiScope implements AiPersistenceScope {
   public async lockAdmission(namespace: string, actor: string): Promise<void> {
     await this.lock(['global', namespace]);
     await this.lock(['actor', namespace, actor]);
+  }
+  public lockRequest(namespace: string, actor: string): Promise<void> {
+    return this.lock(['request', namespace, actor]);
   }
   public lockFingerprint(namespace: string, actor: string, digest: string): Promise<void> {
     return this.lock(['fingerprint', namespace, actor, digest]);

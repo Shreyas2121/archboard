@@ -26,6 +26,11 @@ export class AiRunApplication {
       prepared.request,
       (result) => validation.parse(result),
     );
+    // Admission already authorized the target under its board lock. A pending
+    // acknowledgment discloses no private result and must not race the new worker
+    // for a second transaction. Terminal/cache content still reauthorizes below.
+    if (['pending-admission', 'admitted', 'dispatching'].includes(admitted.run.phase))
+      return { ...admitted, result: null, content: 'pending' as const };
     // Both cache returns and freshly completed results require current authority.
     const snapshot = await this.runs.read(
       prepared.intent.deploymentNamespace,

@@ -17,6 +17,9 @@ import { AiProviderError, type AiProvider, type ProviderEvent } from './provider
 import { AiRunSubscriptions } from './run-subscriptions.js';
 import { AiConnectionGate } from './connection-gate.js';
 import { AiOperations } from './operations.js';
+import { snapshotAiConfiguration } from './persistence.js';
+import { AiPersistenceError } from './persistence.js';
+import { estimateAiReservation } from './pricing.js';
 
 const MAX_RESULT_BYTES = 524288;
 const DEADLINE_MS = 120000;
@@ -24,6 +27,8 @@ const MAX_TURNS = 100;
 const TWO = 2;
 const RETRY_WAIT_MS = 300;
 const DRAIN_MS = 100;
+const SLOW_READ_MS = 40_000;
+const SUBSCRIPTION_IDLE_MS = 30_000;
 const SETTLEMENT_WAIT_MS = 20;
 const SMALL_OUTPUT_BYTES = 4;
 const CACHE_FRAMING_INPUT_CEILING = 200;
@@ -43,9 +48,9 @@ const completed: ProviderEvent = {
   usage,
   requestId: null,
 };
-function setup(stream: AiProvider['stream']) {
+function setup(stream: AiProvider['stream'], overrides: NodeJS.ProcessEnv = {}) {
   const store = new InMemoryAiPersistence();
-  const policy = fixturePersistencePolicy();
+  const policy = fixturePersistencePolicy(overrides);
   const operations = new AiOperations(() => store.clock.getTime());
   const intents = new AiIntentService(
     store,
@@ -64,7 +69,15 @@ function setup(stream: AiProvider['stream']) {
     () => store.clock.getTime(),
     operations,
   );
-  const intent = fixtureAiIntent();
+  const snapshot = snapshotAiConfiguration({
+    provider: policy.provider,
+    profile: policy.profiles[0]!,
+    policy,
+  });
+  const intent = fixtureAiIntent({
+    snapshot,
+    reservation: estimateAiReservation(snapshot, policy.limits),
+  });
   const request = {
     model: intent.snapshot.model,
     task: intent.task,
@@ -142,6 +155,26 @@ it('includes conservative cache-prefix framing in input admission before intent 
   ).rejects.toMatchObject({ code: 'AI_INPUT_TOO_LARGE' });
   expect(stream).not.toHaveBeenCalled();
   expect(f.store.state.runs.size).toBe(0);
+});
+it('development dispatches a request above the configured input bound and settles its actual usage', async () => {
+  const inputTokens = 10_000_000;
+  const stream = jest.fn<AiProvider['stream']>(async function* () {
+    yield { ...completed, usage: { ...usage, uncachedInputTokens: inputTokens } };
+  });
+  const f = setup(stream, { NODE_ENV: 'development', AI_GLOBAL_BUDGET_MICRO_USD: '1' });
+  const { run } = await f.runs.start(f.intent, f.adapter, {
+    ...f.request,
+    messages: [{ role: 'user', text: 'x'.repeat(f.intent.snapshot.maximumInputTokens + 1) }],
+  });
+  await finish(f.runs, run.id, f.store);
+  expect(stream).toHaveBeenCalledTimes(1);
+  expect(f.store.state.runs.get(run.id)?.phase).toBe('completed');
+  expect(f.store.state.settlements.get(run.id)?.usage).toMatchObject({
+    uncachedInputTokens: inputTokens,
+  });
+  expect(BigInt(f.store.state.settlements.get(run.id)!.actualMicroUsd!)).toBeGreaterThan(
+    BigInt(f.intent.reservation.maximumMicroUsd),
+  );
 });
 it('commits before dispatch; replay, different-key dedupe and reconnect make one call', async () => {
   let calls = 0;
@@ -348,4 +381,92 @@ it('snapshot subscriptions reauthorize after revocation and do not cancel work',
   await finish(f.runs, run.id, f.store);
   expect(f.store.state.runs.get(run.id)?.phase).toBe('completed');
   subscriptions.onModuleDestroy();
+});
+it('keeps an active slow subscription read alive, then expires an idle consumer', async () => {
+  const f = setup(async function* () {
+    yield completed;
+  });
+  const { run } = await f.intents.create(f.intent);
+  jest.useFakeTimers();
+  const subscriptions = new AiRunSubscriptions(f.runs, new AiConnectionGate(f.policy));
+  const connection = subscriptions.open(f.intent.deploymentNamespace, f.intent.actorUserId, run.id);
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = jest
+    .spyOn(f.runs, 'read')
+    .mockResolvedValue({ run, result: null, content: 'pending' });
+  try {
+    const work = connection.next(() => wait);
+    await jest.advanceTimersByTimeAsync(SLOW_READ_MS);
+    expect(read).not.toHaveBeenCalled();
+    release();
+    await work;
+    expect(read).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(SUBSCRIPTION_IDLE_MS);
+    await expect(connection.next()).rejects.toMatchObject({ code: 'TEMPORARILY_UNAVAILABLE' });
+    expect(read).toHaveBeenCalledTimes(1);
+  } finally {
+    subscriptions.onModuleDestroy();
+    jest.useRealTimers();
+  }
+});
+it('retries an ambiguous settlement commit without executing the provider again', async () => {
+  const stream = jest.fn<AiProvider['stream']>(async function* () {
+    yield completed;
+  });
+  const f = setup(stream);
+  const settle = f.intents.settle.bind(f.intents);
+  let failed = false;
+  jest.spyOn(f.intents, 'settle').mockImplementation(async (...args) => {
+    await settle(...args);
+    if (!failed) {
+      failed = true;
+      throw new AiPersistenceError('TEMPORARILY_UNAVAILABLE');
+    }
+  });
+  const { run } = await f.runs.start(f.intent, f.adapter, f.request);
+  await finish(f.runs, run.id, f.store);
+  expect(stream).toHaveBeenCalledTimes(1);
+  expect(f.store.state.settlements.size).toBe(1);
+  expect(f.store.state.payloads.size).toBe(1);
+  expect(f.operations.snapshot().settlement_failures).toBe('1');
+});
+it('publishes a terminal content failure while preserving known charges if encryption rejects the result', async () => {
+  const f = setup(async function* () {
+    yield completed;
+  });
+  const settle = f.intents.settle.bind(f.intents);
+  jest.spyOn(f.intents, 'settle').mockImplementation(async (...args) => {
+    if (args[3]) throw new AiPersistenceError('AI_OUTPUT_INVALID');
+    await settle(...args);
+  });
+  const { run } = await f.runs.start(f.intent, f.adapter, f.request);
+  await finish(f.runs, run.id, f.store);
+  expect(f.store.state.runs.get(run.id)).toMatchObject({
+    phase: 'failed',
+    failureCode: 'AI_OUTPUT_INVALID',
+  });
+  expect(f.store.state.settlements.get(run.id)).toMatchObject({ mode: 'known', usage });
+  expect(f.store.state.reservations.get(run.id)?.status).toBe('settled');
+  expect(f.store.state.payloads.size).toBe(0);
+});
+it('settles authoritative failed-provider usage without losing its known charge', async () => {
+  const f = setup(async function* () {
+    yield await Promise.reject(
+      new AiProviderError({
+        code: 'overloaded',
+        execution: 'may-have-started',
+        usage,
+        requestId: null,
+        retryAfterMs: null,
+      }),
+    );
+  });
+  const { run } = await f.runs.start(f.intent, f.adapter, f.request);
+  await finish(f.runs, run.id, f.store);
+  expect(f.store.state.runs.get(run.id)?.phase).toBe('failed');
+  expect(f.store.state.settlements.get(run.id)?.mode).toBe('known');
+  expect(f.operations.snapshot().provider_failures).toBe('1');
 });

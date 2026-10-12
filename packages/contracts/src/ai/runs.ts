@@ -120,6 +120,7 @@ export const aiCreateRunSchema = aiByteLimit(
 );
 
 export const AI_RUN_STATES = [
+  'queued',
   'validating',
   'generating',
   'needs-input',
@@ -177,7 +178,7 @@ export const aiRunSchema = z
         message: 'Result content status must agree with run state.',
       });
     if (
-      (run.state === 'validating' || run.state === 'generating') !==
+      (run.state === 'queued' || run.state === 'validating' || run.state === 'generating') !==
       (run.content.status === 'pending')
     )
       context.addIssue({
@@ -240,7 +241,8 @@ export const aiEventHeadersSchema = z.strictObject({
 });
 
 export const aiAllowanceSchema = z.strictObject({
-  remainingFreshRuns: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  // Null denotes an unmetered development allowance, never an invented finite quota.
+  remainingFreshRuns: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
   resetsAt: utcTimestampSchema.nullable(),
   // Integer micro-USD, never floating-point or browser-authoritative cost.
   remainingMicroUsd: aiUnsignedDecimalSchema.nullable(),

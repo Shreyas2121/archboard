@@ -1,8 +1,51 @@
 import { jest } from '@jest/globals';
 import { AiOperations } from './operations.js';
+import { AiPersistenceError } from './persistence.js';
+import { AiProviderError } from './provider.js';
 import { fixtureAiIntent } from '../infrastructure/testing/persistence-fixtures.js';
 const FAILURES = 3;
 const COOLDOWN_MS = 30_000;
+const SETTLEMENT_DURATION_MS = 42;
+const PROVIDER_DURATION_MS = 7;
+it('records safe stages and codes without exception messages, causes or provider identifiers', () => {
+  const sink = jest.fn<(value: string) => void>();
+  const ops = new AiOperations(Date.now, () => false, sink);
+  ops.diagnostic(
+    'settlement',
+    SETTLEMENT_DURATION_MS,
+    new AiPersistenceError('TEMPORARILY_UNAVAILABLE'),
+  );
+  ops.diagnostic(
+    'provider',
+    PROVIDER_DURATION_MS,
+    new AiProviderError({
+      code: 'authentication',
+      execution: 'definite-rejection',
+      usage: { status: 'unknown' },
+      requestId: 'private-request',
+      retryAfterMs: null,
+    }),
+  );
+  ops.diagnostic('worker', 0, new Error('private prompt SQL cookies key'));
+  expect(sink.mock.calls.map(([value]) => JSON.parse(value))).toEqual([
+    {
+      event: 'ai.stage',
+      stage: 'settlement',
+      durationMs: 42,
+      outcome: 'failed',
+      code: 'TEMPORARILY_UNAVAILABLE',
+    },
+    {
+      event: 'ai.stage',
+      stage: 'provider',
+      durationMs: 7,
+      outcome: 'failed',
+      code: 'authentication',
+    },
+    { event: 'ai.stage', stage: 'worker', durationMs: 0, outcome: 'failed', code: 'unavailable' },
+  ]);
+  expect(JSON.stringify(sink.mock.calls)).not.toMatch(/private|SQL|cookies|key/);
+});
 
 it('isolates breaker configurations and permits only one funded half-open caller', () => {
   let clock = 0;

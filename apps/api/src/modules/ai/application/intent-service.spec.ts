@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { AiIntentService } from './intent-service.js';
 import { AiAdmissionService } from './admission-service.js';
 import {
@@ -27,6 +27,26 @@ const THREE = 3;
 const setup = (store = new InMemoryAiPersistence()) => ({
   store,
   service: new AiIntentService(store, new AesGcmAiPayloadCipher(TEST_KEY, TEST_KEY_VERSION)),
+});
+it('reads pending run status without preparing accounting and still rejects revoked board access', async () => {
+  const store = new InMemoryAiPersistence();
+  const admission = new AiAdmissionService(fixturePersistencePolicy());
+  const service = new AiIntentService(
+    store,
+    new AesGcmAiPayloadCipher(TEST_KEY, TEST_KEY_VERSION),
+    admission,
+  );
+  const intent = fixtureAiIntent({ boardId: randomUUID() });
+  const { run } = await service.create(intent);
+  const prepare = jest.spyOn(admission, 'prepare');
+  store.locks = [];
+  expect((await service.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).content).toBe('pending');
+  expect(prepare).not.toHaveBeenCalled();
+  expect(store.locks).toEqual(['authority']);
+  store.denied.set(JSON.stringify([TEST_ACTOR, intent.boardId]), 'FORBIDDEN');
+  await expect(service.read(TEST_NAMESPACE, TEST_ACTOR, run.id)).rejects.toMatchObject({
+    code: 'FORBIDDEN',
+  });
 });
 async function fund(store: AiPersistence, run: AiRunRecord): Promise<void> {
   await new AiAdmissionService(fixturePersistencePolicy()).admit(

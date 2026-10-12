@@ -52,6 +52,7 @@ function emit(record: Readonly<Record<string, unknown>>): void {
 }
 
 export function logStartupStage(stage: StartupStage): void {
+  if (process.env.NODE_ENV !== 'production') return;
   emit({ event: 'runtime.startup_stage', stage });
 }
 
@@ -75,5 +76,12 @@ export function logStartupFailure(stage: StartupStage, error: unknown): void {
       // Unknown exception objects may have throwing getters; never serialize them.
     }
   }
-  emit({ event: 'runtime.startup_failed', stage, code, ...(variables ? { variables } : {}) });
+  if (process.env.NODE_ENV === 'production') {
+    emit({ event: 'runtime.startup_failed', stage, code, ...(variables ? { variables } : {}) });
+  } else {
+    new Logger('Bootstrap').error(
+      `Startup failed at ${stage}: ${code}${variables ? ` (${variables.join(', ')})` : ''}`,
+    );
+  }
 }
+import { Logger } from '@nestjs/common';

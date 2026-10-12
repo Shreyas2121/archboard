@@ -29,6 +29,8 @@ export interface AiModelProfile {
   };
 }
 export interface AiPolicy {
+  /** Server-owned development mode; never accepted from product requests. */
+  readonly localUnlimited?: boolean;
   readonly deploymentNamespace: string;
   readonly configurationVersion: string;
   readonly fingerprint: string;

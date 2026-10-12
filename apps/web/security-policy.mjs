@@ -30,10 +30,13 @@ export function contentSecurityPolicy(development = false, connectionOrigins = [
   const connections = development
     ? "'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*"
     : "'self'";
+  const scriptSources = development
+    ? "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'"
+    : "script-src 'self' 'wasm-unsafe-eval'";
   return [
     "default-src 'self'",
     // Shiki's bundled Oniguruma WASM; JavaScript eval remains prohibited.
-    "script-src 'self' 'wasm-unsafe-eval'",
+    scriptSources,
     // React Flow geometry and Radix positioning require inline styles.
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",

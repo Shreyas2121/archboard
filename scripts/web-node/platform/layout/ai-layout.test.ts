@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { layoutAiDiagram, type AiLayoutWorker } from '@/platform/layout/ai-layout';
 import { runAiLayeredLayout } from '@/platform/layout/ai-layout-worker';
+import ELK from 'elkjs/lib/elk.bundled.js';
 import { MAX_AI_OUTPUT_NODES } from '@archboard/contracts';
 import {
   AI_LAYOUT_TIMEOUT_MS,
@@ -20,6 +21,7 @@ const fixture = (): AiLayoutWorker => ({
   terminate: vi.fn(),
 });
 const event = (data: unknown) => ({ data }) as MessageEvent<unknown>;
+const layered = (value: AiLayoutInput) => runAiLayeredLayout(value, new ELK());
 afterEach(() => vi.useRealTimers());
 
 describe('bounded AI diagram layout worker lifecycle', () => {
@@ -100,8 +102,8 @@ describe('bounded AI diagram layout worker lifecycle', () => {
   });
   it('runs the pinned ELK engine deterministically with disconnected components and cyclic topology', async () => {
     const cyclic = { ...input, edges: [...input.edges, { key: 'ba', source: 'b', target: 'a' }] };
-    const a = await runAiLayeredLayout(cyclic);
-    expect(a).toEqual(await runAiLayeredLayout(cyclic));
+    const a = await layered(cyclic);
+    expect(a).toEqual(await layered(cyclic));
     expect(a.map((node) => node.key)).toEqual(['a', 'b', 'c']);
   });
   it('keeps the maximum 40-node disconnected fallback complete and bounded', async () => {
@@ -112,7 +114,7 @@ describe('bounded AI diagram layout worker lifecycle', () => {
       })),
       edges: [],
     };
-    expect((await runAiLayeredLayout(maximum)).length).toBe(MAX_AI_OUTPUT_NODES);
+    expect((await layered(maximum)).length).toBe(MAX_AI_OUTPUT_NODES);
     expect(
       (
         await layoutAiDiagram(maximum, new AbortController().signal, () => {

@@ -28,6 +28,25 @@ const statusCode: Record<number, ErrorCode> = {
   [HttpStatus.SERVICE_UNAVAILABLE]: ERROR_CODES.TEMPORARILY_UNAVAILABLE,
 };
 
+// Fixed product messages distinguish actionable failures without exposing native
+// provider errors, SQL, submitted context, or configuration secrets.
+const aiErrorMessages: Partial<Record<ErrorCode, string>> = {
+  AI_ALLOWANCE_REACHED: 'AI allowance reached.',
+  RATE_LIMITED: 'Too many AI requests.',
+  AI_DISABLED: 'AI is disabled.',
+  AI_INPUT_TOO_LARGE:
+    'The reviewed request exceeds the configured AI model input limit. Reduce context or evidence excerpts, or ask the operator to review the model input limit.',
+  AI_CAPABILITY_UNSUPPORTED:
+    'The configured AI model cannot support this request. Ask the operator to review the model capabilities and pricing configuration.',
+  AI_RESULT_EXPIRED: 'This AI result has expired. Start a new reviewed request.',
+  AI_OUTPUT_INVALID: 'The AI response did not match the required diagram format.',
+  AI_REFUSED: 'The AI provider declined this request.',
+  AI_GENERATION_FAILED: 'AI generation failed. Review the request before trying again.',
+  AI_OUTCOME_UNKNOWN:
+    'The AI generation outcome is unknown. Recover the original request instead of sending a replacement.',
+  TEMPORARILY_UNAVAILABLE: 'The AI service is temporarily unavailable. Try again later.',
+};
+
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
   public catch(exception: unknown, host: ArgumentsHost): void {
@@ -54,13 +73,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
         response.setHeader('Retry-After', String(exception.retryAfterSeconds));
       const message =
         exception instanceof AiPersistenceError
-          ? featureCode === ERROR_CODES.AI_ALLOWANCE_REACHED
-            ? 'AI allowance reached.'
-            : featureCode === ERROR_CODES.RATE_LIMITED
-              ? 'Too many AI requests.'
-              : featureCode === ERROR_CODES.AI_DISABLED
-                ? 'AI is disabled.'
-                : 'AI request could not be completed.'
+          ? (aiErrorMessages[featureCode] ?? 'AI request could not be completed.')
           : exception.message;
       response.status(errorStatus(featureCode)).json(errorEnvelope(featureCode, message));
       return;

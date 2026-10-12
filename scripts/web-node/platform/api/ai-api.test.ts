@@ -93,7 +93,7 @@ describe('typed AI HTTP adapter', () => {
     );
     const deadline = 15_000;
     await vi.advanceTimersByTimeAsync(deadline);
-    expect(await promise).toMatchObject({ kind: 'network' });
+    expect(await promise).toMatchObject({ kind: 'network', name: 'ApiRequestTimeoutError' });
     expect(signal.aborted).toBe(true);
     expect(work).toHaveBeenCalledTimes(1);
     release('Late private result');
@@ -117,6 +117,28 @@ describe('typed AI HTTP adapter', () => {
     content: { status: 'pending' },
     failure: null,
     source: 'generation',
+  });
+  it('allows slow creation beyond 15 seconds and times out once at its longer deadline', async () => {
+    vi.useFakeTimers();
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockImplementation(() => new Promise(() => undefined));
+    vi.stubGlobal('fetch', fetch);
+    const promise = aiTransport
+      .create(randomUUID(), body, new AbortController().signal)
+      .catch((error: unknown) => error);
+    const shortDeadline = 15_000;
+    const createDeadline = 125_000;
+    await vi.advanceTimersByTimeAsync(shortDeadline);
+    const signal = fetch.mock.calls[0]![1]!.signal!;
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(createDeadline - shortDeadline);
+    expect(await promise).toMatchObject({
+      name: 'ApiRequestTimeoutError',
+      message: 'The API did not respond within 125 seconds.',
+    });
+    expect(signal.aborted).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
   it('uses cookies/no-store, strict schemas and the original key/body without retrying POST', async () => {
     const fetch = vi

@@ -23,10 +23,29 @@ export async function schemaCompatible(source: DataSource): Promise<boolean> {
     executed.some((migration) => !expected.includes(migration.name))
   )
     return false;
+  const auth = await readFile(new URL('./auth-schema.sql', import.meta.url), 'utf8');
+  const statements = [...auth.matchAll(/create table "([^"]+)" \((.*?)\);/g)];
+  if (statements.length !== AUTH_TABLE_COUNT) return false;
   const runner = source.createQueryRunner();
   try {
+    // getTable performs a fresh PostgreSQL catalog load on every call. Load all
+    // required product/auth tables together so remote latency is paid once per
+    // catalog query, rather than once per query for every individual table.
+    const names = [
+      ...new Set([
+        ...source.entityMetadatas.map((metadata) => metadata.tablePath),
+        ...statements.map((statement) => statement[1]!),
+      ]),
+    ];
+    const tables = new Map<string, Table>();
+    for (const table of await runner.getTables(names)) {
+      tables.set(table.name, table);
+      // TypeORM omits the current schema from table.name even for a qualified
+      // request. Retain its qualified identity too, without dropping schemas.
+      if (table.schema) tables.set(`${table.schema}.${table.name.split('.').at(-1)}`, table);
+    }
     for (const metadata of source.entityMetadatas) {
-      const table = await runner.getTable(metadata.tablePath);
+      const table = tables.get(metadata.tablePath);
       if (!table) return false;
       for (const column of metadata.columns) {
         const actual = table.columns.find((value) => value.name === column.databaseName);
@@ -62,11 +81,8 @@ export async function schemaCompatible(source: DataSource): Promise<boolean> {
         )
           return false;
     }
-    const auth = await readFile(new URL('./auth-schema.sql', import.meta.url), 'utf8');
-    const statements = [...auth.matchAll(/create table "([^"]+)" \((.*?)\);/g)];
-    if (statements.length !== AUTH_TABLE_COUNT) return false;
     for (const statement of statements) {
-      const table = await runner.getTable(statement[1]!);
+      const table = tables.get(statement[1]!);
       if (!table) return false;
       for (const definition of statement[2]!.matchAll(
         /(?:^|,\s*)"([^"]+)"\s+(text|boolean|timestamptz)([^,]*)/g,

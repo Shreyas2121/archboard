@@ -26,6 +26,7 @@ export const AI_RUN_COORDINATOR = Symbol('AI_RUN_COORDINATOR');
 const SHUTDOWN_MS = 5000;
 const REJECTION_BACKOFF_MS = 250;
 const MAX_PROVIDER_EVENTS = 8192;
+const SETTLEMENT_ATTEMPTS = 2;
 // Conservatively account for the adapter's developer-block/cache-marker framing.
 // This is admission headroom, never prompt padding or a provider-native option.
 const CACHE_PREFIX_FRAMING_BYTES = 256;
@@ -106,15 +107,17 @@ export class AiRunCoordinator {
       request.task !== intent.task ||
       request.maximumOutputTokens > intent.snapshot.maximumOutputTokens ||
       // UTF-8 bytes are a conservative upper bound for the supported tokenizer.
-      inputBytes(request) > intent.snapshot.maximumInputTokens
+      (!this.policy.localUnlimited && inputBytes(request) > intent.snapshot.maximumInputTokens)
     )
       throw new AiPersistenceError('AI_INPUT_TOO_LARGE');
+    const admissionStarted = this.now();
     const created = await this.intents.create(intent);
+    this.operations?.diagnostic('admission', this.now() - admissionStarted);
     if (created.source !== 'created') return created;
     if (
       this.stopping ||
       !this.runtime.accepting ||
-      this.workers.size >= this.policy.limits.globalConcurrency
+      (!this.policy.localUnlimited && this.workers.size >= this.policy.limits.globalConcurrency)
     ) {
       await this.intents.settle(intent.deploymentNamespace, intent.actorUserId, {
         runId: created.run.id,
@@ -125,14 +128,16 @@ export class AiRunCoordinator {
         usage: ZERO_USAGE,
         failureCode: null,
       });
-      return created;
+      return { ...created, run: { ...created.run, phase: 'cancelled' as const } };
     }
     const abort = new AbortController();
     // Schedule only after the intent transaction has committed.
     const done = Promise.resolve()
       .then(() => this.execute(created.run, adapter, request, abort, validateResult))
-      .catch(() => {
-        /* Durable intent remains recoverable; never regenerate after persistence failure. */
+      .catch((error: unknown) => {
+        // Durable intent remains recoverable; never regenerate after persistence failure.
+        this.operations?.add('worker_failures');
+        this.operations?.diagnostic('worker', 0, error);
       })
       .finally(() => this.workers.delete(created.run.id));
     this.workers.set(created.run.id, { abort, done });
@@ -227,9 +232,12 @@ export class AiRunCoordinator {
     const started = this.now();
     try {
       let run: AiRunRecord;
+      const dispatchStarted = this.now();
       try {
         run = await this.intents.markDispatch(ns, actor, prior.id);
-      } catch {
+        this.operations?.diagnostic('dispatch', this.now() - dispatchStarted);
+      } catch (error) {
+        this.operations?.diagnostic('dispatch', this.now() - dispatchStarted, error);
         // A failed claim is never permission to call. If commit was ambiguous the
         // null fence rejects this unsent settlement, preserving recovery liability.
         await this.intents.settle(ns, actor, {
@@ -265,12 +273,16 @@ export class AiRunCoordinator {
             break;
           }
           let terminal: Exclude<ProviderEvent, { type: 'text-delta' }>;
+          const providerStarted = this.now();
           try {
             this.operations?.assertPaid();
             this.operations?.add('fresh_calls');
             terminal = await this.consume(adapter, request, abort.signal);
+            this.operations?.diagnostic('provider', this.now() - providerStarted);
             health = 'healthy';
           } catch (error) {
+            this.operations?.add('provider_failures');
+            this.operations?.diagnostic('provider', this.now() - providerStarted, error);
             if (error instanceof AiPersistenceError) {
               phase = 'cancelled';
               failure = null;
@@ -295,7 +307,13 @@ export class AiRunCoordinator {
               await this.intents.claimAttempt(ns, actor, run.id, run.dispatchToken!);
               continue;
             }
-            if (!rejection) usage = { status: 'unknown' };
+            // Authoritative terminal failure usage can still be settled. A broken
+            // transport with no final usage retains the full unknown liability.
+            if (
+              !rejection &&
+              !(error instanceof AiProviderError && error.failure.usage.status === 'known')
+            )
+              usage = { status: 'unknown' };
             break;
           }
           usage = sumUsage(usage, terminal.usage);
@@ -317,7 +335,8 @@ export class AiRunCoordinator {
             phase = 'completed';
             failure = null;
             break;
-          } catch {
+          } catch (error) {
+            this.operations?.diagnostic('validation', 0, error);
             result = undefined;
             failure = 'AI_OUTPUT_INVALID';
             if (repair || this.policy.limits.repairs !== 1 || usage.status === 'unknown') break;
@@ -326,12 +345,17 @@ export class AiRunCoordinator {
             request.instructions +=
               ' The previous output was invalid. Return only the required JSON result matching the schema.';
             normalizedProviderRequestSchema.parse(request);
-            if (inputBytes(request) > run.snapshot.maximumInputTokens) break;
+            if (
+              !this.policy.localUnlimited &&
+              inputBytes(request) > run.snapshot.maximumInputTokens
+            )
+              break;
             await this.intents.claimAttempt(ns, actor, run.id, run.dispatchToken!);
           }
         }
-      } catch {
-        /* Claim/admission failures stop further network calls. */
+      } catch (error) {
+        // Claim/admission failures stop further network calls.
+        this.operations?.diagnostic('dispatch', 0, error);
       } finally {
         clearTimeout(deadline);
       }
@@ -346,7 +370,7 @@ export class AiRunCoordinator {
         failure = 'AI_OUTCOME_UNKNOWN';
         result = undefined;
       }
-      await this.intents.settle(
+      await this.settleResult(
         ns,
         actor,
         {
@@ -365,6 +389,43 @@ export class AiRunCoordinator {
     } finally {
       release?.(health);
       this.operations?.add('latency_ms', Math.max(0, this.now() - started));
+    }
+  }
+
+  private async settleResult(
+    namespace: string,
+    actor: string,
+    final: AiSettlement,
+    result?: AiResult,
+  ): Promise<void> {
+    // Retry persistence only, with the exact fence/accounting outcome. An ambiguous
+    // commit is resolved by the immutable settlement receipt, never provider I/O.
+    for (let attempt = 0; attempt < SETTLEMENT_ATTEMPTS; attempt++) {
+      const started = this.now();
+      try {
+        await this.intents.settle(namespace, actor, final, result);
+        this.operations?.diagnostic('settlement', this.now() - started);
+        return;
+      } catch (error) {
+        this.operations?.add('settlement_failures');
+        this.operations?.diagnostic('settlement', this.now() - started, error);
+        if (result && error instanceof AiPersistenceError && error.code === 'AI_OUTPUT_INVALID') {
+          // Bounded encryption rejected content before commit. Preserve actual
+          // charge while publishing a terminal content failure without a payload.
+          await this.intents.settle(namespace, actor, {
+            ...final,
+            phase: 'failed',
+            failureCode: 'AI_OUTPUT_INVALID',
+          });
+          return;
+        }
+        if (
+          !(error instanceof AiPersistenceError) ||
+          error.code !== 'TEMPORARILY_UNAVAILABLE' ||
+          attempt > 0
+        )
+          throw error;
+      }
     }
   }
 

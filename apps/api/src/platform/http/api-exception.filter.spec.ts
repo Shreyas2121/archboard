@@ -70,13 +70,19 @@ describe('global HTTP error classification', () => {
       new AiPersistenceError('AI_RESULT_EXPIRED'),
       HttpStatus.GONE,
       ERROR_CODES.AI_RESULT_EXPIRED,
-      'AI request could not be completed.',
+      'This AI result has expired. Start a new reviewed request.',
     ],
     [
       new AiPersistenceError('AI_INPUT_TOO_LARGE'),
       HttpStatus.PAYLOAD_TOO_LARGE,
       ERROR_CODES.AI_INPUT_TOO_LARGE,
-      'AI request could not be completed.',
+      'The reviewed request exceeds the configured AI model input limit. Reduce context or evidence excerpts, or ask the operator to review the model input limit.',
+    ],
+    [
+      new AiPersistenceError('AI_CAPABILITY_UNSUPPORTED'),
+      HttpStatus.BAD_REQUEST,
+      ERROR_CODES.AI_CAPABILITY_UNSUPPORTED,
+      'The configured AI model cannot support this request. Ask the operator to review the model capabilities and pricing configuration.',
     ],
     [
       new BoardServiceError(ERROR_CODES.NOT_FOUND, 'Board unavailable.'),
