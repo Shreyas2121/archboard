@@ -17,6 +17,7 @@ import {
   type ImageExportOptions,
 } from './image-export.js';
 import { capturePortableEnvelope, serializePortableJson } from './index.js';
+import { IMAGE_PADDING, STROKE_MARGIN } from './image-layout.js';
 
 const options: ImageExportOptions = { scope: 'diagram', background: true, theme: 'light' };
 const HALF = 2;
@@ -42,6 +43,15 @@ const empty: GraphProjection = {
 };
 const note = allEntityGraphFixture.nodes.find((node) => node.kind === 'note')!;
 const source = allEntityGraphFixture.edges[0]!;
+
+function watermarkRect(svg: string) {
+  const match = svg.match(
+    /<g id="archboard-watermark"[^>]*transform="translate\(([-\d.]+) ([-\d.]+)\) scale\(([\d.]+)\)"><rect width="([\d.]+)" height="([\d.]+)"/,
+  );
+  if (!match) throw new Error('Expected a positioned watermark badge.');
+  const [, x, y, scale, width, height] = match.map(Number);
+  return { x: x!, y: y!, width: width! * scale!, height: height! * scale! };
+}
 
 describe('controlled SVG', () => {
   it('renders every kind, boundaries, labels/protocols and safe marker/clip definitions deterministically without changing the graph', () => {
@@ -86,33 +96,36 @@ describe('controlled SVG', () => {
     expect(edgeStart).toBeLessThan(cardStart);
     expect(cardStart).toBeLessThan(labelStart);
   });
-  it('escapes malicious text as inert content; only generated allowed primitives/attributes are present', () => {
-    const hostile = `</text><script>alert(1)</script><foreignObject onload="evil"><img src="https://hostile.invalid/pixel"> & ' "`;
-    const graph = {
-      ...empty,
-      nodes: [{ ...note, title: '<script>"&', content: { body: hostile } }],
-    };
-    const svg = renderControlledSvg(graph, options).svg;
-    expect(svg).toContain('&lt;script&gt;&quot;&amp;');
-    const allowed = new Set([
-      'svg',
-      'title',
-      'defs',
-      'marker',
-      'path',
-      'g',
-      'rect',
-      'clipPath',
-      'text',
-      'tspan',
-    ]);
-    for (const tag of svg.matchAll(/<([a-zA-Z]+)\b([^>]*)>/g)) {
-      expect(allowed.has(tag[1]!)).toBe(true);
-      expect(tag[2]).not.toMatch(/\b(?:on[a-z]+|href|style)\s*=/i);
-    }
-    expect(svg).not.toMatch(/<(?:script|foreignObject|image|a|style)\b/i);
-    expect(svg).not.toContain('https://hostile.invalid/pixel"');
-  });
+  it.each([false, true])(
+    'escapes malicious text using only allowed primitives (watermark: %s)',
+    (watermark) => {
+      const hostile = `</text><script>alert(1)</script><foreignObject onload="evil"><img src="https://hostile.invalid/pixel"> & ' "`;
+      const graph = {
+        ...empty,
+        nodes: [{ ...note, title: '<script>"&', content: { body: hostile } }],
+      };
+      const svg = renderControlledSvg(graph, { ...options, watermark }).svg;
+      expect(svg).toContain('&lt;script&gt;&quot;&amp;');
+      const allowed = new Set([
+        'svg',
+        'title',
+        'defs',
+        'marker',
+        'path',
+        'g',
+        'rect',
+        'clipPath',
+        'text',
+        'tspan',
+      ]);
+      for (const tag of svg.matchAll(/<([a-zA-Z]+)\b([^>]*)>/g)) {
+        expect(allowed.has(tag[1]!)).toBe(true);
+        expect(tag[2]).not.toMatch(/\b(?:on[a-z]+|href|style)\s*=/i);
+      }
+      expect(svg).not.toMatch(/<(?:script|foreignObject|image|a|style)\b/i);
+      expect(svg).not.toContain('https://hostile.invalid/pixel"');
+    },
+  );
   it('displays external URL text without links/resources and rejects unsafe URL input', () => {
     const component = allEntityGraphFixture.nodes.find((node) => node.kind === 'component')!;
     const url = 'https://example.test/inert';
@@ -258,6 +271,82 @@ describe('controlled SVG', () => {
         { ...options, theme: 'url(https://hostile.invalid)' },
       ]),
     ).toThrow();
+  });
+});
+
+describe('PNG attribution geometry', () => {
+  it.each(['light', 'dark'] as const)(
+    'reserves a separate footer inside the image bounds with a readable %s badge',
+    (theme) => {
+      const before = JSON.stringify(allEntityGraphFixture);
+      const plain = renderControlledSvg(allEntityGraphFixture, { ...options, theme });
+      const branded = renderControlledSvg(allEntityGraphFixture, {
+        ...options,
+        theme,
+        watermark: true,
+      });
+      const badge = watermarkRect(branded.svg);
+      expect(badge.y).toBeGreaterThan(plain.bounds.y + plain.bounds.height);
+      expect(badge.x).toBeGreaterThanOrEqual(branded.bounds.x);
+      expect(badge.x + badge.width).toBeLessThan(branded.bounds.x + branded.width);
+      expect(badge.y + badge.height).toBeLessThan(branded.bounds.y + branded.height);
+      expect(branded.nodeCount).toBe(plain.nodeCount);
+      expect(branded.edgeCount).toBe(plain.edgeCount);
+      expect(branded.boundaryCount).toBe(plain.boundaryCount);
+      expect(branded.svg).toContain('aria-label="Made with Archboard"');
+      expect(plain.svg).not.toContain('id="archboard-watermark"');
+      expect(JSON.stringify(allEntityGraphFixture)).toBe(before);
+      expect(() => assertControlledSvg(branded)).not.toThrow();
+    },
+  );
+  it('fits a narrow negative-coordinate selection and keeps the surrounding area transparent', () => {
+    const graph = {
+      ...empty,
+      nodes: [{ ...note, position: { x: -300, y: -200 }, size: { width: 160, height: 100 } }],
+    };
+    const plain = renderControlledSvg(graph, options);
+    const branded = renderControlledSvg(graph, {
+      ...options,
+      background: false,
+      scope: 'selection',
+      selection: [{ kind: 'node', id: note.id }],
+      watermark: true,
+    });
+    const badge = watermarkRect(branded.svg);
+    expect(branded.bounds.x).toBe(plain.bounds.x);
+    expect(branded.bounds.y).toBe(plain.bounds.y);
+    expect(branded.width).toBeGreaterThan(plain.width);
+    expect(branded.height).toBeGreaterThan(plain.height);
+    expect(badge.x).toBeGreaterThanOrEqual(branded.bounds.x);
+    expect(badge.x + badge.width).toBeLessThan(branded.bounds.x + branded.width);
+    expect(branded.svg).not.toContain('fill="#eeefe9"');
+    expect(branded.svg).toContain('fill="#ffffff"');
+    expect(imageDimensions(branded.width, branded.height, HALF)).toEqual({
+      width: branded.width * HALF,
+      height: branded.height * HALF,
+    });
+  });
+  it('counts the footer toward image limits instead of clipping attribution or shrinking content', () => {
+    const graph = {
+      ...empty,
+      boundaries: [
+        {
+          id: crypto.randomUUID(),
+          title: 'Tall diagram',
+          color: 'gray' as const,
+          rect: {
+            x: 0,
+            y: 0,
+            width: 160,
+            height: MAX_EXPORT_IMAGE_SIDE_PIXELS - HALF * (IMAGE_PADDING + STROKE_MARGIN),
+          },
+        },
+      ],
+    };
+    expect(renderControlledSvg(graph, options).height).toBe(MAX_EXPORT_IMAGE_SIDE_PIXELS);
+    expect(() => renderControlledSvg(graph, { ...options, watermark: true })).toThrow(
+      'Reduce scope',
+    );
   });
 });
 

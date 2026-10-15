@@ -10,6 +10,10 @@ import { allEntityGraphFixture } from '../packages/fixtures/dist/index.js';
 
 const options = { scope: 'diagram', background: false, theme: 'light' };
 const image = exports.renderControlledSvg(allEntityGraphFixture, options);
+const brandedImage = exports.renderControlledSvg(allEntityGraphFixture, {
+  ...options,
+  watermark: true,
+});
 const ts = createRequire(new URL('../package.json', import.meta.url))('typescript');
 const source = ts.transpileModule(
   await readFile(
@@ -26,6 +30,7 @@ async function harness(mode = 'success') {
   const images = [];
   const canvases = [];
   const draws = [];
+  const decodedSources = [];
   let next = 0;
   let encode;
   const context = vm.createContext({
@@ -55,6 +60,7 @@ async function harness(mode = 'success') {
       }
       set src(value) {
         this.value = value;
+        decodedSources.push(urls.get(value));
         if (mode === 'decode-error') this.onerror();
         else if (mode !== 'decode-pending') this.onload();
       }
@@ -120,6 +126,7 @@ async function harness(mode = 'success') {
     images,
     canvases,
     draws,
+    decodedSources,
     controller,
     run(format = 'png', scale = 1, artifact = image, downloading = () => {}) {
       return module.namespace.downloadDiagramImage(
@@ -165,15 +172,17 @@ test('SVG download preserves controlled bytes, fixed filename and releases URL e
 
 test('PNG exact scale is applied before draw; synthetic success releases all ports and never changes source graph', async () => {
   const before = JSON.stringify(allEntityGraphFixture);
-  for (const scale of [1, 2]) {
-    const h = await harness();
-    let downloads = 0;
-    await h.run('png', scale, image, () => downloads++);
-    assert.deepEqual(h.draws, [[0, 0, image.width * scale, image.height * scale]]);
-    assert.equal(downloads, 1);
-    assert.equal(h.clicks[0].blob.type, 'image/png');
-    h.clean();
-  }
+  for (const artifact of [image, brandedImage])
+    for (const scale of [1, 2]) {
+      const h = await harness();
+      let downloads = 0;
+      await h.run('png', scale, artifact, () => downloads++);
+      assert.deepEqual(h.draws, [[0, 0, artifact.width * scale, artifact.height * scale]]);
+      assert.equal(await h.decodedSources[0].text(), artifact.svg);
+      assert.equal(downloads, 1);
+      assert.equal(h.clicks[0].blob.type, 'image/png');
+      h.clean();
+    }
   assert.equal(JSON.stringify(allEntityGraphFixture), before);
 });
 

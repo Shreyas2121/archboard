@@ -85,6 +85,7 @@ export function ImageExportControl({
         selection: [...selection],
         background,
         theme: resolvedTheme,
+        watermark: format === 'png',
       });
       await downloadDiagramImage(image, title, format, scale, controller.signal, () => {
         if (!current()) {
@@ -182,7 +183,8 @@ export function ImageExportControl({
         </Select>
         <p className="text-sm text-muted-foreground">
           Maximum 8,192 pixels per side and 32 megapixels. SVG uses 1× geometry. External URLs
-          remain plain text; images contain no editor controls or presentation overlays.
+          remain plain text; images contain no editor controls or presentation overlays. PNG exports
+          include a small “Made with Archboard” footer.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button type="button" disabled={busy} onClick={() => void exportImage('svg')}>

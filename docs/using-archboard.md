@@ -67,6 +67,11 @@ SVG/PNG are visual artifacts, not editable backups. Choose scope/background and
 1×/2× output deliberately. The image pipeline controls resources and does not run
 user HTML.
 
+PNG exports include the Archboard mark and **Made with Archboard** in a footer at
+the bottom right. The footer stays clear of the diagram, follows the theme, and
+scales with 1×/2× output. Transparent exports keep the surrounding area transparent;
+the badge has its own readable background. SVG exports retain the diagram alone.
+
 | Limit               | Current contract                                |
 | ------------------- | ----------------------------------------------- |
 | Live graph          | 500 nodes, 1,000 edges, 50 boundaries, 50 steps |

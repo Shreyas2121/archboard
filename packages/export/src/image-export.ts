@@ -23,6 +23,7 @@ import {
   layoutImageText,
 } from './image-layout.js';
 import { layoutConnections, connectionPath, CONNECTION_LABEL_INSET } from './connection-layout.js';
+import { layoutImageBranding, renderImageBranding } from './image-branding.js';
 export {
   escapeXml,
   imageDimensions,
@@ -41,6 +42,7 @@ export interface ImageExportOptions {
   readonly selection?: readonly ImageSelection[];
   readonly background: boolean;
   readonly theme: 'light' | 'dark';
+  readonly watermark?: boolean;
 }
 export interface ControlledSvg {
   readonly svg: string;
@@ -73,6 +75,7 @@ const THEMES = {
     text: '#202a34',
     muted: '#5d6872',
     edge: '#657467',
+    brand: '#3158c9',
   },
   dark: {
     background: '#10151b',
@@ -80,6 +83,7 @@ const THEMES = {
     text: '#e5eaf0',
     muted: '#a9b5c3',
     edge: '#9cacbd',
+    brand: '#92b1ff',
   },
 } as const;
 type Palette = (typeof THEMES)[keyof typeof THEMES];
@@ -89,9 +93,10 @@ export function selectImageGraph(graph: GraphProjection, options: ImageExportOpt
   if (
     !['diagram', 'selection'].includes(options.scope) ||
     !['light', 'dark'].includes(options.theme) ||
-    typeof options.background !== 'boolean'
+    typeof options.background !== 'boolean' ||
+    (options.watermark !== undefined && typeof options.watermark !== 'boolean')
   )
-    throw new Error('Choose a supported image scope, theme and background.');
+    throw new Error('Choose a supported image scope, theme, background and watermark option.');
   const frozen = graphProjectionSchema.parse(graph);
   const nodeIds = new Set(
     options.scope === 'diagram'
@@ -212,7 +217,9 @@ export function renderControlledSvg(
   const minY = Math.min(...rectangles.map((rect) => rect.y)) - margin;
   const maxX = Math.max(...rectangles.map((rect) => rect.x + rect.width)) + margin;
   const maxY = Math.max(...rectangles.map((rect) => rect.y + rect.height)) + margin;
-  const bounds = Object.freeze({ x: minX, y: minY, width: maxX - minX, height: maxY - minY });
+  const contentBounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  const branding = options.watermark ? layoutImageBranding(contentBounds, margin) : null;
+  const bounds = Object.freeze(branding?.bounds ?? contentBounds);
   const dimensions = imageDimensions(bounds.width, bounds.height);
   const boundaries = scoped.boundaries
     .map((boundary) => {
@@ -236,7 +243,7 @@ export function renderControlledSvg(
     })
     .join('');
   const markers = `<defs><marker id="arrow-end" markerWidth="${MARKER_SIZE}" markerHeight="${MARKER_SIZE}" refX="${MARKER_SIZE}" refY="${MARKER_SIZE / IMAGE_HALF}" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L ${MARKER_SIZE} ${MARKER_SIZE / IMAGE_HALF} L 0 ${MARKER_SIZE} Z" fill="${palette.edge}"/></marker><marker id="arrow-start" markerWidth="${MARKER_SIZE}" markerHeight="${MARKER_SIZE}" refX="0" refY="${MARKER_SIZE / IMAGE_HALF}" orient="auto" markerUnits="userSpaceOnUse"><path d="M ${MARKER_SIZE} 0 L 0 ${MARKER_SIZE / IMAGE_HALF} L ${MARKER_SIZE} ${MARKER_SIZE} Z" fill="${palette.edge}"/></marker></defs>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${dimensions.width}" height="${dimensions.height}" viewBox="${minX} ${minY} ${dimensions.width} ${dimensions.height}"><title>Archboard diagram</title>${markers}${options.background ? `<rect x="${minX}" y="${minY}" width="${dimensions.width}" height="${dimensions.height}" fill="${palette.background}"/>` : ''}${boundaries}${paths}${scoped.nodes.map((node, index) => card(node, index, palette)).join('')}${labels}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${dimensions.width}" height="${dimensions.height}" viewBox="${minX} ${minY} ${dimensions.width} ${dimensions.height}"><title>Archboard diagram</title>${markers}${options.background ? `<rect x="${minX}" y="${minY}" width="${dimensions.width}" height="${dimensions.height}" fill="${palette.background}"/>` : ''}${boundaries}${paths}${scoped.nodes.map((node, index) => card(node, index, palette)).join('')}${labels}${branding ? renderImageBranding(branding, palette) : ''}</svg>`;
   const result = Object.freeze({
     svg,
     ...dimensions,
