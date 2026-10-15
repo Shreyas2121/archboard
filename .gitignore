@@ -20,3 +20,11 @@ Thumbs.db
 .neon
 ops/secrets/
 ops/production.env
+
+# Local scratch files and imported/exported project diagrams.
+.tmp/
+.tmp-*
+/prompt.txt
+/archboard.*-context.json
+/archboard-*.png
+/archboard-*.svg

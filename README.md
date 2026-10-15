@@ -45,6 +45,9 @@ The [portfolio walkthrough](docs/portfolio-walkthrough.md) provides a five-minut
 script and engineering notes. Add real screenshots or recordings after exercising
 the corresponding workflow.
 
+The [documentation index](docs/README.md) separates current guides from historical
+implementation plans and verification records.
+
 ## Engineering
 
 React Flow owns canvas interaction and rendering. Yjs supplies document merging.
@@ -90,6 +93,7 @@ pnpm format:check
 pnpm lint
 pnpm typecheck
 pnpm boundary:check
+pnpm repo:check --outgoing
 pnpm build
 ```
 

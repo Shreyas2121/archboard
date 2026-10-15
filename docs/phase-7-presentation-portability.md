@@ -65,7 +65,7 @@ Partial success never means full phase PASS. See the executable
 ## Deliverables and exit criteria
 
 Each row separates delivered source/pure proof from still-required real boundaries.
-The numbered deliverables match [phase7.md sections 16–17](../phase7.md).
+The numbered deliverables match [phase7.md sections 16–17](https://github.com/Shreyas2121/archboard/blob/5726e72ed6b15a418cff5706a1a4844afbfc8cd1/phase7.md).
 
 | Deliverable / exit condition                          | Delivered source and permitted proof                                               | Outstanding acceptance                                                                                               |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |

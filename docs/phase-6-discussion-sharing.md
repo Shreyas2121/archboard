@@ -100,7 +100,7 @@ graph outbox entries. Existing WS envelopes are unchanged; resource callbacks we
 
 ## Deliverables and exit criteria
 
-Numbers follow [phase6.md section 16](../phase6.md#16-deliverables); each row also
+Numbers follow [phase6.md section 16](https://github.com/Shreyas2121/archboard/blob/edc5b352021fa87152dcbd2a5d7536a5910d10e8/phase6.md#16-deliverables); each row also
 covers its related section 17 exit condition. Supporting PASS applies only to the
 named boundary. Every required current-tree DB and rendered boundary below is UNRUN
 under its respective pause, so every integrated exit criterion remains OPEN.

@@ -1,5 +1,10 @@
 # AI implementation guide — commit-by-commit agent handoff
 
+> Historical implementation guide for the retired hosted AI feature. Its original
+> task sequence and enablement instructions are retained for reference. Use
+> [Project JSON](docs/project-context.md) for the current workflow and the
+> [documentation index](docs/README.md) for maintained guides.
+
 Date: **3 October 2026**. Branch: **`ai-diagram-integration`**, to be created or
 selected by the implementing agent. This planning session remains on `main`.
 

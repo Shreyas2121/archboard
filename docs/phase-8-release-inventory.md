@@ -2,7 +2,7 @@
 
 P8-01 source boundary: `71bd9c46d0c53882a9ecb0e3fc1797b7171f6631`.
 Date: 2 October 2026. Authority: [plan.md](../plan.md) v1.1,
-[phase8.md](../phase8.md) v1.0, [guide7.md](../guide7.md) v1.0, and the
+[phase8.md](https://github.com/Shreyas2121/archboard/blob/71bd9c46d0c53882a9ecb0e3fc1797b7171f6631/phase8.md) v1.0, [guide7.md](https://github.com/Shreyas2121/archboard/blob/71bd9c46d0c53882a9ecb0e3fc1797b7171f6631/guide7.md) v1.0, and the
 [verification policy](verification-policy.md). This is an implementation inventory,
 not a release audit or refreshed acceptance result. Release acceptance is **OPEN**.
 The [verification inventory](phase8-verification.md) defines case IDs, execution

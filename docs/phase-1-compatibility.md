@@ -159,8 +159,8 @@ infrastructure folders. The browser bundle search found no API database or auth 
 names. Core graph mutation and validation remain in document-model; the C14 mountable textarea is
 a labeled compatibility spike, not an editable graph store or product editor.
 
-Version 1.1 of [`plan.md`](../plan.md) and [`phase1.md`](../phase1.md) records the already-approved
-TypeORM choice from [guide §2.2](../guide.md) instead of the original Drizzle baseline. It also
+Version 1.1 of [`plan.md`](../plan.md) and [`phase1.md`](https://github.com/Shreyas2121/archboard/blob/95e2eff54e935c8c77d7cd7e227c7c2bf47fbf3e/phase1.md) records the already-approved
+TypeORM choice from [guide §2.2](https://github.com/Shreyas2121/archboard/blob/95e2eff54e935c8c77d7cd7e227c7c2bf47fbf3e/guide.md) instead of the original Drizzle baseline. It also
 clarifies that C09's native `ws` HTTP upgrade listener is the Phase 1 cookie/Origin proof while the
 production room adapter remains later work. Neither amendment changes the graph, protocol, durable
 receipt, or offline data contracts. No new unapproved architecture substitution was made.

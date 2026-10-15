@@ -2,8 +2,8 @@
 
 P8-01 inventory at `71bd9c46d0c53882a9ecb0e3fc1797b7171f6631`;
 this file prepares verification, not execution or acceptance. See the
-[source/owner inventory](phase-8-release-inventory.md), [Phase 8 specification](../phase8.md),
-[guide](../guide7.md) and [policy](verification-policy.md). Every current integrated
+[source/owner inventory](phase-8-release-inventory.md), [Phase 8 specification](https://github.com/Shreyas2121/archboard/blob/71bd9c46d0c53882a9ecb0e3fc1797b7171f6631/phase8.md),
+[guide](https://github.com/Shreyas2121/archboard/blob/71bd9c46d0c53882a9ecb0e3fc1797b7171f6631/guide7.md) and [policy](verification-policy.md). Every current integrated
 A01–A30 gate is **OPEN**. Supporting historical proof stays at its original build.
 
 P8-05's [admission and validation map](phase-8-admission-validation.md) records

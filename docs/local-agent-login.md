@@ -22,6 +22,9 @@ An agent can use an isolated browser context, open the local home page, click th
 button, and create a test board using the normal UI. Keep the context isolated from
 your personal GitHub session. No auth-schema migration is needed.
 
-For AI reproduction, upload [the minimal synthetic context](examples/ai-debug.project-context.json)
-on a test board, review it and generate. Provider requests still use the configured
-provider and its billing. The login itself does not send an AI request.
+For project-import debugging, use [the three-component synthetic context](examples/three-component.archboard-context.json)
+through **Project JSON** on an editable test board. Review the local preview and
+add it to the board. The same workflow also works in the database-free `/demo`
+without signing in. See [Project JSON](project-context.md) for extraction types and
+file rules. Hosted AI generation is retired; neither this login nor local diagram
+preparation sends a model-provider request.

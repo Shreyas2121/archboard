@@ -19,3 +19,11 @@ ops/production.env
 **/*storage-state*.json
 **/*.dump
 **/*.backup
+.tmp
+**/.tmp
+.tmp-*
+**/.tmp-*
+prompt.txt
+archboard.*-context.json
+archboard-*.png
+archboard-*.svg

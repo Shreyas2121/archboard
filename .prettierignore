@@ -5,3 +5,8 @@ pnpm-lock.yaml
 plan.md
 phase1.md
 guide.md
+.tmp
+.tmp-*
+prompt.txt
+archboard.*-context.json
+archboard-*.svg
