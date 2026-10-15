@@ -43,9 +43,10 @@ service-worker offline reload.
    hidden controls. Demonstrate lost-ACK retry only in a verified disposable harness:
    the same update ID/exact bytes must return the original receipt/sequence.
 
-P8-07's prepared Linux/test-DB process harness covers literal pre/post-commit death
-and exact retries; see [operations](phase-8-operations.md). Never crash the database
-holding your actual diagrams to make a portfolio clip.
+The prepared `apps/api/scripts/p8-07-process-proof.mjs` Linux/test-DB harness covers
+literal pre/post-commit death and exact retries. It remains deferred under the
+[verification policy](verification-policy.md). Never crash the database holding
+your actual diagrams to make a portfolio clip.
 
 ## Project JSON walkthrough
 

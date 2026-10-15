@@ -5,7 +5,7 @@ Accepted planning baseline: `e3ba28cab6503d32de247ea7f355eedf9bdc8abc` (`updated
 which includes the planning documents first committed in
 `3bce673e58d3c0dae9c9c6b301710e1ffffc519c` (`docs`).
 
-Authority: [implementation guide](../../../guide.md), [AI plan](../../../plan-ai.md),
+Authority: [implementation guide](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md), [AI plan](../../../plan-ai.md),
 and [verification policy](../../verification-policy.md).
 
 AI-C00 delivers the documentation baseline; AI-C01 delivers shared contracts.

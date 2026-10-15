@@ -99,7 +99,7 @@ AI-C10 implementation is delivered. Browser/database/live-provider and original
 Version 1 release gates remain **OPEN**. No push, merge, deployment, migration or
 paid provider request was performed.
 
-Next: [AI-C11 — proposal mapping and layout](../../../guide.md#ai-c11--semantic-to-graph-mapping-and-deterministic-layout),
+Next: [AI-C11 — proposal mapping and layout](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c11--semantic-to-graph-mapping-and-deterministic-layout),
 depending on this introducing commit and AI-C01. Map validated semantic proposals
 to fresh graph IDs and bounded deterministic drafts, evaluate/pin elkjs and worker
 termination/fallback, and preflight a detached candidate before live mutation.

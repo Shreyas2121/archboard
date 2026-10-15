@@ -104,7 +104,7 @@ browser acceptance. The build reports its existing large-chunk advisory.
 All browser/database/live-provider acceptance gates and the original Version 1
 release gate remain **OPEN**. No push, merge or deployment occurred.
 
-Next: [AI-C16](../../../guide.md#ai-c16--provider-prompt-cache-optimization), optional
+Next: [AI-C16](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c16--provider-prompt-cache-optimization), optional
 capability-aware provider prompt-cache optimization. Preserve exact actor-private
 result caching, reviewed context, optional finite operator ceilings, conservative
 admission/accounting, normal commands and truthful durability. Do not pad/prewarm,

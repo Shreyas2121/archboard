@@ -142,7 +142,7 @@ AI-C14 implementation is delivered. It does not establish the original M00–M08
 implementation-completion trigger or close browser/database/live-provider proof.
 No push, merge, deployment, migration or paid request was performed.
 
-Next: [AI-C15 — presentation proposals and recruiter guidance](../../../guide.md#ai-c15--presentation-proposals-and-recruiter-guidance).
+Next: [AI-C15 — presentation proposals and recruiter guidance](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c15--presentation-proposals-and-recruiter-guidance).
 Preserve field-aware stale checks, normal command/history semantics, stable IDs,
 scoped replay barriers, private conversations/highlights, operator admission/cache/
 accounting and committed ACK behavior. Resolve this evidence's introducing commit

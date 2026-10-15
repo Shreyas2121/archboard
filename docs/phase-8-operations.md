@@ -1,5 +1,12 @@
 # Single-writer production operations
 
+> Historical runbook: the optional `ops/` deployment package and its package-only
+> verification scripts were removed on October 15, 2026. The commands below
+> describe that former package. Its [source snapshot](https://github.com/Shreyas2121/archboard/tree/37b663661045f8fe6cbed7db265141b84131718e/ops)
+> remains in Git history. Use [setup](setup.md) for the current development and
+> production-build workflow. The retained API process-proof harness remains
+> deferred under the [verification policy](verification-policy.md).
+
 For the current personal/portfolio scope, start with [local setup](setup.md) and
 [diagram preservation](using-archboard.md). P8-08 daily backup/restore automation
 is unfinished/deferred; the procedures below describe the optional P8-07 package,

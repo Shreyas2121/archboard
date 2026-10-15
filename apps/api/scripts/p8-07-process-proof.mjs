@@ -19,7 +19,7 @@ import {
   COLOR_TOKENS,
   COMPONENT_CATEGORIES,
 } from '@archboard/contracts';
-import { proofTarget } from '../../../scripts/ops/proof-target.mjs';
+import { proofTarget } from '../../../scripts/security/process-proof-target.mjs';
 import { DATABASE_ENTITIES } from '../dist/platform/database/database-entities.js';
 import { InitialDatabaseFoundation1789300000000 } from '../dist/migrations/1789300000000-InitialDatabaseFoundation.js';
 import { RetainCompactedUpdateReceipts1790426800000 } from '../dist/migrations/1790426800000-RetainCompactedUpdateReceipts.js';

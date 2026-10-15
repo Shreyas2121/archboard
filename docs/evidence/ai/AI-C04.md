@@ -94,7 +94,7 @@ Browser/database/provider acceptance and the original Version 1 release gate rem
 Fixture separation does not establish real provider switchability or close runtime
 accounting/authorization acceptance.
 
-Next: [AI-C05](../../../guide.md#ai-c05--durable-runs-receipts-and-accounting-intent),
+Next: [AI-C05](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c05--durable-runs-receipts-and-accounting-intent),
 using this task's actual introducing commit. Implement durable runs, receipts,
 accounting intent and encrypted bounded payload storage with forward migration
 sources and prepared integration tests. Database execution remains deferred until

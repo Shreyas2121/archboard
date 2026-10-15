@@ -123,7 +123,7 @@ the original Version 1 release gate remain **OPEN**; this task does not establis
 the M00–M08 completion trigger. No push, merge, deployment, database check or paid
 request was performed.
 
-Next: [AI-C14 — scoped edits with field preconditions](../../../guide.md#ai-c14--scoped-edits-with-field-preconditions).
+Next: [AI-C14 — scoped edits with field preconditions](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c14--scoped-edits-with-field-preconditions).
 Preserve strict reviewed context, private history, stale selection/dispatch fences,
 server-owned admission/cache/accounting, existing graph commands and committed ACK
 semantics. Resolve this evidence's introducing commit in the next index update.

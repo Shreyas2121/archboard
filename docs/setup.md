@@ -1,7 +1,7 @@
 # Setup
 
-Use Node **22.23.2**, pnpm **11.24.0** and the committed lockfile. The optional server
-package uses PostgreSQL **17.11**. No paid service is required for the local demo.
+Use Node **22.23.2**, pnpm **11.24.0** and the committed lockfile. Authenticated
+server boards use PostgreSQL. No paid service is required for the local demo.
 These are intended setup instructions; fresh-checkout/browser/database setup was
 not executed for P8-09. They do not override the current verification pause.
 On Windows use `pnpm.cmd` where PowerShell blocks the `pnpm` script shim.
@@ -106,21 +106,23 @@ also build export/sync-client as in the demo sequence. Run exactly one API again
 the database. Schema and writer readiness must pass before it listens.
 Endpoints: `/health/live`, `/health/ready`, `/api/v1/openapi.json`.
 
-## Optional production package
+## Production builds
 
-Follow [operations](phase-8-operations.md) for Compose, secret files and pinned
-builds. Production requires one HTTPS web/API origin and its WSS counterpart.
-OAuth callback: `https://<host>/api/auth/callback/github`; homepage: that HTTPS origin.
-Public origins are embedded in the frontend; changing them requires rebuilding.
+Production builds require actual HTTPS API and WSS origins. Use the configured
+public API origin for the GitHub OAuth callback
+`https://<api-host>/api/auth/callback/github`, and the frontend origin for the
+homepage. Allow the exact frontend origin in the API configuration. Public origins
+are embedded in the frontend; changing them requires rebuilding.
 
 A development HTTP `.env.local` is unsuitable for a production build. Override
 its two public origins through root `.env.production.local` with actual HTTPS/WSS
 deployment values, or supply them in the build environment. API production mode
 separately uses `NODE_ENV=production`. `pnpm build` compiles without serving and
-does not prove OAuth, cookies, TLS, WSS or offline behavior. The earlier split
-Vercel/Render/Neon topology is not the current packaged default. Native Caddy
-adaptation and Docker image builds remain unverified. No deployment/account/DNS
-setup was performed by this task.
+does not prove OAuth, cookies, TLS, WSS or offline behavior. Deployment packaging
+and hosting setup are not supplied. Run one API writer per database and configure
+the selected host for the existing API, WebSocket, routing and security policies.
+The [retired operations runbook](phase-8-operations.md) records the former optional
+Docker/Compose package; its commands are historical references.
 
 Daily backup/restore automation is unfinished; see [preservation guidance](using-archboard.md).
 

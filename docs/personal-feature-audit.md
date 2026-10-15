@@ -1,5 +1,9 @@
 # Personal use and recruiter demo feature audit
 
+> Historical audit from October 3, 2026. The optional deployment package described
+> below was removed on October 15; see [current setup](setup.md). The original
+> observations and results remain unchanged.
+
 Date: 3 October 2026. Source: local `main` at `86276b9`, with pre-existing
 deletions of `guide7.md` and `phase8.md`. Those deletions were left untouched.
 Scope: feature implementation against `plan.md`, personal architecture diagrams,

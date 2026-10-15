@@ -104,7 +104,7 @@ are implemented and the applicable verification conditions permit execution.
 
 ## Handoff
 
-Next: [AI-C02](../../../guide.md#ai-c02--operator-configuration-and-provider-port),
+Next: [AI-C02](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c02--operator-configuration-and-provider-port),
 depending on this task's actual commit. Read the API instructions, implement the
 neutral provider port and validated server-only operator configuration, and reject
 unimplemented production providers. Use these shared contracts rather than SDK

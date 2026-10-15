@@ -96,7 +96,7 @@ Database, browser, live-provider and release gates remain **OPEN**. Follow the
 [verification policy](../../verification-policy.md); the original Version 1
 implementation trigger remains outstanding.
 
-Next: [AI-C07](../../../guide.md#ai-c07--run-orchestration-and-recovery),
+Next: [AI-C07](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c07--run-orchestration-and-recovery),
 `feat(api): coordinate bounded AI execution and recovery`.
 Wire the existing funded creation/attempt/settlement ports into provider execution
 outside locks, establish rendered-request token-counting bounds, enforce classified

@@ -13,7 +13,7 @@ The branch was created from the clean `main` baseline
 `3bce673e58d3c0dae9c9c6b301710e1ffffc519c`. On resumption it contained the newer
 accepted planning commit `e3ba28cab6503d32de247ea7f355eedf9bdc8abc`; this task uses
 that current parent without resetting or overwriting it.
-[guide.md](../../../guide.md) and [plan-ai.md](../../../plan-ai.md) were already
+[guide.md](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md) and [plan-ai.md](../../../plan-ai.md) were already
 tracked by those planning commits. Their content is preserved unchanged and
 included in the formatting and local-link checks.
 
@@ -67,7 +67,7 @@ No push, merge, deployment, configured migration, or optional helper work occurs
 
 ## Handoff
 
-Next: [AI-C01 — shared input, output, lifecycle, limits](../../../guide.md#ai-c01--shared-input-output-lifecycle-limits),
+Next: [AI-C01 — shared input, output, lifecycle, limits](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c01--shared-input-output-lifecycle-limits),
 whose dependency is this task's actual commit. Read the current guide and plan,
 implement bounded strict contracts and database-free fixtures, and add its evidence
 and index entry. Read the applicable nested instructions before touching API or

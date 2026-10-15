@@ -94,7 +94,7 @@ AI-C11 implementation is delivered. Browser/database/live-provider and original
 Version 1 release gates remain **OPEN**. No push, merge, deployment, migration or
 paid provider request was performed.
 
-Next: [AI-C12 — preview and additive Apply](../../../guide.md#ai-c12--preview-and-additive-apply),
+Next: [AI-C12 — preview and additive Apply](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c12--preview-and-additive-apply),
 depending on this introducing commit. Reuse `prepareAiDiagramDraft` for detached
 preview; show all counts/commentary, including steps and fallback status. Capture
 target/preconditions and recheck authority/archive/expiry, IDs, capacity and encoded

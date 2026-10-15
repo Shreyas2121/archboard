@@ -92,7 +92,7 @@ AI-C09 implementation is delivered. Database/browser/live-provider and original
 Version 1 release gates remain **OPEN**. No push, merge, deployment or migration
 was performed.
 
-Next: [AI-C10 — prompt/form/JSON review UI](../../../guide.md#ai-c10--prompt-form-json-review-and-typed-transport),
+Next: [AI-C10 — prompt/form/JSON review UI](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c10--prompt-form-json-review-and-typed-transport),
 depending on this task's actual introducing commit. Build explicit reviewed Generate
 intent and a typed API/SSE client using [the HTTP contract](../../ai-http.md).
 Treat snapshot IDs as resumption markers rather than gap-free replay offsets;

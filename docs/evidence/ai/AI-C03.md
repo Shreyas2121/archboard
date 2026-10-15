@@ -108,7 +108,7 @@ Those acceptance gates and the original Version 1 release gate remain **OPEN**.
 Fixture proof does not establish live schema compatibility or real cost accounting.
 No push, merge, deployment, configured migration or live provider request occurred.
 
-Next: [AI-C04](../../../guide.md#ai-c04--provider-abstraction-boundary-checks), using
+Next: [AI-C04](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c04--provider-abstraction-boundary-checks), using
 this task's actual introducing commit. Apply the SDK-free shared provider suite to
 the independent test-only implementation and strengthen abstraction/registry/static
 boundary proof. Implementing Claude or live provider switching remains deferred.

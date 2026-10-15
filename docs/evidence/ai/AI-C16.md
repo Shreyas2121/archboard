@@ -110,7 +110,7 @@ proof, not browser, database or live-provider acceptance.
 All browser/database/live-provider acceptance gates and the original Version 1
 release gate remain **OPEN**. No push, merge or deployment occurred.
 
-Next: [AI-C17](../../../guide.md#ai-c17--cleanup-metrics-kill-switch-and-shutdown),
+Next: [AI-C17](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c17--cleanup-metrics-kill-switch-and-shutdown),
 bounded retention cleanup, safe operational metrics, kill switch and shutdown.
 Preserve immutable accounting/unknown liabilities independently of private payload
 expiry, exact authorization and private reuse, optional finite ceilings, provider

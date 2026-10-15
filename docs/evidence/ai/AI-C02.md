@@ -106,7 +106,7 @@ call, account initialization, push, merge or deployment occurred.
 
 ## Handoff
 
-Next: [AI-C03 — OpenAI adapter](../../../guide.md#ai-c03--openai-adapter), depending
+Next: [AI-C03 — OpenAI adapter](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c03--openai-adapter), depending
 on this task's actual commit. Add the official pinned SDK only inside the backend
 OpenAI adapter path, register that real implementation through `AI_PROVIDER_ADAPTERS`,
 and use neutral fixtures to test Responses translation/terminal usage/errors/abort.

@@ -7,7 +7,6 @@ Start with the maintained guides for the current product:
 - [Project JSON](project-context.md): focused extraction, local layout and importing diagrams.
 - [Portfolio walkthrough](portfolio-walkthrough.md): demonstration flow and engineering context.
 - [Local development login](local-agent-login.md): isolated development-only test accounts.
-- [Operations](phase-8-operations.md): the optional deployment package and operating procedures.
 - [Verification policy](verification-policy.md): the current browser/database verification deferrals.
 
 ## Before committing or pushing
@@ -19,7 +18,7 @@ current index. Neither mode inspects credentials inside files or rewrites histor
 Run formatting, lint, types and the focused checks relevant to the change.
 
 Keep personal project-context files, exported diagrams and `.tmp` debugging output
-locally; Git and Docker ignore them. Deliberate reusable examples belong in
+locally; Git, the formatter and the linter ignore them. Deliberate reusable examples belong in
 `docs/examples`, and reviewed verification artifacts belong in `docs/evidence`.
 
 ## Historical plans and evidence
@@ -29,7 +28,11 @@ The [Version 1 plan](../plan.md), [phase closure](phase-8-closure.md) and
 remaining acceptance boundaries. Historical records describe their original
 source/commit and verification scope; they are not current release proof.
 
-Hosted AI is retired. Its [plan](../plan-ai.md), [implementation guide](../guide.md),
+The [former operations runbook](phase-8-operations.md) describes the retired
+Docker/Compose deployment package. It is historical documentation, not setup for
+the current repository.
+
+Hosted AI is retired. Its [plan](../plan-ai.md), [implementation guide](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md),
 [usage guide](using-ai.md) and [evidence index](evidence/ai/README.md) remain as
 historical references for the dormant implementation. Use Project JSON for the
 active diagram-import workflow.

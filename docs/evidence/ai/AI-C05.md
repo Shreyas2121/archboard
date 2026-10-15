@@ -97,7 +97,7 @@ does not resume the original Version 1 implementation trigger. Follow the
 [verification policy](../../verification-policy.md); do not invoke aggregate
 commands with deferred children.
 
-Next: [AI-C06](../../../guide.md#ai-c06--durable-rate-token-concurrency-and-spending-gates),
+Next: [AI-C06](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c06--durable-rate-token-concurrency-and-spending-gates),
 `feat(api): enforce AI admission quotas and spending reservations`. Apply the
 current optional budget/provider overrides and finite defaults. Add atomic
 funding/settlement over origin-period allocations under the recorded lock order,

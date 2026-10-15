@@ -132,7 +132,7 @@ Version 1 release acceptance remain **OPEN**. The first C00–C12 implementation
 slice does not establish a verified release or the original M00–M08 completion
 trigger. No push, merge, deploy, migration or paid request was performed.
 
-Next: [AI-C13 — grounded guidance](../../../guide.md#ai-c13--grounded-explanations-questions-and-private-guidance),
+Next: [AI-C13 — grounded guidance](https://github.com/Shreyas2121/archboard/blob/37b663661045f8fe6cbed7db265141b84131718e/guide.md#ai-c13--grounded-explanations-questions-and-private-guidance),
 depending on the introducing AI-C12 commit. Preserve stable Apply identity,
 review-before-mutation, private account namespaces and committed ACK semantics.
 Resolve this task's introducing hash in the next evidence index update.

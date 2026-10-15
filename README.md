@@ -81,10 +81,10 @@ packages/fixtures        examples and templates
 packages/sync-client     persistence, outbox and synchronization
 ```
 
-The optional production package uses one Nest writer behind same-origin Caddy and
-PostgreSQL. [Operations](docs/phase-8-operations.md) documents secrets, health,
-shutdown and upgrades. P8-08 daily backup/restore automation is unfinished and
-deferred for the current personal/portfolio scope.
+The API uses one Nest writer per database. [Setup](docs/setup.md) covers local
+development and production build configuration. Docker/Compose deployment
+packaging is not included. Automated server backup/restore tooling remains outside
+the current personal/portfolio scope.
 
 ## Checks and status
 
