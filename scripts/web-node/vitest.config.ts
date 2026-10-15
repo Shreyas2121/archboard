@@ -12,15 +12,21 @@ export default defineConfig({
           '@archboard/contracts',
           '@archboard/document-model',
           '@archboard/fixtures',
+          '@archboard/export',
           '@archboard/sync-client',
           '@tanstack/react-query',
           'react',
+          'react-dom',
           'yjs',
           'zod',
         ].map((name) => [
           name,
           fileURLToPath(new URL('../../apps/web/node_modules/' + name, import.meta.url)),
         ]),
+      ),
+      // Use the package's published Node import entry consistently for partial mocks.
+      '@xyflow/react': fileURLToPath(
+        new URL('../../apps/web/node_modules/@xyflow/react/dist/esm/index.mjs', import.meta.url),
       ),
     },
   },

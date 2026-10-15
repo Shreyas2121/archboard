@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import { aiCreateRunSchema, type AiCreateRun } from '@archboard/contracts';
 import {
   aiModelOutputSchema,
+  aiDiagramModelOutputSchema,
   aiGuidanceModelOutputSchema,
   aiEditModelOutputSchema,
   aiPresentationModelOutputSchema,
@@ -11,7 +12,7 @@ import { normalizedProviderRequestSchema } from './provider.js';
 import { AI_VERSIONS } from './operator-policy.js';
 import { fixtureAiPolicy } from '../infrastructure/testing/fixture-config.js';
 const DEADLINE_MS = 1000;
-const MINIMUM_NESTED_OBJECTS = 10;
+const MINIMUM_NESTED_OBJECTS = 8;
 
 const input = (): AiCreateRun =>
   aiCreateRunSchema.parse({
@@ -23,6 +24,22 @@ const input = (): AiCreateRun =>
   });
 
 describe('versioned server prompt and shared output schema renderer', () => {
+  it.each(['diagram-described', 'propose-design'] as const)(
+    'narrows %s to diagrams/clarification and separates architecture from commentary',
+    (task) => {
+      const rendered = renderAiPrompt({ ...input(), task });
+      const schema = JSON.stringify(rendered.structuredOutput?.schema);
+      expect(rendered.structuredOutput?.name).toBe('archboard_diagram_v5');
+      for (const kind of ['guidance', 'edits', 'presentation']) {
+        expect(schema).not.toContain(`"${kind}"`);
+        expect(aiDiagramModelOutputSchema.safeParse({ result: { kind } }).success).toBe(false);
+      }
+      expect(rendered.instructions).toContain('Do not add disconnected Unknowns');
+      expect(rendered.instructions).toContain('aim for 30 characters');
+      expect(rendered.instructions).toContain('Return steps as []');
+      expect(rendered.instructions).toContain('Never infer a microservice deployment');
+    },
+  );
   it('keeps static instructions and schema identical across private prompts/history and presentation modes', () => {
     const first = renderAiPrompt(input());
     const changed = renderAiPrompt({

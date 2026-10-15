@@ -31,9 +31,16 @@ export function getGraphDocumentRoots(document: Y.Doc): GraphDocumentRoots {
 
 export function createGraphDocument(): Y.Doc {
   const document = new Y.Doc();
-  const roots = getGraphDocumentRoots(document);
-  document.transact(() => {
-    roots.meta.set(META_FIELDS.SCHEMA_VERSION, GRAPH_SCHEMA_VERSION);
-  });
+  getGraphDocumentRoots(document);
+  // Seed metadata under a separate client. Hydration happens before update
+  // listeners attach; consuming the live client's clock here would make its
+  // first persisted edit depend on an initialization record absent on peers.
+  const seed = new Y.Doc();
+  try {
+    seed.getMap(GRAPH_ROOT_NAMES.META).set(META_FIELDS.SCHEMA_VERSION, GRAPH_SCHEMA_VERSION);
+    Y.applyUpdate(document, Y.encodeStateAsUpdate(seed));
+  } finally {
+    seed.destroy();
+  }
   return document;
 }

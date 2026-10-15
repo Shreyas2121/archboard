@@ -15,6 +15,22 @@ import {
 const ASCII_SPACE = 32;
 const ASCII_DELETE = 127;
 
+export const AI_DIAGRAM_FOCUSES = {
+  OVERVIEW: 'overview',
+  API: 'api',
+  DATABASE: 'database',
+  STORAGE: 'storage',
+  MODULES: 'modules',
+  DEPLOYMENT: 'deployment',
+} as const;
+export const aiDiagramFocusSchema = z.enum(AI_DIAGRAM_FOCUSES);
+export type AiDiagramFocus = z.infer<typeof aiDiagramFocusSchema>;
+// Neutral names for the local project-context workflow; legacy AI contracts keep
+// their exports for persisted/request compatibility.
+export const PROJECT_CONTEXT_FOCUSES = AI_DIAGRAM_FOCUSES;
+export const projectContextFocusSchema = aiDiagramFocusSchema;
+export type ProjectContextFocus = AiDiagramFocus;
+
 export const aiEvidencePathSchema = z
   .string()
   .min(1)
@@ -53,6 +69,7 @@ export const projectContextV1Schema = aiByteLimit(
     .strictObject({
       kind: z.literal('archboard.project-context'),
       schemaVersion: z.literal(AI_SCHEMA_VERSION),
+      diagramFocus: aiDiagramFocusSchema.optional(),
       project: z.strictObject({
         name: z.string().min(1).max(limits.MAX_NODE_TITLE_CHARACTERS),
         description: aiTextSchema,

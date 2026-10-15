@@ -1,10 +1,17 @@
 import { useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
-import { MAX_AI_PROMPT_CHARACTERS } from '@archboard/contracts';
+import { MAX_AI_PROMPT_CHARACTERS, aiDiagramFocusSchema } from '@archboard/contracts';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Dialog,
@@ -17,12 +24,7 @@ import type { EditorSession } from '@/features/editor/application';
 import { downloadAiContext } from '@/platform/download/ai-context-download';
 import { useAiReviewSession } from './use-ai-review-session';
 import { AiContextFormFields } from './ai-context-form';
-import {
-  DEFAULT_AI_FILE_PROMPT,
-  contextFromForm,
-  aiValidationMessage,
-  aiRunFailureMessage,
-} from './ai-review-model';
+import { contextFromForm, aiValidationMessage, aiRunFailureMessage } from './ai-review-model';
 import { AiDiagramPreparation } from './ai-diagram-preparation';
 import { AiApplyRecovery } from './ai-apply-recovery';
 import { AiGuidancePanel } from './ai-guidance-panel';
@@ -30,6 +32,11 @@ import { useAiGuidanceDraft } from './use-ai-guidance-draft';
 import { AiAvailabilityCheck } from './ai-availability-check';
 import { AiLocalContextPromptCard } from './ai-local-context-prompt-card';
 import { AiRequestReviewDialog } from './ai-request-review-dialog';
+import {
+  AI_DIAGRAM_FOCUS_OPTIONS,
+  fileDiagramPrompt,
+  maxFileDiagramInstructions,
+} from './ai-diagram-focus';
 
 export function AiPanel({
   session,
@@ -123,6 +130,31 @@ function AiGenerationPanel({
   const result = state.run?.content.status === 'available' ? state.run.content.result : null;
   const terminal =
     state.run && state.run.content.status !== 'pending' && state.run.state !== 'outcome-unknown';
+  const promptFields = (
+    <div className="grid gap-2">
+      <Label htmlFor="ai-prompt">
+        {state.mode === 'file'
+          ? 'Additional focus instructions (optional)'
+          : 'What would you like to diagram?'}
+      </Label>
+      <Textarea
+        id="ai-prompt"
+        value={state.prompt}
+        placeholder={state.mode === 'file' ? fileDiagramPrompt(state.focus) : undefined}
+        maxLength={
+          state.mode === 'file' ? maxFileDiagramInstructions(state.focus) : MAX_AI_PROMPT_CHARACTERS
+        }
+        disabled={!editable || (state.mode === 'file' && state.reading)}
+        aria-describedby="ai-prompt-help"
+        onChange={(event) => workflow.draft({ prompt: event.target.value })}
+      />
+      <p id="ai-prompt-help" className="text-xs text-muted-foreground">
+        {state.mode === 'file'
+          ? 'Leave blank to use the selected focus. Additional instructions are included in the local AI prompt and in the diagram request you review before sending.'
+          : `Up to ${MAX_AI_PROMPT_CHARACTERS} characters. The current board graph is not included in this request.`}
+      </p>
+    </div>
+  );
   return (
     <section className="grid min-w-0 gap-4 p-4" aria-label="Private AI assistant">
       <div>
@@ -201,7 +233,38 @@ function AiGenerationPanel({
       )}
       {state.mode === 'file' && (
         <div className="grid gap-2">
-          <AiLocalContextPromptCard />
+          <Label htmlFor="ai-diagram-focus">Diagram focus</Label>
+          <Select
+            value={state.focus}
+            disabled={!editable || state.reading}
+            onValueChange={(value) => workflow.draft({ focus: aiDiagramFocusSchema.parse(value) })}
+          >
+            <SelectTrigger
+              id="ai-diagram-focus"
+              className="w-full"
+              aria-describedby="ai-diagram-focus-help"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(AI_DIAGRAM_FOCUS_OPTIONS).map(([focus, option]) => (
+                <SelectItem key={focus} value={focus}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p id="ai-diagram-focus-help" className="text-xs leading-5 text-muted-foreground">
+            {AI_DIAGRAM_FOCUS_OPTIONS[state.focus].description} Choose before copying the local AI
+            prompt to collect a smaller context file. Uploaded context is sent in full; changing
+            focus after upload changes the diagram instructions.
+          </p>
+          {promptFields}
+          <AiLocalContextPromptCard
+            focus={state.focus}
+            instructions={state.prompt}
+            disabled={!editable || state.reading}
+          />
           <Label htmlFor="ai-context-file">
             One project context JSON file (UTF-8, up to 1 MiB)
           </Label>
@@ -225,27 +288,16 @@ function AiGenerationPanel({
                 : state.filename ||
                   'Choose an Archboard project context file. Archives are not supported.'}
           </p>
+          {state.context && (
+            <p className="text-xs leading-5 text-muted-foreground">
+              This file describes {state.context.components.length} components and{' '}
+              {state.context.connections.length} connections. To collect different project details,
+              choose a focus and use the local AI prompt above, then upload the updated file.
+            </p>
+          )}
         </div>
       )}
-      <Label htmlFor="ai-prompt">
-        {state.mode === 'file'
-          ? 'Diagram instructions (optional)'
-          : 'What would you like to diagram?'}
-      </Label>
-      <Textarea
-        id="ai-prompt"
-        value={state.prompt}
-        placeholder={state.mode === 'file' ? DEFAULT_AI_FILE_PROMPT : undefined}
-        maxLength={MAX_AI_PROMPT_CHARACTERS}
-        disabled={!editable}
-        aria-describedby="ai-prompt-help"
-        onChange={(event) => workflow.draft({ prompt: event.target.value })}
-      />
-      <p id="ai-prompt-help" className="text-xs text-muted-foreground">
-        {state.mode === 'file'
-          ? 'Leave blank to diagram the architecture in your JSON file. Add instructions only to request a particular focus.'
-          : `Up to ${MAX_AI_PROMPT_CHARACTERS} characters. The current board graph is not included in this request.`}
-      </p>
+      {state.mode !== 'file' && promptFields}
       {exportError && (
         <p role="alert" className="whitespace-pre-wrap text-xs text-destructive">
           {exportError}

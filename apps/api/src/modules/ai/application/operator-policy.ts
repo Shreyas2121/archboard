@@ -1,7 +1,7 @@
 import type { AiProviderId } from './provider.js';
 
 export const AI_VERSIONS = Object.freeze({
-  prompt: 'ai-prompt-v5',
+  prompt: 'ai-prompt-v6',
   schema: 'ai-schema-v5',
   adapter: 'ai-adapter-v2',
   policy: 'ai-policy-v2',

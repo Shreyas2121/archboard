@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   aiCreateRunSchema,
   aiResultSchema,
+  aiDiagramProposalSchema,
   aiGuidanceSchema,
   aiClarificationSchema,
   aiEditProposalSchema,
@@ -16,6 +17,9 @@ import type { NormalizedProviderRequest } from './provider.js';
 // Zod refinements remain authoritative after generation; JSON Schema cannot encode
 // reference integrity, provenance, byte limits or review/authorization rules.
 export const aiModelOutputSchema = z.strictObject({ result: aiResultSchema });
+export const aiDiagramModelOutputSchema = z.strictObject({
+  result: z.discriminatedUnion('kind', [aiDiagramProposalSchema, aiClarificationSchema]),
+});
 export const aiGuidanceModelOutputSchema = z.strictObject({
   result: z.discriminatedUnion('kind', [aiGuidanceSchema, aiClarificationSchema]),
 });
@@ -56,6 +60,7 @@ export function renderAiPrompt(
   const guidance = request.task === 'explain-selection' || request.task === 'trace-flow';
   const edits = request.task === 'scoped-edit';
   const presentation = request.task === 'presentation';
+  const diagram = request.task === 'diagram-described' || request.task === 'propose-design';
   return {
     task: request.task,
     instructions: [
@@ -68,6 +73,23 @@ export function renderAiPrompt(
       'supplied evidence keys. Never claim a proposal has been applied or authorized.',
       'Use semantic keys for new entities; preserve reviewed IDs for existing entities.',
       'Do not produce geometry, credentials, tools, executable actions or arbitrary patches.',
+      ...(diagram
+        ? [
+            'Generate a readable architecture diagram, not a document pasted into cards.',
+            'For existing-architecture requests, use supplied components and connections as the backbone. Preserve meaningful responsibilities and connection direction.',
+            'Evidence can justify separate internal modules when explicitly requested or needed to explain the architecture. Do not turn every dependency, file or database table into a service. Never infer a microservice deployment from modules in a monolith.',
+            'Use concise component titles (aim for 40 characters), one short responsibility sentence (aim for 120 characters), and a short technology label. Put detailed evidence and constraints in explanation and claims.',
+            'Use concise edge labels (aim for 30 characters); put transport in protocol. For an overview, combine related connections between the same pair into one clear flow unless the user asks to distinguish them.',
+            'For a database entity view, prioritize supported entity relationships. Summarize shared database membership in groups, technology labels or commentary instead of repeating a store-to-every-entity persists edge, unless the user explicitly requests individual access flows. Keep meaningful relationships and their direction; never invent keys or cardinalities.',
+            'Use supplied groups as meaningful architecture boundaries. Do not create a boundary for every card. All nodeKeys and edge endpoints must name returned node keys; keys must be unique across nodes, edges, boundaries and steps.',
+            'Keep unknowns, caveats, assumptions and questions in commentary. Do not add disconnected Unknowns, Constraints or Assumptions note cards unless the user requests them.',
+            'Use component nodes for systems/modules; use code/schema/note cards only when specifically useful to the requested view. Use consistent category colors and externalUrl null unless a reviewed URL is supplied.',
+            'Return steps as [] unless a presentation walkthrough was requested. Keep claims concise and cite only the most relevant supplied evidence keys; do not repeat every excerpt.',
+            request.task === 'propose-design'
+              ? 'The task name does not imply permission to redesign. When the prompt asks for existing architecture, describe what the project context supports. Label any requested proposed additions as assumptions.'
+              : 'Choose meaningful components and flows from the project description. Label any necessary inferred architecture as proposed assumptions.',
+          ]
+        : []),
       ...(presentation
         ? [
             'Use presentationMode from reviewed user data exactly; omission means append.',
@@ -115,7 +137,7 @@ export function renderAiPrompt(
           ? 'archboard_edits_v5'
           : guidance
             ? 'archboard_guidance_v5'
-            : 'archboard_result_v5',
+            : 'archboard_diagram_v5',
       version: AI_VERSIONS.schema,
       schema: renderSchema(
         z.toJSONSchema(
@@ -125,7 +147,7 @@ export function renderAiPrompt(
               ? aiEditModelOutputSchema
               : guidance
                 ? aiGuidanceModelOutputSchema
-                : aiModelOutputSchema,
+                : aiDiagramModelOutputSchema,
           {
             target: 'draft-7',
           },

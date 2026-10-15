@@ -14,20 +14,12 @@ import { createOpenApiDocument } from './openapi.js';
 const anchorVariantCount = 3;
 
 describe('Phase 6 discussion OpenAPI', () => {
-  it('documents the five authenticated AI operations and snapshot resumption', () => {
+  it('does not advertise retired hosted AI routes or response schemas', () => {
     const document = createOpenApiDocument();
     const paths = Object.keys(document.paths).filter((path) => path.startsWith('/api/v1/ai/'));
-    const five = 5;
-    expect(paths).toHaveLength(five);
-    expect(JSON.stringify(document.paths['/api/v1/ai/runs']?.post)).toContain('Idempotency-Key');
-    expect(JSON.stringify(document.paths['/api/v1/ai/runs/{runId}/events']?.get)).toMatch(
-      /Last-Event-ID/,
-    );
-    expect(JSON.stringify(document.paths['/api/v1/ai/runs/{runId}/events']?.get)).toContain(
-      'text/event-stream',
-    );
-    expect(JSON.stringify(document.paths['/api/v1/ai/runs/{runId}/events']?.get)).not.toContain(
-      '/schemas/undefined',
+    expect(paths).toEqual([]);
+    expect(Object.keys(document.components.schemas).some((name) => name.startsWith('Ai'))).toBe(
+      false,
     );
   });
   it('documents board creation as a strict summary while retaining board detail reads', () => {

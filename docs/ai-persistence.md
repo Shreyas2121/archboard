@@ -1,5 +1,9 @@
 # AI persistence foundation
 
+> Retired from the application runtime on October 14, 2026. Retained as a legacy
+> implementation reference. See [Project JSON](project-context.md) for the current
+> local import workflow; legacy enablement does not activate hosted AI.
+
 AI-C05 adds feature-owned durable intent and encrypted result storage. AI-C06 adds
 [durable admission and spending gates](ai-admission.md). AI-C07 adds bounded
 provider execution/recovery and AI-C08 adds [exact result caching and aggregate

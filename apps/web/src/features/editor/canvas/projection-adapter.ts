@@ -8,7 +8,7 @@ import {
   type Rect as GraphRect,
 } from '@archboard/contracts';
 import { MarkerType, type Edge, type Node, type Rect } from '@xyflow/react';
-import { CANVAS_EDGE_LABEL_PADDING } from './canvas-config';
+import { layoutConnections, type ConnectionLayout } from '@archboard/export';
 
 export interface CanvasNodeData extends Record<string, unknown> {
   readonly node: GraphNode;
@@ -20,9 +20,10 @@ export interface CanvasNodeData extends Record<string, unknown> {
 export type CanvasNode = Node<CanvasNodeData, 'graph-card'>;
 export interface CanvasEdgeData extends Record<string, unknown> {
   readonly edge: GraphEdge;
+  readonly layout: ConnectionLayout | undefined;
 }
 
-export type CanvasEdge = Edge<CanvasEdgeData, 'smoothstep'>;
+export type CanvasEdge = Edge<CanvasEdgeData, 'graph-connection'>;
 
 export interface CanvasBoundary {
   readonly id: string;
@@ -64,10 +65,17 @@ function boundaryKey(boundary: Boundary): string {
   return JSON.stringify(boundary);
 }
 
-export function getProjectionBounds(projection: GraphProjection): Rect | null {
+export function getProjectionBounds(
+  projection: GraphProjection,
+  connections = layoutConnections(projection),
+): Rect | null {
   const rectangles = [
     ...projection.nodes.map((node) => ({ ...node.position, ...node.size })),
     ...projection.boundaries.map(({ rect }) => rect),
+    ...[...connections.values()].flatMap(({ points, label }) => [
+      ...points.map((point) => ({ ...point, width: 0, height: 0 })),
+      ...(label ? [label.rect] : []),
+    ]),
   ];
   if (rectangles.length === 0) return null;
 
@@ -82,8 +90,30 @@ export class CanvasProjectionAdapter {
   private readonly nodeCache = new Map<string, CacheEntry<CanvasNode>>();
   private readonly edgeCache = new Map<string, CacheEntry<CanvasEdge>>();
   private readonly boundaryCache = new Map<string, CacheEntry<CanvasBoundary>>();
+  private connectionKey = '';
+  private connections: ReadonlyMap<string, ConnectionLayout> = new Map();
 
   public adapt(projection: GraphProjection): CanvasProjection {
+    // Text edits in cards do not invalidate routes or unrelated edge identities.
+    const connectionKey = JSON.stringify({
+      nodes: projection.nodes.map(({ id, position, size }) => ({ id, position, size })),
+      edges: projection.edges.map(
+        ({ id, sourceId, targetId, sourceHandle, targetHandle, label, protocol }) => ({
+          id,
+          sourceId,
+          targetId,
+          sourceHandle,
+          targetHandle,
+          label,
+          protocol,
+        }),
+      ),
+      boundaries: projection.boundaries.map(({ rect, title }) => ({ rect, title })),
+    });
+    if (connectionKey !== this.connectionKey) {
+      this.connections = layoutConnections(projection);
+      this.connectionKey = connectionKey;
+    }
     const nodes = projection.nodes.map((node) => this.adaptNode(node));
     const edges = projection.edges.map((edge) => this.adaptEdge(edge));
     const boundaries = projection.boundaries.map((boundary) => this.adaptBoundary(boundary));
@@ -92,7 +122,12 @@ export class CanvasProjectionAdapter {
     retainLiveEntries(this.edgeCache, new Set(projection.edges.map(({ id }) => id)));
     retainLiveEntries(this.boundaryCache, new Set(projection.boundaries.map(({ id }) => id)));
 
-    return Object.freeze({ nodes, edges, boundaries, bounds: getProjectionBounds(projection) });
+    return Object.freeze({
+      nodes,
+      edges,
+      boundaries,
+      bounds: getProjectionBounds(projection, this.connections),
+    });
   }
 
   private adaptNode(node: GraphNode): CanvasNode {
@@ -117,25 +152,21 @@ export class CanvasProjectionAdapter {
   }
 
   private adaptEdge(edge: GraphEdge): CanvasEdge {
-    const key = edgeKey(edge);
+    const layout = this.connections.get(edge.id);
+    const key = `${edgeKey(edge)}:${JSON.stringify(layout)}`;
     const cached = this.edgeCache.get(edge.id);
     if (cached?.key === key) return cached.value;
 
     const labelParts = [edge.label, edge.protocol].filter((part) => part.length > 0);
     const value: CanvasEdge = Object.freeze({
       id: edge.id,
-      type: 'smoothstep',
+      type: 'graph-connection',
       source: edge.sourceId,
       target: edge.targetId,
       sourceHandle: edge.sourceHandle,
       targetHandle: edge.targetHandle,
-      data: Object.freeze({ edge }),
+      data: Object.freeze({ edge, layout }),
       label: labelParts.join(' / '),
-      // React Flow owns the SVG label and markers; semantic variables follow the app theme.
-      labelStyle: { fontSize: 12, fill: 'var(--foreground)' },
-      labelBgStyle: { fill: 'var(--surface-canvas)' },
-      labelBgPadding: CANVAS_EDGE_LABEL_PADDING,
-      labelBgBorderRadius: 4,
       selected: false,
       markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--edge)' },
       ...(edge.direction === EDGE_DIRECTIONS.BIDIRECTIONAL

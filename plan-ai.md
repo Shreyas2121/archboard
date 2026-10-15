@@ -1,5 +1,9 @@
 # Archboard AI integration plan
 
+> Retired from the application runtime on October 14, 2026. Retained as a legacy
+> implementation reference. See [Project JSON](docs/project-context.md) for the current
+> local import workflow; legacy enablement does not activate hosted AI.
+
 Research date: **3 October 2026**. Status: **proposal for implementation**.
 
 This extends [plan.md](./plan.md) with AI diagram generation and architecture

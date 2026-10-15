@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import {
   MAX_IMPORT_FILE_BYTES,
@@ -7,7 +7,13 @@ import {
   importBoardResponseSchema,
   type ExportEnvelope,
 } from '@archboard/contracts';
-import { parsePortableJson } from '@archboard/export';
+import { parseBoundedJson, parsePortableJson } from '@archboard/export';
+import {
+  parseProjectContext,
+  prepareProjectContext,
+} from '../project-context/project-context-draft';
+import { projectContextEnvelope } from '../project-context/project-context-import';
+import { ProjectContextPreview } from '../project-context/project-context-preview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -37,6 +43,9 @@ export function ImportControl({ accountId }: { readonly accountId: string }) {
   const [reading, setReading] = useState(false);
   const readGeneration = useRef(0);
   const [results, setResults] = useState<string[]>([]);
+  const [projectFile, setProjectFile] = useState(false);
+  const preparation = useRef<AbortController | null>(null);
+  useEffect(() => () => preparation.current?.abort(), []);
   async function inspect() {
     setResults(await inspectVisibleBoards(scope));
   }
@@ -51,11 +60,15 @@ export function ImportControl({ accountId }: { readonly accountId: string }) {
     inspect,
   );
   async function preview(selected: File | undefined) {
+    preparation.current?.abort();
+    const controller = new AbortController();
+    preparation.current = controller;
     const generation = ++readGeneration.current;
     const token = scope.capture();
     setFile(null);
     setError('');
     setResults([]);
+    setProjectFile(false);
     setFilename(selected?.name ?? '');
     setReading(false);
     if (!selected) return;
@@ -71,8 +84,26 @@ export function ImportControl({ accountId }: { readonly accountId: string }) {
         );
         return;
       }
-      const parsed = parsePortableJson(bytes);
+      const value: unknown = parseBoundedJson(bytes, MAX_IMPORT_FILE_BYTES);
+      const project =
+        typeof value === 'object' &&
+        value !== null &&
+        'kind' in value &&
+        value.kind === 'archboard.project-context';
+      const parsed = project
+        ? projectContextEnvelope(
+            await prepareProjectContext(parseProjectContext(bytes), controller.signal),
+            new Date().toISOString(),
+          )
+        : parsePortableJson(bytes);
+      if (controller.signal.aborted || !scope.current() || generation !== readGeneration.current)
+        return;
+      if (scope.capture() !== token)
+        throw new Error(
+          'Access was refreshed while arranging the diagram. Select the file again for this account.',
+        );
       setFile(parsed);
+      setProjectFile(project);
       setTitle(parsed.board.title);
     } catch (cause) {
       if (scope.current() && generation === readGeneration.current)
@@ -88,12 +119,13 @@ export function ImportControl({ accountId }: { readonly accountId: string }) {
           Import JSON
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Import JSON as a new private board</DialogTitle>
           <DialogDescription>
-            Select an Archboard version 1 UTF-8 JSON file, up to 5 MiB. Preview validates all
-            content without executing code or loading URLs. Creation requires signing in online.
+            Select a saved Archboard board (up to 5 MiB) or project context JSON (up to 1 MiB).
+            Project diagrams are arranged locally before review. Creation requires signing in
+            online.
           </DialogDescription>
         </DialogHeader>
         <Label htmlFor="portable-file">JSON file</Label>
@@ -124,6 +156,7 @@ export function ImportControl({ accountId }: { readonly accountId: string }) {
               {file.graph.nodes.length} cards · {file.graph.edges.length} connections ·{' '}
               {file.graph.boundaries.length} boundaries · {file.graph.steps.length} steps
             </p>
+            {projectFile && <ProjectContextPreview graph={file.graph} />}
             <p className="text-sm">
               File label: {file.syncStatusAtExport}. This label grants no server-save state to the
               new board.

@@ -1,7 +1,7 @@
+import { preflightGraphAdditions as preflightAiDiagram } from '../project-context/project-context-preflight';
 import {
   GRAPH_SCHEMA_VERSION,
   MAX_ENCODED_YJS_STATE_BYTES,
-  MAX_CLIENT_UPDATE_BYTES,
   aiResultSchema,
   applicationIdSchema,
   graphProjectionSchema,
@@ -10,16 +10,10 @@ import {
   type GraphProjection,
   type Point,
 } from '@archboard/contracts';
-import {
-  createGraphObjects,
-  createPresentationStep,
-  projectGraphDocument,
-  validateGraphDocument,
-} from '@archboard/document-model';
+import { projectGraphDocument, validateGraphDocument } from '@archboard/document-model';
 import * as Y from 'yjs';
 import { layoutAiDiagram } from '@/platform/layout/ai-layout';
 import {
-  AI_NODE_SIZES,
   aiLayoutInput,
   enclosingAiRect,
   semanticOrder,
@@ -56,6 +50,7 @@ export function mapAiDiagram(
   const proposal = diagram(value);
   pointSchema.parse(origin);
   const input = aiLayoutInput(proposal);
+  const sizes = new Map(input.nodes.map((node) => [node.key, node.size]));
   const orderedNodes = [...proposal.nodes].sort(semanticOrder);
   const positions = new Map(
     validateAiPositions(input, layout.positions).map(({ key, position }) => [
@@ -80,7 +75,7 @@ export function mapAiDiagram(
     ...node,
     id: ids.get(key)!,
     position: positions.get(key)!,
-    size: { ...AI_NODE_SIZES[node.kind] },
+    size: { ...sizes.get(key)! },
   }));
   // Validate node extents as well as top-left coordinates, including origin translation.
   validateAiPositions(
@@ -146,47 +141,7 @@ export function mapAiDiagram(
   };
 }
 
-/** Full CRDT state, including tombstones/history, is cloned; the source is never mutated. */
-export function preflightAiDiagram(
-  source: Uint8Array,
-  graph: GraphProjection,
-  limits: { updateBytes?: number; stateBytes?: number; clientId?: number } = {},
-): AiDiagramDraft['preflight'] {
-  const updateLimit = Math.min(
-    limits.updateBytes ?? MAX_CLIENT_UPDATE_BYTES,
-    MAX_CLIENT_UPDATE_BYTES,
-  );
-  const stateLimit = Math.min(
-    limits.stateBytes ?? MAX_ENCODED_YJS_STATE_BYTES,
-    MAX_ENCODED_YJS_STATE_BYTES,
-  );
-  if (source.byteLength > stateLimit)
-    throw new Error('Existing diagram state exceeds its byte budget.');
-  const candidate = new Y.Doc({ gc: false });
-  const accepted = new Y.Doc({ gc: false });
-  try {
-    Y.applyUpdate(candidate, source);
-    Y.applyUpdate(accepted, source);
-    // Apply uses the live writer's ID so variable-width CRDT IDs cannot undercount bytes.
-    if (limits.clientId !== undefined) candidate.clientID = limits.clientId;
-    validateGraphDocument(candidate);
-    const vector = Y.encodeStateVector(candidate);
-    const batch = graphProjectionSchema.parse(graph);
-    createGraphObjects(candidate, batch);
-    for (const step of batch.steps) createPresentationStep(candidate, step);
-    validateGraphDocument(candidate, accepted);
-    // Includes existing live content and capacity, not only the new proposal.
-    graphProjectionSchema.parse(projectGraphDocument(candidate));
-    const updateBytes = Y.encodeStateAsUpdate(candidate, vector).byteLength;
-    const stateBytes = Y.encodeStateAsUpdate(candidate).byteLength;
-    if (updateBytes > updateLimit || stateBytes > stateLimit)
-      throw new Error('Prepared diagram exceeds its encoded byte budget.');
-    return { updateBytes, stateBytes };
-  } finally {
-    candidate.destroy();
-    accepted.destroy();
-  }
-}
+export { preflightAiDiagram };
 
 export async function prepareAiDiagramDraft(
   value: unknown,

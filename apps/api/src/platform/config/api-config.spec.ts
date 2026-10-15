@@ -33,6 +33,15 @@ const EXPECTED_WS_PING_INTERVAL_MS = 15_000;
 const EXPECTED_WS_PONG_TIMEOUT_MS = 45_000;
 
 describe('API runtime configuration', () => {
+  it('ignores retired hosted AI settings even when an old deployment enabled them', () => {
+    const config = loadApiConfig({
+      ...VALID_ENVIRONMENT,
+      AI_ENABLED: 'true',
+      AI_MODEL_PROFILES: 'obsolete malformed configuration',
+      OPENAI_API_KEY: 'unused-old-credential',
+    });
+    expect(config.ai).toEqual({ enabled: false });
+  });
   it.each(['https://app.example.com', 'https://api.example.com,https://preview.example.com'])(
     'rejects split production origins: %s',
     (allowed) => {

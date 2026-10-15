@@ -1,5 +1,9 @@
 # AI HTTP and event transport
 
+> Retired from the application runtime on October 14, 2026. This document is retained
+> as a legacy implementation reference. Use [Project JSON](project-context.md) for
+> the current local import workflow. Its old enablement steps do not activate hosted AI.
+
 The authenticated routes under `/api/v1` use the existing HttpOnly Better Auth
 session cookie, strict shared contracts, safe API errors, and `Cache-Control:
 no-store` on success and failure. The application checks run ownership and current

@@ -11,7 +11,9 @@
       "@xyflow/react": ["../../apps/web/node_modules/@xyflow/react"],
       "elkjs/*": ["../../apps/web/node_modules/elkjs/*"],
       "yjs": ["../../apps/web/node_modules/yjs"],
-      "zod": ["../../apps/web/node_modules/zod"]
+      "zod": ["../../apps/web/node_modules/zod"],
+      "react": ["../../apps/web/node_modules/@types/react"],
+      "react-dom/server": ["../../apps/web/node_modules/@types/react-dom/server.d.ts"]
     }
   },
   "include": ["**/*.ts"]

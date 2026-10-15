@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AI_SCHEMA_VERSION,
+  AI_DIAGRAM_FOCUSES,
   MAX_AI_CONTEXT_FILE_BYTES,
   MAX_AI_CONTEXT_COMPONENTS,
   MAX_AI_EVENT_DELTA_CHARACTERS,
@@ -120,6 +121,19 @@ const readyRun = {
 };
 
 describe('project context and byte budgets', () => {
+  it('accepts optional bounded diagram focus metadata without changing legacy files', () => {
+    expect(projectContextV1Schema.parse(contextInput)).not.toHaveProperty('diagramFocus');
+    for (const diagramFocus of Object.values(AI_DIAGRAM_FOCUSES)) {
+      const parsed = parseProjectContextFile(JSON.stringify({ ...contextInput, diagramFocus }));
+      expect(parsed.diagramFocus).toBe(diagramFocus);
+      const request = aiCreateRunSchema.parse({ ...requestInput, context: parsed });
+      expect(request.context?.diagramFocus).toBe(diagramFocus);
+    }
+    for (const diagramFocus of ['custom', '', null, { type: 'api' }])
+      expect(projectContextV1Schema.safeParse({ ...contextInput, diagramFocus }).success).toBe(
+        false,
+      );
+  });
   it('normalizes omitted collections and preserves exact text and array order', () => {
     const parsed = projectContextV1Schema.parse(contextInput);
     expect(parsed.components).toEqual([]);

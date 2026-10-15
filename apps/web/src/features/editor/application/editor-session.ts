@@ -59,6 +59,7 @@ import {
 } from '@archboard/sync-client';
 
 import { registerUpdateSession, unregisterUpdateSession } from './update-sessions';
+import { preflightGraphAdditions } from '../project-context/project-context-preflight';
 import { aiCreatedIdsState, applyAiGraphBatch } from '../ai/ai-apply-intent';
 import { applyAiEditBatch, type AiEditDraft } from '../ai/ai-scoped-edits';
 import { applyAiPresentationBatch, type AiPresentationDraft } from '../ai/ai-presentation';
@@ -381,6 +382,18 @@ export class EditorSession {
 
   public createObjects(batch: GraphObjectBatch): void {
     this.executeMutation((document) => createGraphObjects(document, batch));
+  }
+
+  public createProjectObjects(graph: GraphProjection, reviewed: GraphProjection): void {
+    if (this.getSnapshot().projection !== reviewed)
+      throw new Error('The board changed. Prepare the project preview again before adding it.');
+    this.finishTextHistory();
+    this.executeMutation((document) => {
+      preflightGraphAdditions(Y.encodeStateAsUpdate(document), graph, {
+        clientId: document.clientID,
+      });
+      createGraphObjects(document, graph);
+    });
   }
 
   public deleteObjects(selection: {

@@ -39,22 +39,16 @@ board after signing in online. Export your current diagram before resetting the 
 Vite reads env files from the repository root. Restart it after changing origins.
 The development server does not establish production service-worker/offline proof.
 
-## Optional AI setup
+## Project JSON diagrams
 
-The database-free demo does not supply authenticated AI. For owner/editor server
-boards, follow [AI operator configuration](ai-operator-configuration.md#configure-a-deployment-without-making-a-paid-request)
-after preparing authenticated application configuration. AI defaults to disabled;
-all credentials, model selection, prices and budgets belong to the API operator.
-Use the [profile template](examples/ai-model-profile.template.json) only after
-replacing its model/rates with reviewed values. It is not a deployable pricing
-recommendation. Keep `AI_CACHE_TTL_MS` at or below 900,000 milliseconds for durable
-runs, and use the spending marker during preparation/rotation.
+The local demo supports **Project JSON** without an account, provider key or API.
+Copy a focused extraction prompt into your own coding assistant, review the JSON
+it produces and import it for a local preview. Signed-in users can also create a
+new private board from project context through dashboard **Import JSON**.
+See [Project JSON](project-context.md) for the workflow and limits.
 
-[Using AI](using-ai.md) provides input examples and proposal/recovery flows;
-[operations](ai-operations.md) covers disabling, key rotation and uncertain spending.
-This documentation authorizes no database/migration check, deployment or paid call.
-AI-C19 completion does not resume the original M00–M08 database trigger or browser
-pause; follow [the precise acceptance conditions](ai-verification.md).
+Hosted AI routes and generation are retired. Old AI environment values are ignored;
+they cannot reactivate the assistant or make provider requests. No AI setup is needed.
 
 ## Authenticated local development
 

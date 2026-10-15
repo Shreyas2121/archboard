@@ -17,7 +17,7 @@ import {
   PanelLeftOpen,
   RotateCcw,
   Scan,
-  Sparkles,
+  FileJson,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -66,7 +66,7 @@ import { EDITOR_VIEW_PHASES } from './editor-view-state';
 import { EditorDialogs } from './editor-dialogs';
 import { EditorInspector } from './editor-inspector';
 import { DiscussionPanel } from '@/features/editor/discussion/discussion-panel';
-import { AiPanel } from '@/features/editor/ai/ai-panel';
+import { ProjectContextControl } from '@/features/editor/project-context/project-context-control';
 import { boardStorageNamespaceKey } from '@archboard/sync-client';
 import { StepsPanel } from '@/features/editor/presentation/steps-panel';
 import { useLocalPresentation } from '@/features/editor/presentation/use-local-presentation';
@@ -140,7 +140,7 @@ export function EditorShell({
   const storageButtonRef = useRef<HTMLButtonElement>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [imageExportOpen, setImageExportOpen] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
+  const [projectContextOpen, setProjectContextOpen] = useState(false);
   const [compactPanelsOpen, setCompactPanelsOpen] = useState(false);
   useEffect(() => {
     if (!narrowScreen) setCompactPanelsOpen(false);
@@ -163,7 +163,7 @@ export function EditorShell({
       sharingOpen ||
       portabilityOpen ||
       imageExportOpen ||
-      aiOpen ||
+      projectContextOpen ||
       compactPanelsOpen,
     canvasContainer,
     sessionSnapshot,
@@ -364,7 +364,7 @@ export function EditorShell({
       sharingOpen ||
       portabilityOpen ||
       imageExportOpen ||
-      aiOpen ||
+      projectContextOpen ||
       compactPanelsOpen,
     editable: viewState.editable && !playback.presenting,
     projection,
@@ -469,18 +469,17 @@ export function EditorShell({
       {playback.presenting && <PresentationControls playback={playback} />}
       <div className={playback.presenting ? 'hidden' : 'contents'}>
         <EditorToolbar
-          ai={
-            boardMode &&
-            session?.resourceScope && (
+          projectContext={
+            session && (
               <Button
-                id="ai-assistant"
+                id="project-context"
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={narrowScreen}
-                onClick={() => setAiOpen(true)}
+                disabled={narrowScreen || !viewState.editable}
+                onClick={() => setProjectContextOpen(true)}
               >
-                <Sparkles aria-hidden="true" /> AI assistant
+                <FileJson aria-hidden="true" /> Project JSON
               </Button>
             )
           }
@@ -766,10 +765,18 @@ export function EditorShell({
                 >
                   {viewState.detail}
                 </p>
-                {viewState.phase === EDITOR_VIEW_PHASES.STORAGE_ERROR &&
+                {(viewState.phase === EDITOR_VIEW_PHASES.STORAGE_ERROR ||
+                  viewState.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED) &&
                   sessionSnapshot?.writer.persistence?.diagnostic && (
                     <p className="mt-2 max-w-sm text-sm text-destructive">
                       {sessionSnapshot.writer.persistence.diagnostic}
+                    </p>
+                  )}
+                {viewState.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED &&
+                  sessionSnapshot?.sync?.errorCode && (
+                    <p className="mt-2 max-w-sm text-sm text-destructive">
+                      The server could not safely accept the local changes (
+                      {sessionSnapshot.sync.errorCode}). Download recovery to preserve this diagram.
                     </p>
                   )}
                 {projection !== null &&
@@ -929,13 +936,17 @@ export function EditorShell({
         </div>
       </footer>
 
-      {boardMode && session?.resourceScope && (
-        <AiPanel
-          key={JSON.stringify(session.resourceScope)}
+      {session && (
+        <ProjectContextControl
+          key={JSON.stringify(session.resourceScope ?? 'demo')}
           session={session}
           readOnly={narrowScreen}
-          open={aiOpen}
-          onOpenChange={setAiOpen}
+          open={projectContextOpen}
+          onOpenChange={setProjectContextOpen}
+          onApplied={(graph) => {
+            const bounds = getProjectionBounds(graph);
+            if (bounds) void reactFlow.fitBounds(bounds, { padding: CANVAS_FIT_PADDING });
+          }}
         />
       )}
       <EditorDialogs

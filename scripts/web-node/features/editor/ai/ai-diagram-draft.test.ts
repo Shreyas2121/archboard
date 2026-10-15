@@ -22,6 +22,7 @@ import {
   prepareAiDiagramDraft,
 } from '@/features/editor/ai/ai-diagram-draft';
 import {
+  AI_NODE_SIZES,
   aiLayoutInput,
   fallbackAiLayout,
   validateAiPositions,
@@ -110,18 +111,27 @@ const emptyGraph = (): GraphProjection => ({
 });
 
 describe('AI semantic diagram mapping and detached preflight', () => {
+  it('uses the same title-aware sizes for engine spacing and the applied cards', () => {
+    const p = proposal();
+    p.nodes[0]!.title = 'An exceptionally long descriptive application service title';
+    const input = aiLayoutInput(p);
+    const size = input.nodes.find((node) => node.key === 'service')!.size;
+    expect(size.width).toBeGreaterThan(AI_NODE_SIZES.component.width);
+    const mapped = mapAiDiagram(p, layout(p), new Set(), allocate());
+    expect(mapped.graph.nodes.find((node) => node.id === mapped.ids.service)!.size).toEqual(size);
+  });
   it('maps fresh IDs consistently across nodes, edges, groups and ordered steps; preserves content', () => {
     const result = mapAiDiagram(proposal(), layout(), new Set(), allocate());
     expect(new Set(Object.values(result.ids)).size).toBe(ENTITY_COUNT);
     const edge = result.graph.edges[0]!;
     expect(edge.sourceId).toBe(result.ids.client);
     expect(edge.targetId).toBe(result.ids.service);
-    expect(edge.sourceHandle).toBe('bottom');
-    expect(edge.targetHandle).toBe('top');
+    expect(edge.sourceHandle).toBe('right');
+    expect(edge.targetHandle).toBe('left');
     expect(result.graph.nodes.find((node) => node.id === result.ids.service)).toMatchObject({
       kind: 'component',
       color: 'blue',
-      size: { width: 300, height: 160 },
+      size: AI_NODE_SIZES.component,
       content: { category: 'service', technology: 'Node', description: 'Reviewed description' },
     });
     expect(result.graph.nodes.every((node) => !('parentId' in node))).toBe(true);

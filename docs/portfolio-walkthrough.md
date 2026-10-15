@@ -47,39 +47,21 @@ P8-07's prepared Linux/test-DB process harness covers literal pre/post-commit de
 and exact retries; see [operations](phase-8-operations.md). Never crash the database
 holding your actual diagrams to make a portfolio clip.
 
-## Prepared AI recruiter walkthrough
+## Project JSON walkthrough
 
-This extends the server walkthrough when database/browser verification is resumed
-and a finite live-provider evaluation budget is separately authorized. It is not
-part of the database-free demo. Until then, show the source, synthetic input and
-[fixture evidence](evidence/ai/AI-C18.md), labeling them as fixture proof rather
-than a rendered or live-model demonstration.
+1. Open the local demo and choose **Project JSON**. Show the focus selector and
+   extraction prompt, explaining that users run extraction in their own coding tool.
+2. Select [the synthetic three-component context](examples/three-component.archboard-context.json).
+   Explain that file parsing, validation and layout run locally without a model call.
+3. Inspect the preview and full context. Add the diagram beside existing content,
+   then edit a title or connection and show the normal device-saving status.
+4. Export the diagram as portable JSON or SVG. Explain that sharing and committed
+   server saving use the separate authenticated board workflow.
 
-1. Open a disposable signed-in owner/editor board. Show the operator-owned model,
-   limits and spending controls by describing the configuration; never show keys
-   or private settings. Explain browser → Archboard API → OpenAI, and that no
-   repository or links are scanned.
-2. Load [the synthetic three-component context](examples/three-component.archboard-context.json).
-   Review the complete prompt/context and its explicit unknowns. Generate only
-   within the approved evaluation budget. Show supplied facts versus assumptions,
-   clarification questions and an isolated diagram preview before additive Apply.
-3. Apply and observe the actual normal save/ACK status. Explain that structural
-   additions are excluded from Undo; inspect or remove unwanted objects explicitly.
-   Demonstrate normal Undo on a later supported field edit, without implying a refund.
-4. Select the three cards/connections, review **Explain selection** or **Trace
-   request flow** input/history, and show private highlights. Review a scoped-edit
-   diff; demonstrate a stale field blocking Apply only in the controlled harness.
-5. Choose **Recruiter walkthrough**, review **Append steps** input, then the ordered
-   talking points/references and Apply. Start normal presentation and explain the
-   declared request flow and unknowns. Demonstrate replacement only after reviewing
-   all existing steps and its expanded input.
-6. Explain fixed result expiry, private exact reuse, unknown cost and disabled
-   offline generation. Record actual outcomes, revision and environment; no fixture
-   result establishes savings, accuracy, retention at OpenAI or production readiness.
-
-Keep every example synthetic, omit account/run IDs, private content and invitation
-paths, and stop at the approved budget. See [usage](using-ai.md),
-[operations](ai-operations.md) and [acceptance inventory](ai-verification.md).
+This is the prepared demonstration script, not executed browser acceptance. Use
+synthetic content and record real screenshots only when browser verification resumes.
+Hosted AI explanations, generation and walkthrough proposals are retired from the
+runtime; their historical fixture evidence does not describe the current product.
 
 ## Engineering discussion
 
@@ -98,9 +80,9 @@ server metadata and full server recovery needs a database backup.
 
 Excluded features include general canvas automatic layout, mobile editing,
 organizations, arbitrary file uploads, rich HTML and anonymous public boards.
-AI now provides proposal-only local layout, one reviewed context JSON input and
-the workflows above; repository scanning, Claude and real provider switching are
-unimplemented. Known gaps include unfinished scheduled
+Project JSON provides a local diagram preview and layout from supplied architecture
+without hosted generation. Repository scanning stays in the user's external coding
+tool. Known gaps include unfinished scheduled
 backup tooling and current integrated database/browser/performance proof. Historical
 performance failures remain recorded; prepared fixtures and passing builds do not
 prove improved frame rate or collaboration latency.

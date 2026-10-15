@@ -1,5 +1,10 @@
 # Shared AI contracts, version 1
 
+Hosted AI is retired from the application runtime. These contracts remain for
+legacy code/history compatibility; `ProjectContextV1` and the neutral
+`ProjectContextFocus` exports also support the active local
+[project JSON workflow](../../../../docs/project-context.md).
+
 Import schemas, types, and limits through `@archboard/contracts`. These contracts
 depend only on Zod and existing shared contracts. SDK types, provider configuration,
 credentials, pricing authority, and HTTP controller behavior belong on the server.
@@ -26,6 +31,19 @@ property edits, and preconditions that differ from reviewed fields. Apply must s
 recheck live fields and current authorization through document commands. Schema
 validation cannot establish factual accuracy, permissions, model capabilities, or
 durable admission.
+
+Project context files may include optional `diagramFocus` metadata: `overview`,
+`api`, `database`, `storage`, `modules`, or `deployment`, validated by
+`projectContextFocusSchema` (also exported as `aiDiagramFocusSchema` for legacy code).
+Files without this field remain valid and parsing does not insert it. The JSON
+workflow defaults to system overview, restores focus from focused uploads, and
+includes the selected focus in the extraction prompt. A focus changes extraction
+instructions; it does not discard uploaded components or
+evidence. Smaller requests require collecting a focused context before upload.
+The active local database prompt describes entity relationships; the storage
+prompt describes infrastructure and verified access flows. Both use the shared
+component/connection shape, not a complete table/column/PK/FK contract. Existing
+mixed database files still parse and import in full without automatic filtering.
 
 Semantic keys start with a letter and are distinct from UUID graph IDs. Proposals
 contain no generated IDs or layout geometry. Selected graph nodes retain existing

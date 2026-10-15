@@ -1,5 +1,9 @@
 # Exact private AI result cache
 
+> Retired from the application runtime on October 14, 2026. Retained as a legacy
+> implementation reference. See [Project JSON](project-context.md) for the current
+> local import workflow; legacy enablement does not activate hosted AI.
+
 AI-C08 adds exact semantic result reuse and bounded encrypted retention to the
 existing AI intent/coordinator ports. AI-C09 exposes authenticated run/event routes
 through those same ports; no provider credential or shared result-cache endpoint

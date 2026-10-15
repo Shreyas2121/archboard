@@ -5,6 +5,7 @@ import ELK from 'elkjs/lib/elk.bundled.js';
 import { MAX_AI_OUTPUT_NODES } from '@archboard/contracts';
 import {
   AI_LAYOUT_TIMEOUT_MS,
+  enclosingAiRect,
   fallbackAiLayout,
   type AiLayoutInput,
 } from '@/features/editor/ai/ai-diagram-geometry';
@@ -25,6 +26,28 @@ const layered = (value: AiLayoutInput) => runAiLayeredLayout(value, new ELK());
 afterEach(() => vi.useRealTimers());
 
 describe('bounded AI diagram layout worker lifecycle', () => {
+  it('keeps a supplied application boundary clear of unrelated cards in engine and fallback layouts', async () => {
+    const grouped: AiLayoutInput = {
+      ...input,
+      groups: [{ key: 'application', nodeKeys: ['a', 'c'] }],
+    };
+    for (const positions of [await layered(grouped), fallbackAiLayout(grouped)]) {
+      const byKey = new Map(positions.map((node) => [node.key, node.position]));
+      const rect = enclosingAiRect(
+        grouped.nodes
+          .filter((node) => node.key !== 'b')
+          .map((node) => ({ position: byKey.get(node.key)!, size: node.size })),
+      );
+      const other = byKey.get('b')!;
+      const otherSize = grouped.nodes.find((node) => node.key === 'b')!.size;
+      expect(
+        other.x < rect.x + rect.width &&
+          other.x + otherSize.width > rect.x &&
+          other.y < rect.y + rect.height &&
+          other.y + otherSize.height > rect.y,
+      ).toBe(false);
+    }
+  });
   it('sends geometry/topology only and terminates on valid success', async () => {
     const worker = fixture();
     const result = layoutAiDiagram(input, new AbortController().signal, () => worker);

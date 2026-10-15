@@ -20,7 +20,7 @@ const FEATURES = [
   },
   {
     title: 'Built for systems',
-    description: 'Shape components, boundaries, data, and their relationships.',
+    description: 'Import project JSON or draw components and their relationships.',
     icon: GitBranch,
   },
   {
@@ -121,8 +121,8 @@ export function HomeRoute() {
               See the whole board.
             </h1>
             <p className="mt-6 max-w-xl text-pretty text-base leading-6 text-muted-foreground">
-              Map the software you have and the software you are building next. Explore in the local
-              demo, or sign in to manage your boards.
+              Turn your project’s architecture into an editable diagram. Import project JSON or
+              start drawing in the local demo, then sign in to share and manage your boards.
             </p>
             <div className="mt-9 flex flex-wrap items-center gap-3">
               <LocalDevelopmentSignIn onSignedIn={() => session.refetch()} />

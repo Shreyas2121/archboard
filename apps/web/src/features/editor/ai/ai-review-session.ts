@@ -5,6 +5,7 @@ import {
   type AiRun,
   type AiAvailability,
   type AiCreateRun,
+  type AiDiagramFocus,
 } from '@archboard/contracts';
 import type { AiTransport } from '@/platform/api/ai-api';
 import { ApiClientError, ApiRequestTimeoutError } from '@/platform/api/api-client';
@@ -15,12 +16,13 @@ import {
   parseAiContext,
   aiValidationMessage,
   AI_RECEIPT_WINDOW_MS,
-  DEFAULT_AI_FILE_PROMPT,
   type AiContextForm,
 } from './ai-review-model';
+import { DEFAULT_AI_DIAGRAM_FOCUS } from './ai-diagram-focus';
 
 export interface AiReviewState {
   readonly prompt: string;
+  readonly focus: AiDiagramFocus;
   readonly form: AiContextForm;
   readonly mode: 'prompt' | 'form' | 'file';
   readonly context: AiCreateRun['context'] | null;
@@ -42,6 +44,7 @@ export interface AiReviewState {
 }
 const initial = (): AiReviewState => ({
   prompt: '',
+  focus: DEFAULT_AI_DIAGRAM_FOCUS,
   form: emptyAiForm(),
   mode: 'prompt',
   context: null,
@@ -184,7 +187,7 @@ export class AiReviewSession {
         run: { ...run, content: { status: 'expired', expiredAt: run.content.expiresAt } },
       });
   }
-  public draft(change: Partial<Pick<AiReviewState, 'prompt' | 'mode' | 'form'>>) {
+  public draft(change: Partial<Pick<AiReviewState, 'prompt' | 'mode' | 'form' | 'focus'>>) {
     if (!this.editable()) return;
     this.fileEpoch++;
     this.patch({ ...change, reading: false, review: null, phase: 'draft', problem: '' });
@@ -200,11 +203,12 @@ export class AiReviewSession {
             : undefined;
       if (this.state.mode === 'file' && !context)
         throw new Error('Select and validate one JSON context file first.');
-      const prompt =
-        this.state.mode === 'file' && !this.state.prompt.trim()
-          ? DEFAULT_AI_FILE_PROMPT
-          : this.state.prompt;
-      const body = reviewAiRequest(prompt, this.boardId, context);
+      const body = reviewAiRequest(
+        this.state.prompt,
+        this.boardId,
+        context,
+        this.state.mode === 'file' ? this.state.focus : undefined,
+      );
       this.patch({ review: body, phase: 'reviewed', problem: '' });
     } catch (error) {
       this.patch({ review: null, problem: aiValidationMessage(error) });
@@ -245,7 +249,8 @@ export class AiReviewSession {
       if (file.size > MAX_AI_CONTEXT_FILE_BYTES) throw new Error('Context file exceeds 1 MiB.');
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (!this.accepts(epoch) || ticket !== this.fileEpoch) return;
-      this.patch({ context: parseAiContext(bytes) });
+      const context = parseAiContext(bytes);
+      this.patch({ context, focus: context.diagramFocus ?? this.state.focus });
     } catch (error) {
       if (this.accepts(epoch) && ticket === this.fileEpoch)
         this.patch({ problem: aiValidationMessage(error) });

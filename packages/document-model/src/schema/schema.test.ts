@@ -6,8 +6,40 @@ import * as Y from 'yjs';
 import { NODE_FIELDS, STEP_FIELDS } from './constants.js';
 import { createGraphDocument, getGraphDocumentRoots } from './document.js';
 import { hydrateGraphDocument } from './hydrate.js';
+import { createNode } from '../commands/nodes.js';
+import { editGraphText } from '../commands/text.js';
+import { projectGraphDocument } from '../projection/project.js';
+import { applyHydrationUpdate, applyRemoteUpdate } from '../undo/origins.js';
 
 describe('fixed Yjs schema', () => {
+  it.each(['create', 'edit'] as const)(
+    'delivers the first %s after reopening through incremental updates alone',
+    (operation) => {
+      const server = hydrateGraphDocument(allEntityGraphFixture);
+      const reopened = createGraphDocument();
+      try {
+        applyHydrationUpdate(reopened, Y.encodeStateAsUpdate(server));
+        const updates: Uint8Array[] = [];
+        reopened.on('update', (update) => updates.push(update));
+        if (operation === 'create') {
+          createNode(reopened, { ...allEntityGraphFixture.nodes[0]!, id: crypto.randomUUID() });
+        } else {
+          editGraphText(
+            reopened,
+            { entity: 'node', id: FIXED_IDS.NODE_A, field: 'title' },
+            { index: 0, deleteCount: 0, insert: 'Reopened: ' },
+          );
+        }
+        expect(updates).toHaveLength(1);
+        for (const update of updates) applyRemoteUpdate(server, update);
+        expect(projectGraphDocument(server)).toEqual(projectGraphDocument(reopened));
+      } finally {
+        server.destroy();
+        reopened.destroy();
+      }
+    },
+  );
+
   it('creates all fixed roots as Y.Map with graph-only metadata', () => {
     const roots = getGraphDocumentRoots(createGraphDocument());
 

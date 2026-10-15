@@ -1,5 +1,9 @@
 # Using AI in Archboard
 
+> Retired from the application runtime on October 14, 2026. This document is retained
+> as a legacy implementation reference. Use [Project JSON](project-context.md) for
+> the current local import workflow. Its old enablement steps do not activate hosted AI.
+
 AI helps describe architecture supplied by you. It cannot inspect a repository,
 execute code, fetch links or establish security, performance or deployment facts.
 Descriptions can be incomplete or misleading. Review supplied facts, inferred

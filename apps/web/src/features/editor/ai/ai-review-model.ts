@@ -5,13 +5,14 @@ import {
   type AiCreateRun,
   type ProjectContextV1,
   type AiRun,
+  type AiDiagramFocus,
 } from '@archboard/contracts';
 import { parseBoundedJson } from '@archboard/export';
+import { fileDiagramPrompt } from './ai-diagram-focus';
 
 export const AI_JSON_INDENT = 2;
 export const AI_RECEIPT_WINDOW_MS = 86_400_000;
-export const DEFAULT_AI_FILE_PROMPT =
-  'Diagram the existing architecture described in the supplied project context. Show the components and their connections, use the supplied groups where helpful, and clearly identify unknowns. Do not invent unsupported components or connections.';
+export const DEFAULT_AI_FILE_PROMPT = fileDiagramPrompt();
 export interface AiContextForm {
   name: string;
   description: string;
@@ -66,13 +67,14 @@ export function reviewAiRequest(
   prompt: string,
   boardId: string,
   context?: ProjectContextV1,
+  focus?: AiDiagramFocus,
 ): AiCreateRun {
   return aiCreateRunSchema.parse({
     schemaVersion: 1,
     task: context ? 'propose-design' : 'diagram-described',
     target: { kind: 'board', boardId },
-    prompt,
-    ...(context ? { context } : {}),
+    prompt: focus ? fileDiagramPrompt(focus, prompt) : prompt,
+    ...(context ? { context: focus ? { ...context, diagramFocus: focus } : context } : {}),
     history: [],
   });
 }
@@ -95,6 +97,8 @@ export function aiValidationMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'The AI request could not be validated.';
 }
 export function aiRunFailureMessage(failure: NonNullable<AiRun['failure']>): string {
+  if (failure.reason === 'incomplete')
+    return 'The AI stopped before completing a valid proposal. Its output budget may be too small for this diagram. No partial diagram was applied. Try a smaller view or have the operator review the model output limit before starting a new request.';
   switch (failure.code) {
     case 'AI_OUTPUT_INVALID':
       return 'The AI response could not be validated. No proposal was applied.';

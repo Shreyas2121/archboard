@@ -1,5 +1,9 @@
 # AI operator configuration
 
+> Retired from the application runtime on October 14, 2026. This document is retained
+> as a legacy implementation reference. Use [Project JSON](project-context.md) for
+> the current local import workflow. Its old enablement steps do not activate hosted AI.
+
 AI-C17 adds optional server-only `AI_KILL_SWITCH_FILE`, an absolute local marker
 path controlled by the operator. Presence disables creation and protected result
 reads; authorized cancellation and maintenance continue. Unset means no marker

@@ -13,7 +13,11 @@ import {
 
 import { CardFrame, CardTitle } from './card-frame';
 import { cn } from '@/lib/utils';
-import { COMPONENT_TWO_LINE_MIN_HEIGHT } from './card-layout';
+import {
+  COMPONENT_TWO_LINE_MIN_HEIGHT,
+  COMPONENT_THREE_LINE_MIN_HEIGHT,
+  COMPONENT_WRAPPED_TEXT_MIN_HEIGHT,
+} from './card-layout';
 
 const CATEGORY_ICONS: Readonly<
   Record<ExtractedGraphNode<'component'>['content']['category'], LucideIcon>
@@ -34,9 +38,13 @@ interface ComponentCardProps {
 
 export function ComponentCard({ node, selected }: ComponentCardProps) {
   const CategoryIcon = CATEGORY_ICONS[node.content.category];
+  const roomy = node.size.height >= COMPONENT_THREE_LINE_MIN_HEIGHT;
+  const multiline = node.size.height >= COMPONENT_WRAPPED_TEXT_MIN_HEIGHT;
   return (
     <CardFrame node={node} selected={selected}>
-      <header className="flex min-w-0 items-center gap-2">
+      <header
+        className={cn('flex min-w-0 gap-2', multiline ? 'min-h-10 items-start' : 'items-center')}
+      >
         <span
           className="grid size-6 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"
           aria-hidden="true"
@@ -44,8 +52,8 @@ export function ComponentCard({ node, selected }: ComponentCardProps) {
         >
           <CategoryIcon className="size-4" />
         </span>
-        <div className="min-w-0">
-          <CardTitle>{node.title}</CardTitle>
+        <div className="min-w-0 flex-1">
+          <CardTitle multiline={multiline}>{node.title}</CardTitle>
         </div>
         {node.content.externalUrl !== null && (
           <a
@@ -64,14 +72,22 @@ export function ComponentCard({ node, selected }: ComponentCardProps) {
         <p
           className={cn(
             'min-h-0 text-xs leading-4 text-muted-foreground',
-            node.size.height < COMPONENT_TWO_LINE_MIN_HEIGHT ? 'line-clamp-1' : 'line-clamp-2',
+            node.size.height < COMPONENT_TWO_LINE_MIN_HEIGHT
+              ? 'line-clamp-1'
+              : roomy
+                ? 'line-clamp-3'
+                : 'line-clamp-2',
           )}
+          title={node.content.description}
         >
           {node.content.description || 'No description'}
         </p>
         {node.content.technology.length > 0 && (
           <p
-            className="mt-auto shrink-0 truncate text-xs leading-4 text-muted-foreground"
+            className={cn(
+              'mt-auto shrink-0 text-xs leading-4 text-muted-foreground',
+              multiline ? 'min-h-8 line-clamp-2 break-words' : 'truncate',
+            )}
             title={node.content.technology}
           >
             {node.content.technology}

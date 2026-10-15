@@ -146,6 +146,7 @@ export const aiErrorCodeSchema = z.enum([
 // No raw error message, SDK object, provider request ID, prompt, key, or endpoint.
 export const aiFailureSchema = z.strictObject({
   code: aiErrorCodeSchema,
+  reason: z.literal('incomplete').optional(),
   retryAfterSeconds: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
 });
 export const aiRunSchema = z

@@ -16,8 +16,8 @@ regularly to a private project folder: browser storage can be cleared or evicted
 - Portable JSON and controlled SVG/PNG exports.
 - Server boards with owner/editor/viewer access, discussion and invitations.
 - Account-scoped local persistence and a durable offline update outbox.
-- Operator-enabled OpenAI assistance with reviewed inputs, private guidance and
-  explicit diagram/scoped-edit/presentation Apply.
+- Project-context JSON import with a local preview and automatic layout, available
+  in the demo and editable boards without a hosted AI service.
 
 These are implemented capabilities. Integrated browser/database verification remains
 partly deferred. No hosted demo, performance guarantee or production-ready release
@@ -35,9 +35,11 @@ pnpm install --frozen-lockfile
 GitHub OAuth, explicit migrations and optional production configuration.
 [Using Archboard](docs/using-archboard.md) explains saving, recovery, exports,
 checkpoints, templates and keyboard controls.
-[Using AI](docs/using-ai.md) and [operator configuration](docs/ai-operator-configuration.md)
-cover the optional cloud workflow. Only OpenAI is implemented; local repository
-scanning and other production adapters are outside the delivered scope.
+[Project JSON](docs/project-context.md) explains extracting a focused context with
+your own coding assistant and importing it directly into an editable diagram.
+Archboard arranges the supplied components and relationships locally. Hosted AI
+generation and assistance are retired from the application runtime; their old code
+and database history remain dormant for reference.
 
 The [portfolio walkthrough](docs/portfolio-walkthrough.md) provides a five-minute
 script and engineering notes. Add real screenshots or recordings after exercising

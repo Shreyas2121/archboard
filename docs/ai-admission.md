@@ -1,5 +1,9 @@
 # AI admission and accounting
 
+> Retired from the application runtime on October 14, 2026. Retained as a legacy
+> implementation reference. See [Project JSON](project-context.md) for the current
+> local import workflow; legacy enablement does not activate hosted AI.
+
 AI-C06 implements paid admission on top of the [persistence contract](ai-persistence.md).
 It introduces no provider orchestration or HTTP/SSE endpoints. Database acceptance
 remains OPEN under the [verification policy](verification-policy.md).

@@ -83,6 +83,11 @@ export function editorSessionViewState(
     ? {
         ...base,
         editable: base.phase !== EDITOR_VIEW_PHASES.UNAVAILABLE && !narrowScreen && canEdit,
+        detail:
+          base.phase === EDITOR_VIEW_PHASES.RECOVERY_REQUIRED &&
+          snapshot?.sync?.phase === SYNC_PHASES.RECOVERY_REQUIRED
+            ? 'The server could not safely merge local changes. Editing and sending are paused; download recovery before leaving.'
+            : base.detail,
         label:
           base.phase === EDITOR_VIEW_PHASES.SYNCING
             ? `Syncing ${snapshot?.sync?.pendingCount ?? 0} changes…`

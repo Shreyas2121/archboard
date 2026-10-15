@@ -270,7 +270,9 @@ export function loadApiConfig(environment: NodeJS.ProcessEnv): ApiConfig {
   }
 
   return Object.freeze({
-    ai: loadAiConfig({ ...environment, NODE_ENV: mode }),
+    // Hosted AI is retired from the application. Legacy settings cannot re-enable
+    // routes/providers or require credentials; migration history stays intact.
+    ai: loadAiConfig({}),
     mode,
     publicApiOrigin,
     allowedWebOrigins: Object.freeze(allowedWebOrigins),

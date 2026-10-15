@@ -4,6 +4,7 @@ import type { GraphProjection } from '@archboard/contracts';
 import { CardNode } from '@/features/editor/cards';
 import { BoundaryNode, type BoundaryCanvasNode } from '@/features/editor/boundaries';
 import { CanvasProjectionAdapter } from '@/features/editor/canvas/projection-adapter';
+import { CANVAS_EDGE_TYPES } from '@/features/editor/canvas/canvas-edge-types';
 
 const NODE_TYPES = { 'graph-card': CardNode, 'graph-boundary': BoundaryNode };
 const noResize = () => {};
@@ -29,6 +30,7 @@ export function AiDiagramPreview({ graph }: { readonly graph: GraphProjection })
         nodes={[...boundaries, ...projection.nodes]}
         edges={[...projection.edges]}
         nodeTypes={NODE_TYPES}
+        edgeTypes={CANVAS_EDGE_TYPES}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}

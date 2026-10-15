@@ -5,6 +5,7 @@ import {
 } from '@archboard/contracts';
 
 export * from './image-export.js';
+export * from './connection-layout.js';
 
 const MAX_JSON_DEPTH = 32;
 const JSON_INDENT_SPACES = 2;

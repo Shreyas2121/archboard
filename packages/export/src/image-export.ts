@@ -3,8 +3,6 @@ import {
   type ColorToken,
   type GraphNode,
   type GraphProjection,
-  type Handle,
-  type Point,
   type Rect,
 } from '@archboard/contracts';
 import {
@@ -15,8 +13,6 @@ import {
   IMAGE_HALF,
   IMAGE_PADDING,
   IMAGE_STROKE_WIDTH,
-  LABEL_LINE_LIMIT,
-  LABEL_WIDTH_LIMIT,
   MARKER_SIZE,
   STROKE_MARGIN,
   TEXT_CELL_WIDTH,
@@ -26,6 +22,7 @@ import {
   imageDimensions,
   layoutImageText,
 } from './image-layout.js';
+import { layoutConnections, connectionPath, CONNECTION_LABEL_INSET } from './connection-layout.js';
 export {
   escapeXml,
   imageDimensions,
@@ -86,6 +83,7 @@ const THEMES = {
   },
 } as const;
 type Palette = (typeof THEMES)[keyof typeof THEMES];
+const COMPONENT_WRAP_HEIGHT = 144;
 
 export function selectImageGraph(graph: GraphProjection, options: ImageExportOptions) {
   if (
@@ -131,21 +129,6 @@ export function selectImageGraph(graph: GraphProjection, options: ImageExportOpt
   return { nodes, edges, boundaries, omittedEdges };
 }
 
-function endpoint(node: GraphNode, handle: Handle): Point {
-  const { x, y } = node.position;
-  const { width, height } = node.size;
-  switch (handle) {
-    case 'top':
-      return { x: x + width / IMAGE_HALF, y };
-    case 'right':
-      return { x: x + width, y: y + height / IMAGE_HALF };
-    case 'bottom':
-      return { x: x + width / IMAGE_HALF, y: y + height };
-    case 'left':
-      return { x, y: y + height / IMAGE_HALF };
-  }
-}
-
 function textLines(lines: readonly string[], x: number, y: number, color: string): string {
   return `<text fill="${color}" font-family="monospace" font-size="${TEXT_FONT_SIZE}">${lines
     .map((line, index) => {
@@ -156,11 +139,20 @@ function textLines(lines: readonly string[], x: number, y: number, color: string
     .join('')}</text>`;
 }
 
+function visibleLines(layout: ReturnType<typeof layoutImageText>): readonly string[] {
+  if (!layout.overflow || !layout.lines.length) return layout.lines;
+  return [
+    ...layout.lines.slice(0, -1),
+    `${Array.from(layout.lines.at(-1)!).slice(0, -1).join('')}…`,
+  ];
+}
+
 function card(node: GraphNode, index: number, palette: Palette): string {
   const { x, y } = node.position;
   const { width, height } = node.size;
   const innerWidth = width - IMAGE_HALF * CARD_INSET;
-  const header = layoutImageText(node.title || 'Untitled', innerWidth, 1);
+  const textRows = node.kind === 'component' && height >= COMPONENT_WRAP_HEIGHT ? IMAGE_HALF : 1;
+  const header = layoutImageText(node.title || 'Untitled', innerWidth, textRows);
   const kind =
     node.kind === 'component'
       ? node.content.category
@@ -169,21 +161,31 @@ function card(node: GraphNode, index: number, palette: Palette): string {
         : node.kind;
   const body =
     node.kind === 'component'
-      ? `${node.content.technology}\n${node.content.description}${node.content.externalUrl ? `\n${node.content.externalUrl}` : ''}`
+      ? `${node.content.description}${node.content.externalUrl ? `\n${node.content.externalUrl}` : ''}`
       : node.content.body;
+  const technology =
+    node.kind === 'component'
+      ? layoutImageText(node.content.technology, innerWidth, textRows)
+      : { lines: [], overflow: false };
+  const bodyTop =
+    node.kind === 'component'
+      ? CARD_INSET + textRows * TEXT_LINE_HEIGHT + CARD_INSET
+      : CARD_HEADER_HEIGHT;
+  const technologyTop = height - CARD_INSET - technology.lines.length * TEXT_LINE_HEIGHT;
   const lineCount = Math.max(
-    1,
-    Math.floor((height - CARD_HEADER_HEIGHT - IMAGE_HALF * CARD_INSET) / TEXT_LINE_HEIGHT),
+    0,
+    Math.floor((technologyTop - bodyTop - CARD_INSET) / TEXT_LINE_HEIGHT),
   );
   const layout = layoutImageText(body, innerWidth, lineCount);
   const clip = `card-clip-${index}`;
   return (
     `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${CORNER_RADIUS}" fill="${palette.card}" stroke="${COLORS[node.color]}" stroke-width="${IMAGE_STROKE_WIDTH}"/>` +
     `<defs><clipPath id="${clip}"><rect x="${x + CARD_INSET}" y="${y + CARD_INSET}" width="${innerWidth}" height="${height - IMAGE_HALF * CARD_INSET}"/></clipPath></defs>` +
-    `<g clip-path="url(#${clip})">${textLines(header.lines, x + CARD_INSET, y + CARD_INSET + TEXT_FONT_SIZE, palette.text)}` +
-    `${textLines([kind], x + CARD_INSET, y + CARD_HEADER_HEIGHT - CARD_INSET, palette.muted)}` +
-    `${textLines(layout.lines, x + CARD_INSET, y + CARD_HEADER_HEIGHT + TEXT_FONT_SIZE, palette.text)}</g>` +
-    `${layout.overflow || header.overflow ? textLines(['…'], x + width - IMAGE_HALF * CARD_INSET, y + height - CARD_INSET, palette.muted) : ''}</g>`
+    `<title>${escapeXml(`${node.title || 'Untitled'} · ${kind}`)}</title>` +
+    `<g clip-path="url(#${clip})">${textLines(visibleLines(header), x + CARD_INSET, y + CARD_INSET + TEXT_FONT_SIZE, palette.text)}` +
+    `${node.kind === 'component' ? '' : textLines([kind], x + CARD_INSET, y + CARD_HEADER_HEIGHT - CARD_INSET, palette.muted)}` +
+    `${textLines(visibleLines(layout), x + CARD_INSET, y + bodyTop + TEXT_FONT_SIZE, palette.text)}` +
+    `${textLines(visibleLines(technology), x + CARD_INSET, y + technologyTop + TEXT_FONT_SIZE, palette.muted)}</g></g>`
   );
 }
 
@@ -198,26 +200,12 @@ export function renderControlledSvg(
     ...scoped.nodes.map((node) => ({ ...node.position, ...node.size })),
     ...scoped.boundaries.map((boundary) => boundary.rect),
   ];
-  const nodes = new Map(scoped.nodes.map((node) => [node.id, node]));
+  const connections = layoutConnections(scoped);
   const edges = scoped.edges.map((edge) => {
-    const source = endpoint(nodes.get(edge.sourceId)!, edge.sourceHandle);
-    const target = endpoint(nodes.get(edge.targetId)!, edge.targetHandle);
-    const center = { x: (source.x + target.x) / IMAGE_HALF, y: (source.y + target.y) / IMAGE_HALF };
-    const label = [edge.label, edge.protocol].filter(Boolean).join(' · ');
-    const layout = layoutImageText(label, LABEL_WIDTH_LIMIT, LABEL_LINE_LIMIT);
-    const lines = layout.overflow ? [...layout.lines.slice(0, -1), '…'] : layout.lines;
-    const width =
-      Math.max(1, ...lines.map((line) => Array.from(line).length * TEXT_CELL_WIDTH)) +
-      IMAGE_HALF * CARD_INSET;
-    const height = lines.length * TEXT_LINE_HEIGHT + IMAGE_HALF * CARD_INSET;
-    const labelRect = {
-      x: center.x - width / IMAGE_HALF,
-      y: center.y - height / IMAGE_HALF,
-      width,
-      height,
-    };
-    if (label) rectangles.push(labelRect);
-    return { edge, source, target, labelRect, lines };
+    const layout = connections.get(edge.id)!;
+    for (const point of layout.points) rectangles.push({ ...point, width: 0, height: 0 });
+    if (layout.label) rectangles.push(layout.label.rect);
+    return { edge, layout };
   });
   const margin = IMAGE_PADDING + STROKE_MARGIN;
   const minX = Math.min(...rectangles.map((rect) => rect.x)) - margin;
@@ -235,16 +223,17 @@ export function renderControlledSvg(
     .join('');
   const paths = edges
     .map(
-      ({ edge, source, target }) =>
-        `<path d="M ${source.x} ${source.y} L ${target.x} ${target.y}" fill="none" stroke="${palette.edge}" stroke-width="${IMAGE_STROKE_WIDTH}"${edge.style === 'dashed' ? ` stroke-dasharray="${DASH_LENGTH} ${DASH_LENGTH}"` : ''} marker-end="url(#arrow-end)"${edge.direction === 'bidirectional' ? ' marker-start="url(#arrow-start)"' : ''}/>`,
+      ({ edge, layout }) =>
+        `<path d="${connectionPath(layout.points)}" fill="none" stroke="${palette.edge}" stroke-width="${IMAGE_STROKE_WIDTH}"${edge.style === 'dashed' ? ` stroke-dasharray="${DASH_LENGTH} ${DASH_LENGTH}"` : ''} marker-end="url(#arrow-end)"${edge.direction === 'bidirectional' ? ' marker-start="url(#arrow-start)"' : ''}/>`,
     )
     .join('');
   const labels = edges
-    .filter(({ lines }) => lines.length)
-    .map(
-      ({ labelRect, lines }) =>
-        `<g><rect x="${labelRect.x}" y="${labelRect.y}" width="${labelRect.width}" height="${labelRect.height}" rx="${CORNER_RADIUS}" fill="${palette.card}"/>${textLines(lines, labelRect.x + CARD_INSET, labelRect.y + CARD_INSET + TEXT_FONT_SIZE, palette.text)}</g>`,
-    )
+    .map(({ edge, layout }) => {
+      const title = `<title>${escapeXml([edge.label, edge.protocol].filter(Boolean).join(' · '))}</title>`;
+      if (!layout.label) return `<g>${title}</g>`;
+      const { rect, lines } = layout.label;
+      return `<g>${title}<rect x="${rect.x}" y="${rect.y}" width="${rect.width}" height="${rect.height}" rx="${CORNER_RADIUS}" fill="${palette.card}"/>${textLines(lines, rect.x + CONNECTION_LABEL_INSET, rect.y + CONNECTION_LABEL_INSET + TEXT_FONT_SIZE, palette.text)}</g>`;
+    })
     .join('');
   const markers = `<defs><marker id="arrow-end" markerWidth="${MARKER_SIZE}" markerHeight="${MARKER_SIZE}" refX="${MARKER_SIZE}" refY="${MARKER_SIZE / IMAGE_HALF}" orient="auto" markerUnits="userSpaceOnUse"><path d="M 0 0 L ${MARKER_SIZE} ${MARKER_SIZE / IMAGE_HALF} L 0 ${MARKER_SIZE} Z" fill="${palette.edge}"/></marker><marker id="arrow-start" markerWidth="${MARKER_SIZE}" markerHeight="${MARKER_SIZE}" refX="0" refY="${MARKER_SIZE / IMAGE_HALF}" orient="auto" markerUnits="userSpaceOnUse"><path d="M ${MARKER_SIZE} 0 L 0 ${MARKER_SIZE / IMAGE_HALF} L ${MARKER_SIZE} ${MARKER_SIZE} Z" fill="${palette.edge}"/></marker></defs>`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${dimensions.width}" height="${dimensions.height}" viewBox="${minX} ${minY} ${dimensions.width} ${dimensions.height}"><title>Archboard diagram</title>${markers}${options.background ? `<rect x="${minX}" y="${minY}" width="${dimensions.width}" height="${dimensions.height}" fill="${palette.background}"/>` : ''}${boundaries}${paths}${scoped.nodes.map((node, index) => card(node, index, palette)).join('')}${labels}</svg>`;

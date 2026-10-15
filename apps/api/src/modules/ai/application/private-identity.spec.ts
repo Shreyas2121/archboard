@@ -49,6 +49,17 @@ it('canonicalizes object keys while preserving arrays, exact case and whitespace
   ])
     expect(prepare(changed).fingerprint).not.toBe(prepare().fingerprint);
 });
+it('includes optional diagram focus in exact reuse and receipt identity', () => {
+  const context = projectContextV1Schema.parse({
+    kind: 'archboard.project-context',
+    schemaVersion: 1,
+    project: { name: 'Project', description: 'Reviewed architecture' },
+  });
+  const overview = prepare({ ...body, context: { ...context, diagramFocus: 'overview' } });
+  const api = prepare({ ...body, context: { ...context, diagramFocus: 'api' } });
+  expect(api.fingerprint).not.toBe(overview.fingerprint);
+  expect(api.requestHash).not.toBe(overview.requestHash);
+});
 it('separates provider routing partitions from exact private result and receipt identity', () => {
   const resolved = config();
   resolved.profile = { ...resolved.profile, promptCaching: 'openai-in-memory' };

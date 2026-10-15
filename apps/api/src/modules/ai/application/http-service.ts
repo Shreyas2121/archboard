@@ -46,7 +46,10 @@ export function publicAiRun(snapshot: Snapshot, source: AiRun['source'] = 'gener
       state === 'outcome-unknown'
         ? { code: 'AI_OUTCOME_UNKNOWN' }
         : state === 'failed'
-          ? { code: run.failureCode ?? 'AI_GENERATION_FAILED' }
+          ? {
+              code: run.failureCode ?? 'AI_GENERATION_FAILED',
+              ...(run.phase === 'incomplete' ? { reason: 'incomplete' as const } : {}),
+            }
           : null,
     source,
   });

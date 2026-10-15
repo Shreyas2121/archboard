@@ -16,6 +16,7 @@ it('retains unrelated final node and data identities on a large graph', () => {
       .adapt(graph)
       .nodes.map((node) => cache.get(node.id, [node, false, true], () => build(node)));
   const before = render(fixture);
+  const beforeEdges = adapter.adapt(fixture).edges;
   expect(render(fixture)).toEqual(before);
   expect(build).toHaveBeenCalledTimes(fixture.nodes.length);
   const changed = render({
@@ -27,6 +28,13 @@ it('retains unrelated final node and data identities on a large graph', () => {
   expect(changed[0]).not.toBe(before[0]);
   for (let index = 1; index < before.length; index += 1) expect(changed[index]).toBe(before[index]);
   expect(build).toHaveBeenCalledTimes(fixture.nodes.length + 1);
+  const changedEdges = adapter.adapt({
+    ...fixture,
+    nodes: fixture.nodes.map((node, index) =>
+      index === 0 ? { ...node, title: 'Edited title' } : node,
+    ),
+  }).edges;
+  expect(changedEdges.every((edge, index) => edge === beforeEdges[index])).toBe(true);
 });
 
 it('invalidates selection, editability, handlers and removed entities', () => {

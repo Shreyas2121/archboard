@@ -20,6 +20,7 @@ import { AiOperations } from './operations.js';
 import { snapshotAiConfiguration } from './persistence.js';
 import { AiPersistenceError } from './persistence.js';
 import { estimateAiReservation } from './pricing.js';
+import { publicAiRun } from './http-service.js';
 
 const MAX_RESULT_BYTES = 524288;
 const DEADLINE_MS = 120000;
@@ -137,6 +138,24 @@ async function finish(runs: AiRunCoordinator, id: string, store: InMemoryAiPersi
   expect(store.state.settlements.has(id)).toBe(true);
   await runs.drain();
 }
+it('settles an incomplete response without a partial proposal and exposes a safe failure reason', async () => {
+  const stream = jest.fn<AiProvider['stream']>(async function* () {
+    yield { type: 'text-delta', text: '{"result":' };
+    yield { type: 'incomplete', reason: 'output-limit', usage, requestId: null };
+  });
+  const f = setup(stream);
+  const { run } = await f.runs.start(f.intent, f.adapter, f.request);
+  await finish(f.runs, run.id, f.store);
+  const snapshot = await f.runs.read(f.intent.deploymentNamespace, f.intent.actorUserId, run.id);
+  expect(snapshot.run.phase).toBe('incomplete');
+  expect(snapshot.result).toBeNull();
+  expect(publicAiRun(snapshot)).toMatchObject({
+    state: 'failed',
+    content: { status: 'unavailable' },
+    failure: { code: 'AI_GENERATION_FAILED', reason: 'incomplete' },
+  });
+  expect(stream).toHaveBeenCalledTimes(1);
+});
 it('includes conservative cache-prefix framing in input admission before intent or dispatch', async () => {
   const stream = jest.fn<AiProvider['stream']>(async function* () {
     yield completed;

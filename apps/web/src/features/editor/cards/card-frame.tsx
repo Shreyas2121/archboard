@@ -35,10 +35,19 @@ export function CardFrame({ node, selected, children, className }: CardFrameProp
   );
 }
 
-export function CardTitle({ children }: { readonly children: string }) {
+export function CardTitle({
+  children,
+  multiline = false,
+}: {
+  readonly children: string;
+  readonly multiline?: boolean;
+}) {
   return (
     <h2
-      className="min-w-0 truncate text-sm font-semibold leading-5"
+      className={cn(
+        'min-w-0 text-sm font-semibold leading-5',
+        multiline ? 'line-clamp-2 break-words' : 'truncate',
+      )}
       title={children || 'Untitled card'}
     >
       {children || 'Untitled card'}

@@ -44,7 +44,7 @@ export function fixtureAiPolicy(overrides: NodeJS.ProcessEnv = {}) {
   return config.policy;
 }
 export function fixtureApiConfig(overrides: NodeJS.ProcessEnv = {}): ApiConfig {
-  return loadApiConfig({
+  const environment: NodeJS.ProcessEnv = {
     NODE_ENV: 'test',
     PUBLIC_API_ORIGIN: 'http://localhost:3000',
     ALLOWED_WEB_ORIGINS: 'http://localhost:5173',
@@ -53,5 +53,7 @@ export function fixtureApiConfig(overrides: NodeJS.ProcessEnv = {}): ApiConfig {
     DATABASE_DIRECT_URL: 'postgresql://unused:unused@localhost/unused',
     BETTER_AUTH_SECRET: 'unused-fixture-secret-at-least-32-characters',
     ...overrides,
-  });
+  };
+  // Isolated legacy-module tests opt in explicitly. AppModule never registers it.
+  return { ...loadApiConfig(environment), ai: loadAiConfig(environment) };
 }

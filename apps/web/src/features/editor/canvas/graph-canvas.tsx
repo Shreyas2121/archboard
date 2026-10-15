@@ -45,6 +45,7 @@ import {
 } from './projection-adapter';
 import { CanvasGestures, reconcileCanvasNodes } from './canvas-gestures';
 import { CanvasRenderCache } from './canvas-render-cache';
+import { CANVAS_EDGE_TYPES } from './canvas-edge-types';
 import { PRESENTATION_MIN_ZOOM } from '@/features/editor/presentation/presentation-model';
 
 const NODE_TYPES = { 'graph-card': CardNode, 'graph-boundary': BoundaryNode } as const;
@@ -457,6 +458,7 @@ export const GraphCanvas = memo(function GraphCanvas({
       nodesConnectable={editable}
       nodesDraggable={editable}
       nodeTypes={NODE_TYPES}
+      edgeTypes={CANVAS_EDGE_TYPES}
       onConnect={onConnect}
       onInit={(instance) => {
         flow.current = instance;

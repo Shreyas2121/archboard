@@ -1,4 +1,5 @@
 import type { ProjectContextV1 } from '@archboard/contracts';
+import { AI_DIAGRAM_FOCUS_OPTIONS, DEFAULT_AI_DIAGRAM_FOCUS } from './ai-diagram-focus';
 
 export function AiContextReview({ context }: { readonly context: ProjectContextV1 }) {
   return (
@@ -7,6 +8,10 @@ export function AiContextReview({ context }: { readonly context: ProjectContextV
       aria-label="Complete reviewed project context"
     >
       <p className="text-sm font-medium [overflow-wrap:anywhere]">{context.project.name}</p>
+      <p>
+        Diagram focus:{' '}
+        {AI_DIAGRAM_FOCUS_OPTIONS[context.diagramFocus ?? DEFAULT_AI_DIAGRAM_FOCUS].label}
+      </p>
       <p className="whitespace-pre-wrap break-words">{context.project.description}</p>
       <p className="break-words">
         Technologies: {context.project.technologies.join(', ') || 'None supplied'}

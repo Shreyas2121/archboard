@@ -14,9 +14,11 @@ import {
   contextFromForm,
   parseAiContext,
   DEFAULT_AI_FILE_PROMPT,
+  aiRunFailureMessage,
 } from '@/features/editor/ai/ai-review-model';
 import { ApiClientError, ApiRequestTimeoutError } from '@/platform/api/api-client';
 import type { AiTransport } from '@/platform/api/ai-api';
+import { fileDiagramPrompt } from '@/features/editor/ai/ai-diagram-focus';
 vi.mock('@/platform/config', () => ({
   loadWebConfig: () => ({ apiOrigin: 'https://api.example.test' }),
 }));
@@ -30,6 +32,11 @@ const INVALID_UTF8 = 255;
 const RECONNECT_MS = 10_000;
 const EVENT_RETRIES = 3;
 const now = Date.parse('2026-10-04T10:00:00Z');
+it('explains incomplete output without treating it as an applied or automatically retried diagram', () => {
+  const message = aiRunFailureMessage({ code: 'AI_GENERATION_FAILED', reason: 'incomplete' });
+  expect(message).toContain('output budget');
+  expect(message).toContain('No partial diagram was applied');
+});
 function run(state: 'pending' | 'ready' | 'unknown' = 'ready') {
   return aiRunSchema.parse({
     schemaVersion: 1,
@@ -195,12 +202,59 @@ describe('AI reviewed inputs and session-only lifecycle', () => {
     });
     f.session.draft({ prompt: 'Focus on the request flow.' });
     f.session.review();
-    expect(f.session.snapshot().review?.prompt).toBe('Focus on the request flow.');
+    expect(f.session.snapshot().review?.prompt).toBe(
+      fileDiagramPrompt('overview', 'Focus on the request flow.'),
+    );
     f.session.draft({ mode: 'prompt', prompt: '' });
     f.session.review();
     expect(f.session.snapshot().review).toBeNull();
     expect(f.session.snapshot().problem).not.toBe('');
     expect(f.transport.create).not.toHaveBeenCalled();
+  });
+  it('restores uploaded focus, requires a new review after changes, and preserves all reviewed context', async () => {
+    const f = setup();
+    const uploaded = { ...context(), diagramFocus: 'database' };
+    await f.session.file(file(JSON.stringify(uploaded)));
+    expect(f.session.snapshot().focus).toBe('database');
+    f.session.review();
+    expect(f.session.snapshot().review).toMatchObject({
+      prompt: fileDiagramPrompt('database'),
+      context: uploaded,
+    });
+    f.session.draft({ focus: 'api', prompt: 'Trace order creation.' });
+    expect(f.session.snapshot().review).toBeNull();
+    expect(f.session.canGenerate()).toBe(false);
+    f.session.review();
+    expect(f.session.snapshot().review?.context).toEqual({ ...uploaded, diagramFocus: 'api' });
+    expect(f.session.snapshot().review?.prompt).toBe(
+      fileDiagramPrompt('api', 'Trace order creation.'),
+    );
+    expect(f.session.snapshot().context).toEqual(uploaded);
+    expect(f.transport.create).not.toHaveBeenCalled();
+    f.session.clear();
+    expect(f.session.snapshot().focus).toBe('overview');
+  });
+  it('keeps a manually selected focus when uploading a legacy file and recovers its exact request', async () => {
+    const f = setup();
+    f.session.draft({ focus: 'deployment' });
+    await f.session.file(file());
+    expect(f.session.snapshot().focus).toBe('deployment');
+    f.session.review();
+    const reviewed = f.session.snapshot().review;
+    await f.session.availability();
+    f.transport.create.mockRejectedValueOnce(new ApiRequestTimeoutError());
+    await f.session.generate();
+    const intent = f.session.snapshot().intent;
+    f.session.draft({ focus: 'api' });
+    expect(f.session.snapshot().focus).toBe('deployment');
+    f.transport.create.mockResolvedValue({ ...run(), task: 'propose-design' });
+    await f.session.recover();
+    expect(f.transport.create.mock.calls[0]?.[1]).toEqual(reviewed);
+    expect(f.transport.create.mock.calls[1]?.slice(0, TWO)).toEqual(
+      f.transport.create.mock.calls[0]?.slice(0, TWO),
+    );
+    expect(f.key).toHaveBeenCalledTimes(1);
+    expect(f.session.snapshot().intent?.key).toBe(intent?.key);
   });
   it('explains an availability timeout rather than reporting the API is unreachable', async () => {
     const f = setup();
